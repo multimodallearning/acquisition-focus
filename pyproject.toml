@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "slice-inflate"
+version = "0.1.0"
+description = ""
+authors = ["Christian Weihsbach <christian.weihsbach@uni-luebeck.de>"]
+readme = "README.md"
+packages = [{include = "slice_inflate"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+torch = "^1.12.1"
+numpy = "^1.23.2"
+nibabel = "^4.0.1"
+matplotlib = "^3.5.3"
+SimpleITK = "^2.1.1.2"
+Pillow = "^9.2.0"
+ipykernel = "^6.15.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

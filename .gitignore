@@ -1,0 +1,8 @@
+**/tmp/**
+**/__pycache__/**
+wandb/**
+*.so*
+data/**
+**/.ipynb_checkpoints/**
+**/.DS_Store
+**/._.DS_Store
