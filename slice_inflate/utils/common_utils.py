@@ -1,4 +1,5 @@
 import os
+import inspect
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -45,8 +46,11 @@ def in_notebook():
 
 
 
-def get_script_dir(_fll):
+def get_script_dir():
     if in_notebook:
         return os.path.abspath('')
     else:
-        return os.path.dirname(os.path.realpath(_fll))
+        frame = inspect.stack()[1]
+        module = inspect.getmodule(frame[0])
+        filename = module.__file__
+        return os.path.dirname(os.path.realpath(filename))

@@ -1,5 +1,7 @@
-# def cut_slice(volume):
-#     return torch.from_numpy(volume.get_fdata())[:,:,volume.shape[-1]//2]
+import numpy as np
+import torch
+import nibabel as nib
+from pathlib import Path
 
 def switch_rows(affine_mat):
     affine_mat = affine_mat.clone()
@@ -89,3 +91,36 @@ def slicer_slice_transform(nii_volume, ras_affine_mat: np.ndarray, fov_mm, fov_v
 
 #     !c3d {image_path} -region {v_origin} {v_size} -o {image_path}
 #     !c3d {label_path} -region {v_origin} {v_size} -o {label_path}
+
+def cut_slice(nii_volume):
+    return torch.as_tensor(nii_volume.get_fdata()[:,:,nii_volume.shape[-1]//2])
+
+def align_global(base_dir, nii_path, _3d_id, is_label):
+    nii_volume = nib.load(nii_path)
+    align_mat_path = Path(base_dir, "preprocessed", f"f1002mr_m{_3d_id.split('-')[0]}{_3d_id.split('-')[1]}.mat")
+    align_mat = torch.from_numpy(np.loadtxt(align_mat_path))
+
+    aligned_nii_volume = slicer_slice_transform(nii_volume, align_mat, fov_mm=torch.tensor([300,300,300]), fov_vox=torch.tensor([200,200,200]), is_label=is_label)
+    return aligned_nii_volume
+
+
+
+
+def cut_sa_hla_slice_from_volume(base_dir, nii_path, _3d_id, is_label):
+    base_dir = Path(base_dir)
+    nii_volume = nib.load(nii_path)
+
+    align_mat_path = Path(base_dir, "preprocessed", f"f1002mr_m{_3d_id.split('-')[0]}{_3d_id.split('-')[1]}.mat")
+    hla_mat_path = Path(base_dir.parent.parent, "slice_inflate/preprocessing", "mmwhs_1002_HLA_red_slice_to_ras.mat")
+    sa_mat_path =  Path(base_dir.parent.parent, "slice_inflate/preprocessing", "mmwhs_1002_SA_yellow_slice_to_ras.mat")
+
+    align_mat = torch.from_numpy(np.loadtxt(align_mat_path))
+    hla_mat = align_mat @ torch.from_numpy(np.loadtxt(hla_mat_path))
+    sa_mat =  align_mat @ torch.from_numpy(np.loadtxt(sa_mat_path))
+
+    aligned_hla_nii_volume = slicer_slice_transform(nii_volume, hla_mat, fov_mm=torch.tensor([300,300,300]), fov_vox=torch.tensor([200,200,200]), is_label=is_label)
+    aligned_sa_nii_volume = slicer_slice_transform(nii_volume, sa_mat, fov_mm=torch.tensor([300,300,300]), fov_vox=torch.tensor([200,200,200]), is_label=is_label)
+
+    hla_slc = cut_slice(aligned_hla_nii_volume)
+    sa_slc = cut_slice(aligned_sa_nii_volume)
+    return hla_slc, sa_slc

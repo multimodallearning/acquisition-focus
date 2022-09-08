@@ -6,13 +6,13 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset
 
-from deep_staple.utils.torch_utils import interpolate_sample, augment_noise, spatial_augment, torch_manual_seeded, ensure_dense
-from deep_staple.utils.common_utils import LabelDisturbanceMode
+from slice_inflate.utils.torch_utils import interpolate_sample, augment_noise, spatial_augment, torch_manual_seeded, ensure_dense
+from slice_inflate.utils.common_utils import LabelDisturbanceMode
 
 class HybridIdDataset(Dataset):
 
     def __init__(self,
-        base_dir, load_func,
+        base_dir, load_func, extract_slice_func=None,
         ensure_labeled_pairs=True, do_resample=True,
         resample_size: tuple=(96,96,60), do_normalize:bool=True,
         max_load_3d_num=None, crop_3d_region=None, modified_3d_label_override=None,
@@ -29,6 +29,7 @@ class HybridIdDataset(Dataset):
             self.self_attributes[arg_name] = arg_value
 
         del self.self_attributes['load_func']
+        del self.self_attributes['extract_slice_func']
         del self.self_attributes['kwargs']
         del self.self_attributes['self']
 
@@ -53,19 +54,14 @@ class HybridIdDataset(Dataset):
         self.augment_at_collate = False
 
         # Load base 3D data
-        all_data_dict = load_func(self.self_attributes)
+        all_3d_data_dict = load_func(self.self_attributes)
 
-        self.img_paths = all_data_dict.pop('img_paths', {})
-        self.label_paths = all_data_dict.pop('label_paths', {})
-        self.img_data_3d = all_data_dict.pop('img_data_3d', {})
-        self.label_data_3d = all_data_dict.pop('label_data_3d', {})
-        self.modified_label_data_3d = all_data_dict.pop('modified_label_data_3d', {})
-        self.additional_data = all_data_dict.pop('additional_data_3d', {})
-
-        # Retrieve slices and plugin modified data
-        self.img_data_2d = {}
-        self.label_data_2d = {}
-        self.modified_label_data_2d = {}
+        self.self_attributes['img_paths'] = self.img_paths = all_3d_data_dict.pop('img_paths', {})
+        self.self_attributes['label_paths'] = self.label_paths = all_3d_data_dict.pop('label_paths', {})
+        self.self_attributes['img_data_3d'] = self.img_data_3d = all_3d_data_dict.pop('img_data_3d', {})
+        self.self_attributes['label_data_3d'] = self.label_data_3d = all_3d_data_dict.pop('label_data_3d', {})
+        self.self_attributes['modified_label_data_3d'] = self.modified_label_data_3d = all_3d_data_dict.pop('modified_label_data_3d', {})
+        self.self_attributes['additional_data_3d'] = self.additional_data_3d = all_3d_data_dict.pop('additional_data_3d', {})
 
         # Postprocessing of 3d volumes
         print("Postprocessing 3D volumes")
@@ -103,8 +99,19 @@ class HybridIdDataset(Dataset):
         print("Image shape: {}, mean.: {:.2f}, std.: {:.2f}".format(img_stack.shape, img_mean, img_std))
         print("Label shape: {}, max.: {}".format(label_stack.shape,torch.max(label_stack)))
 
+        # Retrieve slices and plugin modified data
+        self.img_data_2d = {}
+        self.label_data_2d = {}
+        self.modified_label_data_2d = {}
+
         if use_2d_normal_to is not None:
-            self.extract_2d_data()
+            if extract_slice_func is None:
+                extract_slice_func = extract_2d_data
+
+            all_2d_data_dict = extract_slice_func(self.self_attributes)
+            self.img_data_2d = all_2d_data_dict.pop('img_data_2d', {})
+            self.label_data_2d = all_2d_data_dict.pop('label_data_2d', {})
+            self.modified_label_data_2d = all_2d_data_dict.pop('modified_label_data_2d', {})
 
         # Now make sure dicts are ordered
         self.img_paths = OrderedDict(sorted(self.img_paths.items()))
@@ -241,7 +248,7 @@ class HybridIdDataset(Dataset):
             label_path = self.label_paths.get(_3d_id, "")
 
             # Additional data will only have ids for 3D samples
-            additional_data = self.additional_data.get(_3d_id, "")
+            additional_data = self.additional_data_3d.get(_3d_id, "")
 
         else:
             all_ids = self.get_3d_ids()
@@ -252,7 +259,7 @@ class HybridIdDataset(Dataset):
             image_path = self.img_paths[_id]
             label_path = self.label_paths.get(_id, [])
 
-            additional_data = self.additional_data.get(_id, [])
+            additional_data = self.additional_data_3d.get(_id, [])
 
         spat_augment_grid = []
 
@@ -460,56 +467,62 @@ class HybridIdDataset(Dataset):
 
 
 
-        def extract_2d_data(self):
-            if use_2d_normal_to == "D":
-                slice_dim = -3
-            elif use_2d_normal_to == "H":
-                slice_dim = -2
-            elif use_2d_normal_to == "W":
-                slice_dim = -1
-            else:
-                raise ValueError
+def extract_2d_data(self):
+    if self.use_2d_normal_to == "D":
+        slice_dim = -3
+    elif self.use_2d_normal_to == "H":
+        slice_dim = -2
+    elif self.use_2d_normal_to == "W":
+        slice_dim = -1
+    else:
+        raise ValueError
 
-            for _3d_id, image in self.img_data_3d.items():
-                for idx, img_slc in [(slice_idx, image.select(slice_dim, slice_idx)) \
-                                     for slice_idx in range(image.shape[slice_dim])]:
-                    # Set data view for id like "003rW100"
-                    self.img_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = img_slc
+    for _3d_id, image in self.img_data_3d.items():
+        for idx, img_slc in [(slice_idx, image.select(slice_dim, slice_idx)) \
+                                for slice_idx in range(image.shape[slice_dim])]:
+            # Set data view for id like "003rW100"
+            self.img_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = img_slc
 
-            for _3d_id, label in self.label_data_3d.items():
-                for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
-                                     for slice_idx in range(label.shape[slice_dim])]:
-                    # Set data view for id like "003rW100"
-                    self.label_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = lbl_slc
+    for _3d_id, label in self.label_data_3d.items():
+        for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
+                                for slice_idx in range(label.shape[slice_dim])]:
+            # Set data view for id like "003rW100"
+            self.label_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = lbl_slc
 
-            for _3d_id, label in self.modified_label_data_3d.items():
-                for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
-                                     for slice_idx in range(label.shape[slice_dim])]:
-                    # Set data view for id like "003rW100"
-                    self.modified_label_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = lbl_slc
+    for _3d_id, label in self.modified_label_data_3d.items():
+        for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
+                                for slice_idx in range(label.shape[slice_dim])]:
+            # Set data view for id like "003rW100"
+            self.modified_label_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = lbl_slc
 
-            # Postprocessing of 2d slices
-            print("Postprocessing 2D slices")
-            orig_2d_num = len(self.img_data_2d.keys())
+    # Postprocessing of 2d slices
+    print("Postprocessing 2D slices")
+    orig_2d_num = len(self.img_data_2d.keys())
 
-            if self.crop_2d_slices_gt_num_threshold > 0:
-                for key, label in list(self.label_data_2d.items()):
-                    uniq_vals = label.unique()
+    if self.crop_2d_slices_gt_num_threshold > 0:
+        for key, label in list(self.label_data_2d.items()):
+            uniq_vals = label.unique()
 
-                    if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
-                        # Delete 2D slices with less than n gt-pixels (but keep 3d data)
-                        del self.img_data_2d[key]
-                        del self.label_data_2d[key]
-                        del self.modified_label_data_2d[key]
+            if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
+                # Delete 2D slices with less than n gt-pixels (but keep 3d data)
+                del self.img_data_2d[key]
+                del self.label_data_2d[key]
+                del self.modified_label_data_2d[key]
 
-            postprocessed_2d_num = len(self.img_data_2d.keys())
-            print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
+    postprocessed_2d_num = len(self.img_data_2d.keys())
+    print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
 
-            nonzero_lbl_percentage = torch.tensor([lbl.sum((-2,-1)) > 0 for lbl in self.label_data_2d.values()]).sum()
-            nonzero_lbl_percentage = nonzero_lbl_percentage/len(self.label_data_2d)
-            print(f"Nonzero 2D labels: " f"{nonzero_lbl_percentage*100:.2f}%")
+    nonzero_lbl_percentage = torch.tensor([lbl.sum((-2,-1)) > 0 for lbl in self.label_data_2d.values()]).sum()
+    nonzero_lbl_percentage = nonzero_lbl_percentage/len(self.label_data_2d)
+    print(f"Nonzero 2D labels: " f"{nonzero_lbl_percentage*100:.2f}%")
 
-            nonzero_mod_lbl_percentage = torch.tensor([ensure_dense(lbl)[0].sum((-2,-1)) > 0 for lbl in self.modified_label_data_2d.values()]).sum()
-            nonzero_mod_lbl_percentage = nonzero_mod_lbl_percentage/len(self.modified_label_data_2d)
-            print(f"Nonzero modified 2D labels: " f"{nonzero_mod_lbl_percentage*100:.2f}%")
-            print(f"Loader will use {postprocessed_2d_num} of {orig_2d_num} 2D slices.")
+    nonzero_mod_lbl_percentage = torch.tensor([ensure_dense(lbl)[0].sum((-2,-1)) > 0 for lbl in self.modified_label_data_2d.values()]).sum()
+    nonzero_mod_lbl_percentage = nonzero_mod_lbl_percentage/len(self.modified_label_data_2d)
+    print(f"Nonzero modified 2D labels: " f"{nonzero_mod_lbl_percentage*100:.2f}%")
+    print(f"Loader will use {postprocessed_2d_num} of {orig_2d_num} 2D slices.")
+
+    return dict(
+        img_data_2d=img_data_2d,
+        label_data_2d=label_data_2d,
+        modified_label_data_2d=modified_label_data_2d
+    )
