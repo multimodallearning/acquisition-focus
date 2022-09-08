@@ -13,7 +13,7 @@ import numpy as np
 from slice_inflate.utils.common_utils import DotDict
 from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
-from slice_inflate.datasets.align_mmwhs import slicer_slice_transform, align_global, cut_sa_hla_slice_from_volume
+from slice_inflate.datasets.align_mmwhs import slicer_slice_transform, align_global, cut_sa_hla_slice_from_volume, crop_around_label_center
 
 cache = Memory(location=os.environ['MMWHS_CACHE_PATH'])
 
@@ -101,6 +101,16 @@ def extract_2d_data(self_attributes: dict):
     print("Postprocessing 2D slices")
     orig_2d_num = len(img_data_2d.keys())
 
+    if self.crop_around_2d_label_center is not None:
+        for _2d_id, img, label in \
+            zip(img_data_2d.keys(), img_data_2d.values(), label_data_2d.values()):
+
+            img, label = crop_around_label_center(img, label, \
+                torch.as_tensor(self.crop_around_2d_label_center)
+            )
+            img_data_2d[_2d_id] = img
+            label_data_2d[_2d_id] = label
+
     if self.crop_2d_slices_gt_num_threshold > 0:
         for key, label in list(label_data_2d.items()):
             uniq_vals = label.unique()
@@ -158,7 +168,7 @@ def load_data(self_attributes: dict):
         data_path = Path(self.base_dir, data_directory)
 
         if self.crop_3d_region is not None:
-            self.crop_3d_region = torch.from_numpy(self.crop_3d_region)
+            self.crop_3d_region = torch.as_tensor(self.crop_3d_region)
 
         files.extend(list(data_path.glob("**/*.nii.gz")))
 
@@ -235,7 +245,6 @@ def load_data(self_attributes: dict):
             tmp = tmp[:, self.crop_3d_region[1,0]:self.crop_3d_region[1,1], :]
             tmp = tmp[:, :, self.crop_3d_region[2,0]:self.crop_3d_region[2,1]]
 
-
         if not IMAGE_ID in trailing_name:
             label_data_3d[_3d_id] = tmp.long()
 
@@ -250,7 +259,14 @@ def load_data(self_attributes: dict):
         modified_label_data_3d[label_id] = label_data_3d[label_id]
 
     # Postprocessing of 3d volumes
-    # None
+    if self.crop_around_3d_label_center is not None:
+        for _3d_id, img, label in \
+            zip(img_data_3d.keys(), img_data_3d.values(), label_data_3d.values()):
+            img, label = crop_around_label_center(img, label, \
+                torch.as_tensor(self.crop_around_3d_label_center)
+            )
+            img_data_3d[_3d_id] = img
+            label_data_3d[_3d_id] = label
 
     return dict(
         img_paths=img_paths,

@@ -3,10 +3,17 @@ import torch
 import nibabel as nib
 from pathlib import Path
 
+FOV_MM = torch.tensor([300,300,300])
+FOV_VOX = torch.tensor([200,200,200])
+
+
+
 def switch_rows(affine_mat):
     affine_mat = affine_mat.clone()
     affine_mat[:3] = affine_mat.detach()[:3].flip(0)
     return affine_mat
+
+
 
 def slicer_slice_transform(nii_volume, ras_affine_mat: np.ndarray, fov_mm, fov_vox, is_label=False):
 
@@ -77,32 +84,51 @@ def slicer_slice_transform(nii_volume, ras_affine_mat: np.ndarray, fov_mm, fov_v
     nii_resampled = nib.Nifti1Image(resampled.cpu().numpy(), affine=resampled_affine)
     return nii_resampled
 
-# def crop_to_label_center(image_path, label_path, vox_size):
 
-#     label_center = !c3d {label_path} -centroid
-#     label_center_vox = label_center[0]
 
-#     str_elems = re.sub(r"[\[\]A-Za-z\,_]", "", label_center_vox).strip().split(' ')
+def crop_around_label_center(image, label, vox_size):
+    n_dims = label.dim()
+    sp_label = label.to_sparse()
+    sp_idxs = sp_label._indices()
+    lbl_shape = torch.as_tensor(label.shape)
+    label_center = \
+        torch.div((sp_idxs.max(dim=1)[0] + sp_idxs.min(dim=1)[0]), 2).int()
+    bbox_max = label_center+((vox_size)/2).int()
+    bbox_min = label_center-((vox_size+1)/2).int()
 
-#     vox_center = np.array([float(elem) for elem in str_elems])
-#     vox_lower = np.floor(vox_center - vox_size/2).clip(min=0)
-#     v_origin = 'x'.join([str(int(elem)) for elem in vox_lower.tolist()])+'vox'
-#     v_size = 'x'.join([str(int(elem)) for elem in vox_size.tolist()])+'vox'
+    crop_slcs = []
+    for dim_idx in range(n_dims):
+        # Check bounds of crop and correct
+        if bbox_min[dim_idx] < 0:
+            bbox_min[dim_idx] = 0
+            bbox_max[dim_idx] = 0 + vox_size[dim_idx]
 
-#     !c3d {image_path} -region {v_origin} {v_size} -o {image_path}
-#     !c3d {label_path} -region {v_origin} {v_size} -o {label_path}
+        elif bbox_max[dim_idx] > lbl_shape[dim_idx]:
+            bbox_min[dim_idx] = lbl_shape[dim_idx] - vox_size[dim_idx]
+            bbox_max[dim_idx] = lbl_shape[dim_idx]
+
+        crop_slcs.append(slice(bbox_min[dim_idx], bbox_max[dim_idx]))
+
+    return image[crop_slcs], label[crop_slcs]
+
+
 
 def cut_slice(nii_volume):
     return torch.as_tensor(nii_volume.get_fdata()[:,:,nii_volume.shape[-1]//2])
 
+
+
 def align_global(base_dir, nii_path, _3d_id, is_label):
+    base_dir = Path(base_dir)
     nii_volume = nib.load(nii_path)
     align_mat_path = Path(base_dir, "preprocessed", f"f1002mr_m{_3d_id.split('-')[0]}{_3d_id.split('-')[1]}.mat")
+    hla_mat_path = Path(base_dir.parent.parent, "slice_inflate/preprocessing", "mmwhs_1002_HLA_red_slice_to_ras.mat")
+
     align_mat = torch.from_numpy(np.loadtxt(align_mat_path))
+    hla_mat = align_mat @ torch.from_numpy(np.loadtxt(hla_mat_path))
 
-    aligned_nii_volume = slicer_slice_transform(nii_volume, align_mat, fov_mm=torch.tensor([300,300,300]), fov_vox=torch.tensor([200,200,200]), is_label=is_label)
+    aligned_nii_volume = slicer_slice_transform(nii_volume, hla_mat, fov_mm=FOV_MM, fov_vox=FOV_VOX, is_label=is_label)
     return aligned_nii_volume
-
 
 
 
@@ -118,9 +144,10 @@ def cut_sa_hla_slice_from_volume(base_dir, nii_path, _3d_id, is_label):
     hla_mat = align_mat @ torch.from_numpy(np.loadtxt(hla_mat_path))
     sa_mat =  align_mat @ torch.from_numpy(np.loadtxt(sa_mat_path))
 
-    aligned_hla_nii_volume = slicer_slice_transform(nii_volume, hla_mat, fov_mm=torch.tensor([300,300,300]), fov_vox=torch.tensor([200,200,200]), is_label=is_label)
-    aligned_sa_nii_volume = slicer_slice_transform(nii_volume, sa_mat, fov_mm=torch.tensor([300,300,300]), fov_vox=torch.tensor([200,200,200]), is_label=is_label)
+    aligned_hla_nii_volume = slicer_slice_transform(nii_volume, hla_mat, fov_mm=FOV_MM, fov_vox=FOV_VOX, is_label=is_label)
+    aligned_sa_nii_volume = slicer_slice_transform(nii_volume, sa_mat, fov_mm=FOV_MM, fov_vox=FOV_VOX, is_label=is_label)
 
     hla_slc = cut_slice(aligned_hla_nii_volume)
     sa_slc = cut_slice(aligned_sa_nii_volume)
+
     return hla_slc, sa_slc

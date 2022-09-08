@@ -15,11 +15,14 @@ class HybridIdDataset(Dataset):
         base_dir, load_func, extract_slice_func=None,
         ensure_labeled_pairs=True, do_resample=True,
         resample_size: tuple=(96,96,60), do_normalize:bool=True,
-        max_load_3d_num=None, crop_3d_region=None, modified_3d_label_override=None,
+        max_load_3d_num=None,
+        crop_3d_region=None, crop_around_3d_label_center=None,
+        modified_3d_label_override=None,
         crop_2d_slices_gt_num_threshold=0,
         prevent_disturbance=False,
         label_tags=(),
-        use_2d_normal_to=None, pre_interpolation_factor=2., device='cpu', debug=False,
+        use_2d_normal_to=None, crop_around_2d_label_center=None,
+        pre_interpolation_factor=2., device='cpu', debug=False,
         **kwargs
     ):
 
