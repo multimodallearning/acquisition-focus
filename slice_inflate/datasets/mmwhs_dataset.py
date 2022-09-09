@@ -2,6 +2,7 @@ import os
 import time
 import glob
 import re
+import warnings
 import torch
 import torch.nn.functional as F
 import nibabel as nib
@@ -31,6 +32,10 @@ class MMWHSDataset(HybridIdDataset):
         **kwargs):
         self.state = state
 
+        if kwargs['use_2d_normal_to'] is not None:
+            warnings.warn("Static 2D data extraction for this dataset is skipped.")
+            kwargs['use_2d_normal_to'] = None
+
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
 
     def extract_3d_id(self, _input):
@@ -45,9 +50,96 @@ class MMWHSDataset(HybridIdDataset):
         items = list(filter(None, items))
         return "-".join(items)
 
+    def __getitem__(self, dataset_idx, use_2d_override=None):
+        use_2d = self.use_2d(use_2d_override)
+        if use_2d:
+            all_ids = self.get_2d_ids()
+            _id = all_ids[dataset_idx]
+            image = self.img_data_2d.get(_id, torch.tensor([]))
+            label = self.label_data_2d.get(_id, torch.tensor([]))
+
+            # For 2D id cut last 4 "003rW100"
+            _3d_id = self.get_3d_from_2d_identifiers(_id)
+            image_path = self.img_paths.get(_3d_id)
+            label_path = self.label_paths.get(_3d_id, "")
+
+            # Additional data will only have ids for 3D samples
+            additional_data = self.additional_data_3d.get(_3d_id, "")
+
+        else:
+            all_ids = self.get_3d_ids()
+            _id = all_ids[dataset_idx]
+            image = self.img_data_3d.get(_id, torch.tensor([]))
+            label = self.label_data_3d.get(_id, torch.tensor([]))
+
+            image_path = self.img_paths[_id]
+            label_path = self.label_paths.get(_id, [])
+
+            additional_data = self.additional_data_3d.get(_id, [])
+
+        spat_augment_grid = []
+
+        if self.use_modified:
+            if use_2d:
+                modified_label = self.modified_label_data_2d.get(_id, label.detach().clone())
+            else:
+                modified_label = self.modified_label_data_3d.get(_id, label.detach().clone())
+        else:
+            modified_label = label.detach().clone()
+
+        image = image.to(device=self.device)
+        label = label.to(device=self.device)
+
+        modified_label, _ = ensure_dense(modified_label)
+        modified_label = modified_label.to(device=self.device)
+
+        augment_affine = None
+
+        if self.do_augment and not self.augment_at_collate:
+            augment_affine = torch.eye(4)
+
+        sa_image, sa_image_slc, hla_image_slc = retrieve_augmented_hybrid_aligned(self.base_dir, image, additional_data,
+            is_label=False, augment_affine=augment_affine
+        )
+        sa_label, sa_label_slc, hla_label_slc = retrieve_augmented_hybrid_aligned(self.base_dir, label, additional_data,
+            is_label=False, augment_affine=augment_affine
+        )
+
+        return dict(
+            dataset_idx=dataset_idx,
+            id=_id,
+            image_path=image_path,
+            label_path=label_path,
+
+            image=sa_image,
+            sa_image_slc=sa_image_slc,
+            hla_image_slc=hla_image_slc,
+
+            label=sa_label,
+            sa_label_slc=sa_label_slc,
+            hla_label_slc=hla_label_slc,
+            modified_label=modified_label,
+
+            additional_data=additional_data
+        )
+
+
+
+def retrieve_augmented_hybrid_aligned(base_dir, volume, additional_data, is_label, augment_affine=None):
+    initial_affine = additional_data['initial_affine']
+    align_affine = additional_data['align_affine']
+
+    if augment_affine is not None:
+        align_affine = align_affine @ augment_affine
+
+    sa_volume, hla_volume = aling_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, is_label)
+    return sa_volume, cut_slice(sa_volume), cut_slice(hla_volume)
+
+
 
 # @cache.cache(verbose=True)
 def extract_2d_data(self_attributes: dict):
+
     # Use only specific attributes of a dict to have a cacheable function
     self = DotDict(self_attributes)
 
@@ -225,11 +317,6 @@ def load_data(self_attributes: dict):
             initial_affine=torch.from_numpy(nib_tmp.affine),
             align_affine=torch.from_numpy(np.loadtxt(align_affine_path))
         )
-
-        # if self.do_align_global is not None:
-        #     nib_tmp = align_global(self.base_dir, _file, _3d_id, is_label)
-        # else:
-            # nib_tmp = nib.load(_file)
 
         if is_label:
             resample_mode = 'nearest'

@@ -69,7 +69,7 @@ def slicer_slice_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_
 
     target_shape = torch.Size([1, 1] + fov_vox.tolist())
 
-    grid = torch.nn.functional.affine_grid(affine_mat[:3,:].view(1,3,4), target_shape, align_corners=False)
+    grid = torch.nn.functional.affine_grid(affine_mat[:3,:].view(1,3,4), target_shape, align_corners=False).to(device=volume.device)
 
     if is_label:
         resampled = torch.nn.functional.grid_sample(volume, grid, align_corners=False, mode='nearest')

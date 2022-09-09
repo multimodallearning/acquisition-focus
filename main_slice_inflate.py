@@ -92,36 +92,32 @@ training_dataset = MMWHSDataset(
 # %%
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
+from slice_inflate.datasets.align_mmwhs import cut_slice
 
-hla_sa_zip = zip(
-    [training_dataset[idx] for idx in range(0,10,2)],
-    [training_dataset[idx] for idx in range(1,10,2)]
-)
-
-for hla_sample, sa_sample in hla_sa_zip:
-    fig = plt.figure(figsize=(4., 4.))
-    grid = ImageGrid(fig, 111,  # similar to subplot(111)
-        nrows_ncols=(1, 2),  # creates 2x2 grid of axes
-        axes_pad=0.1,  # pad between axes in inch.
-    )
-
-    for ax, im in zip(grid, [hla_sample['label'], sa_sample['label']]):
-        ax.imshow(im, vmax=850, cmap='gray')
-
-    plt.show()
 
 # %%
-lbls = [training_dataset.__getitem__(idx, use_2d_override=False)['label'][:,:,64] for idx in range(5)]
+for sample in [training_dataset[idx] for idx in range(5)]:
 
-fig = plt.figure(figsize=(16., 4.))
-grid = ImageGrid(fig, 111,  # similar to subplot(111)
-    nrows_ncols=(1, 5),  # creates 2x2 grid of axes
-    axes_pad=0.0,  # pad between axes in inch.
-)
+    fig = plt.figure(figsize=(16., 4.))
+    grid = ImageGrid(fig, 111,  # similar to subplot(111)
+        nrows_ncols=(1, 6),  # creates 2x2 grid of axes
+        axes_pad=0.0,  # pad between axes in inch.
+    )
 
-for ax, im in zip(grid, lbls):
-    ax.imshow(im, vmax=850, cmap='gray')
+    show_row = [
+        cut_slice(sample['image'].cpu()),
+        cut_slice(sample['label'].cpu()),
 
-plt.show()
+        sample['sa_image_slc'].cpu(),
+        sample['sa_label_slc'].cpu(),
+
+        sample['hla_image_slc'].cpu(),
+        sample['hla_label_slc'].cpu(),
+    ]
+
+    for ax, im in zip(grid, show_row):
+        ax.imshow(im, cmap='gray')
+
+    plt.show()
 
 # %%
