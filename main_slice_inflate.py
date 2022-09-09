@@ -43,6 +43,7 @@ config_dict = DotDict({
     'data_base_path': str(Path(THIS_SCRIPT_DIR, "data/MMWHS")),
     'reg_state': None, # Registered (noisy) labels used in training. See prepare_data() for valid reg_states
     'train_set_max_len': None,              # Length to cut of dataloader sample count
+    'crop_around_3d_label_center': None, #(128,128,128),
     'crop_3d_region': ((0,128), (0,128), (0,128)),        # dimension range in which 3D samples are cropped
     'crop_2d_slices_gt_num_threshold': 0,   # Drop 2D slices if less than threshold pixels are positive
 
@@ -79,7 +80,7 @@ training_dataset = MMWHSDataset(
     do_align_global=True,
     do_resample=False, # Prior to cropping, resample image?
     crop_3d_region=None, # Crop or pad the images to these dimensions
-    crop_around_3d_label_center=(128,128,128),
+    crop_around_3d_label_center=config.crop_around_3d_label_center,
     pre_interpolation_factor=1., # When getting the data, resize the data by this factor
     ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
     use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
@@ -111,7 +112,7 @@ for hla_sample, sa_sample in hla_sa_zip:
 
 # %%
 lbls = [training_dataset.__getitem__(idx, use_2d_override=False)['label'][:,:,64] for idx in range(5)]
-    
+
 fig = plt.figure(figsize=(16., 4.))
 grid = ImageGrid(fig, 111,  # similar to subplot(111)
     nrows_ncols=(1, 5),  # creates 2x2 grid of axes

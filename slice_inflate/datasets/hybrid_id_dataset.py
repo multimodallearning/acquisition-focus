@@ -94,13 +94,13 @@ class HybridIdDataset(Dataset):
         #check for consistency
         print(f"Equal image and label numbers: {set(self.img_data_3d)==set(self.label_data_3d)==set(self.modified_label_data_3d)} ({len(self.img_data_3d)})")
 
-        img_stack = torch.stack(list(self.img_data_3d.values()), dim=0)
-        img_mean, img_std = img_stack.mean(), img_stack.std()
+        # img_stack = torch.stack(list(self.img_data_3d.values()), dim=0)
+        # img_mean, img_std = img_stack.mean(), img_stack.std()
 
-        label_stack = torch.stack(list(self.label_data_3d.values()), dim=0)
+        # label_stack = torch.stack(list(self.label_data_3d.values()), dim=0)
 
-        print("Image shape: {}, mean.: {:.2f}, std.: {:.2f}".format(img_stack.shape, img_mean, img_std))
-        print("Label shape: {}, max.: {}".format(label_stack.shape,torch.max(label_stack)))
+        # print("Image shape: {}, mean.: {:.2f}, std.: {:.2f}".format(img_stack.shape, img_mean, img_std))
+        # print("Label shape: {}, max.: {}".format(label_stack.shape,torch.max(label_stack)))
 
         # Retrieve slices and plugin modified data
         self.img_data_2d = {}

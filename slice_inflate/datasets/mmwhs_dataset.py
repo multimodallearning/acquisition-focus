@@ -13,7 +13,7 @@ import numpy as np
 from slice_inflate.utils.common_utils import DotDict
 from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
-from slice_inflate.datasets.align_mmwhs import slicer_slice_transform, align_global, cut_sa_hla_slice_from_volume, crop_around_label_center
+from slice_inflate.datasets.align_mmwhs import slicer_slice_transform, aling_to_sa_hla_from_volume, crop_around_label_center, cut_slice
 
 cache = Memory(location=os.environ['MMWHS_CACHE_PATH'])
 
@@ -67,15 +67,19 @@ def extract_2d_data(self_attributes: dict):
         raise ValueError
 
     if self.use_2d_normal_to == "HLA/SA":
-        for _3d_id, _file in self.img_paths.items():
-            hla_slice, sa_slice = cut_sa_hla_slice_from_volume(self.base_dir, _file, _3d_id, is_label=False)
-            img_data_2d[f"{_3d_id}:HLA"] = hla_slice
-            img_data_2d[f"{_3d_id}:SA"] = sa_slice
+        for _3d_id, image in self.img_data_3d.items():
+            initial_affine = self.additional_data_3d[_3d_id]['initial_affine']
+            align_affine = self.additional_data_3d[_3d_id]['align_affine']
+            sa_volume, hla_volume = aling_to_sa_hla_from_volume(self.base_dir, image, initial_affine, align_affine, is_label=False)
+            img_data_2d[f"{_3d_id}:HLA"] = cut_slice(hla_volume)
+            img_data_2d[f"{_3d_id}:SA"] = cut_slice(sa_volume)
 
-        for _3d_id, _file in self.label_paths.items():
-            hla_slice, sa_slice = cut_sa_hla_slice_from_volume(self.base_dir, _file, _3d_id, is_label=True)
-            label_data_2d[f"{_3d_id}:HLA"] = hla_slice
-            label_data_2d[f"{_3d_id}:SA"] = sa_slice
+        for _3d_id, label in self.label_data_3d.items():
+            initial_affine = self.additional_data_3d[_3d_id]['initial_affine']
+            align_affine = self.additional_data_3d[_3d_id]['align_affine']
+            sa_volume, hla_volume = aling_to_sa_hla_from_volume(self.base_dir, label, initial_affine, align_affine, is_label=True)
+            label_data_2d[f"{_3d_id}:HLA"] = cut_slice(hla_volume)
+            label_data_2d[f"{_3d_id}:SA"] = cut_slice(sa_volume)
 
     else:
         for _3d_id, image in self.img_data_3d.items():
@@ -216,10 +220,16 @@ def load_data(self_attributes: dict):
         is_label = not IMAGE_ID in trailing_name
         nib_tmp = nib.load(_file)
 
-        if self.do_align_global is not None:
-            nib_tmp = align_global(self.base_dir, _file, _3d_id, is_label)
-        else:
-            nib_tmp = nib.load(_file)
+        align_affine_path = str(Path(self.base_dir, "preprocessed", f"f1002mr_m{_3d_id.split('-')[0]}{_3d_id.split('-')[1]}.mat"))
+        additional_data_3d[_3d_id] = dict(
+            initial_affine=torch.from_numpy(nib_tmp.affine),
+            align_affine=torch.from_numpy(np.loadtxt(align_affine_path))
+        )
+
+        # if self.do_align_global is not None:
+        #     nib_tmp = align_global(self.base_dir, _file, _3d_id, is_label)
+        # else:
+            # nib_tmp = nib.load(_file)
 
         if is_label:
             resample_mode = 'nearest'
