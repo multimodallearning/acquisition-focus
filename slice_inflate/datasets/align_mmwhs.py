@@ -87,12 +87,12 @@ def slicer_slice_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_
 
 def crop_around_label_center(image, label, vox_size):
     n_dims = label.dim()
-    sp_label = label.to_sparse()
+    vox_size = vox_size.to(device=label.device)
+    sp_label = label.long().to_sparse()
     sp_idxs = sp_label._indices()
     lbl_shape = torch.as_tensor(label.shape)
-    label_center = \
-        torch.div((sp_idxs.max(dim=1)[0] + sp_idxs.min(dim=1)[0]), 2).int()
-    bbox_max = label_center+((vox_size)/2).int()
+    label_center = sp_idxs.float().mean(dim=1).int()
+    bbox_max = label_center+(vox_size/2).int()
     bbox_min = label_center-((vox_size+1)/2).int()
 
     crop_slcs = []
@@ -131,7 +131,7 @@ def cut_slice(volume):
 
 
 
-def aling_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, is_label):
+def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, is_label):
     base_dir = Path(base_dir)
     hla_affine_path = Path(base_dir.parent.parent, "slice_inflate/preprocessing", "mmwhs_1002_HLA_red_slice_to_ras.mat")
     sa_affine_path =  Path(base_dir.parent.parent, "slice_inflate/preprocessing", "mmwhs_1002_SA_yellow_slice_to_ras.mat")

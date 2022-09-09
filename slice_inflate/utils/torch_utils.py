@@ -126,7 +126,7 @@ def spatial_augment(b_image=None, b_label=None,
     elif b_label is None and b_image.numel() > 0:
         common_shape = b_image.shape
         common_device = b_image.device
-        
+
     else:
         assert b_image.shape == b_label.shape, \
             f"Image and label shapes must match but are {b_image.shape} and {b_label.shape}."
@@ -381,3 +381,21 @@ def save_model(_path, **statefuls):
     for name, stful in statefuls.items():
         if stful != None:
             torch.save(stful.state_dict(), _path.joinpath(name+'.pth'))
+
+
+
+
+def get_rotation_matrix_3d_from_angles(deg_angles, device='cpu'):
+    """3D rotation matrix."""
+    angles = torch.deg2rad(deg_angles)
+    ax, ay, az = angles
+    Rx = torch.tensor([[1, 0, 0],
+                        [0, torch.cos(ax), -torch.sin(ax)],
+                        [0, torch.sin(ax), torch.cos(ax)]], device=device)
+    Ry = torch.tensor([[torch.cos(ay), 0, torch.sin(ay)],
+                        [0, 1, 0],
+                        [-torch.sin(ay), 0, torch.cos(ay)]], device=device)
+    Rz = torch.tensor([[torch.cos(az), -torch.sin(az), 0],
+                        [torch.sin(az),  torch.cos(az), 0],
+                        [0, 0, 1]], device=device)
+    return Rz @ Ry @ Rx

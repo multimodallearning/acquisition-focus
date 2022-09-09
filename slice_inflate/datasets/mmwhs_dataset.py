@@ -12,9 +12,9 @@ from joblib import Memory
 import numpy as np
 
 from slice_inflate.utils.common_utils import DotDict
-from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity
+from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, get_rotation_matrix_3d_from_angles
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
-from slice_inflate.datasets.align_mmwhs import slicer_slice_transform, aling_to_sa_hla_from_volume, crop_around_label_center, cut_slice
+from slice_inflate.datasets.align_mmwhs import slicer_slice_transform, align_to_sa_hla_from_volume, crop_around_label_center, cut_slice
 
 cache = Memory(location=os.environ['MMWHS_CACHE_PATH'])
 
@@ -77,8 +77,6 @@ class MMWHSDataset(HybridIdDataset):
 
             additional_data = self.additional_data_3d.get(_id, [])
 
-        spat_augment_grid = []
-
         if self.use_modified:
             if use_2d:
                 modified_label = self.modified_label_data_2d.get(_id, label.detach().clone())
@@ -96,14 +94,26 @@ class MMWHSDataset(HybridIdDataset):
         augment_affine = None
 
         if self.do_augment and not self.augment_at_collate:
+            augment_angle_std = self.self_attributes['augment_angle_std']
+            deg_angles = torch.normal(mean=0, std=augment_angle_std*torch.ones(3))
             augment_affine = torch.eye(4)
+            augment_affine[:3,:3] = get_rotation_matrix_3d_from_angles(deg_angles)
 
         sa_image, sa_image_slc, hla_image_slc = retrieve_augmented_hybrid_aligned(self.base_dir, image, additional_data,
             is_label=False, augment_affine=augment_affine
         )
         sa_label, sa_label_slc, hla_label_slc = retrieve_augmented_hybrid_aligned(self.base_dir, label, additional_data,
-            is_label=False, augment_affine=augment_affine
+            is_label=True, augment_affine=augment_affine
         )
+
+        if self.self_attributes['crop_around_3d_label_center'] is not None:
+            _3d_vox_size = torch.as_tensor(self.self_attributes['crop_around_3d_label_center'])
+            sa_image, sa_label = crop_around_label_center(sa_image, sa_label, _3d_vox_size)
+
+        if self.self_attributes['crop_around_2d_label_center'] is not None:
+            _2d_vox_size = torch.as_tensor(self.self_attributes['crop_around_2d_label_center'])
+            sa_image_slc, sa_label_slc = crop_around_label_center(sa_image_slc, sa_label_slc, _2d_vox_size)
+            hla_image_slc, hla_label_slc = crop_around_label_center(hla_image_slc, hla_label_slc, _2d_vox_size)
 
         return dict(
             dataset_idx=dataset_idx,
@@ -127,12 +137,12 @@ class MMWHSDataset(HybridIdDataset):
 
 def retrieve_augmented_hybrid_aligned(base_dir, volume, additional_data, is_label, augment_affine=None):
     initial_affine = additional_data['initial_affine']
-    align_affine = additional_data['align_affine']
+    align_affine = additional_data['align_affine'].to(dtype=initial_affine.dtype)
 
     if augment_affine is not None:
-        align_affine = align_affine @ augment_affine
+        align_affine = align_affine @ augment_affine.to(dtype=initial_affine.dtype)
 
-    sa_volume, hla_volume = aling_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, is_label)
+    sa_volume, hla_volume = align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, is_label)
     return sa_volume, cut_slice(sa_volume), cut_slice(hla_volume)
 
 
@@ -162,14 +172,14 @@ def extract_2d_data(self_attributes: dict):
         for _3d_id, image in self.img_data_3d.items():
             initial_affine = self.additional_data_3d[_3d_id]['initial_affine']
             align_affine = self.additional_data_3d[_3d_id]['align_affine']
-            sa_volume, hla_volume = aling_to_sa_hla_from_volume(self.base_dir, image, initial_affine, align_affine, is_label=False)
+            sa_volume, hla_volume = align_to_sa_hla_from_volume(self.base_dir, image, initial_affine, align_affine, is_label=False)
             img_data_2d[f"{_3d_id}:HLA"] = cut_slice(hla_volume)
             img_data_2d[f"{_3d_id}:SA"] = cut_slice(sa_volume)
 
         for _3d_id, label in self.label_data_3d.items():
             initial_affine = self.additional_data_3d[_3d_id]['initial_affine']
             align_affine = self.additional_data_3d[_3d_id]['align_affine']
-            sa_volume, hla_volume = aling_to_sa_hla_from_volume(self.base_dir, label, initial_affine, align_affine, is_label=True)
+            sa_volume, hla_volume = align_to_sa_hla_from_volume(self.base_dir, label, initial_affine, align_affine, is_label=True)
             label_data_2d[f"{_3d_id}:HLA"] = cut_slice(hla_volume)
             label_data_2d[f"{_3d_id}:SA"] = cut_slice(sa_volume)
 
@@ -234,6 +244,8 @@ def extract_2d_data(self_attributes: dict):
         label_data_2d=label_data_2d,
         modified_label_data_2d=modified_label_data_2d
     )
+
+
 
 # @cache.cache(verbose=True)
 def load_data(self_attributes: dict):
@@ -318,12 +330,13 @@ def load_data(self_attributes: dict):
             align_affine=torch.from_numpy(np.loadtxt(align_affine_path))
         )
 
+        tmp = torch.from_numpy(nib_tmp.get_fdata()).squeeze()
+
         if is_label:
             resample_mode = 'nearest'
+            tmp = replace_label_values(tmp)
         else:
             resample_mode = 'trilinear'
-
-        tmp = torch.from_numpy(nib_tmp.get_fdata()).squeeze()
 
         if self.do_resample:
             tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=self.resample_size, mode=resample_mode).squeeze(0).squeeze(0)
@@ -356,14 +369,14 @@ def load_data(self_attributes: dict):
         modified_label_data_3d[label_id] = label_data_3d[label_id]
 
     # Postprocessing of 3d volumes
-    if self.crop_around_3d_label_center is not None:
-        for _3d_id, img, label in \
-            zip(img_data_3d.keys(), img_data_3d.values(), label_data_3d.values()):
-            img, label = crop_around_label_center(img, label, \
-                torch.as_tensor(self.crop_around_3d_label_center)
-            )
-            img_data_3d[_3d_id] = img
-            label_data_3d[_3d_id] = label
+    # if self.crop_around_3d_label_center is not None:
+    #     for _3d_id, img, label in \
+    #         zip(img_data_3d.keys(), img_data_3d.values(), label_data_3d.values()):
+    #         img, label = crop_around_label_center(img, label, \
+    #             torch.as_tensor(self.crop_around_3d_label_center)
+    #         )
+    #         img_data_3d[_3d_id] = img
+    #         label_data_3d[_3d_id] = label
 
     return dict(
         img_paths=img_paths,
@@ -373,3 +386,24 @@ def load_data(self_attributes: dict):
         modified_label_data_3d=modified_label_data_3d,
         additional_data_3d=additional_data_3d
     )
+
+
+def replace_label_values(label):
+    # Replace label numbers with MMWHS equivalent
+    # STRUCTURE           MMWHS   ACDC    NNUNET
+    # background          0       0       0
+    # left_myocardium     205     2       1
+    # left_atrium         420     N/A     2
+    # ?                   421     N/A     N/A
+    # left_ventricle      500     3       3
+    # right_atrium        550     N/A     4
+    # right_ventricle     600     1       5
+    # ascending_aorta     820     N/A     6
+    # pulmonary_artery    850     N/A     7
+    orig_values = [0,  205, 420, 421, 500, 550, 600, 820, 850]
+    new_values =  [0,  1,   2,   0,   3,   4,   5,   0,   0  ]
+
+    modified_label = label.clone()
+    for orig, new in zip(orig_values, new_values):
+        modified_label[modified_label == orig] = new
+    return modified_label

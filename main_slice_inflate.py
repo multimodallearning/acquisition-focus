@@ -43,7 +43,7 @@ config_dict = DotDict({
     'data_base_path': str(Path(THIS_SCRIPT_DIR, "data/MMWHS")),
     'reg_state': None, # Registered (noisy) labels used in training. See prepare_data() for valid reg_states
     'train_set_max_len': None,              # Length to cut of dataloader sample count
-    'crop_around_3d_label_center': None, #(128,128,128),
+    'crop_around_3d_label_center': (128,128,128),
     'crop_3d_region': ((0,128), (0,128), (0,128)),        # dimension range in which 3D samples are cropped
     'crop_2d_slices_gt_num_threshold': 0,   # Drop 2D slices if less than threshold pixels are positive
 
@@ -85,6 +85,9 @@ training_dataset = MMWHSDataset(
     ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
     use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
     crop_around_2d_label_center=(128,128),
+
+    augment_angle_std=5,
+
     device=config.device,
     debug=config.debug
 )
@@ -95,9 +98,13 @@ from mpl_toolkits.axes_grid1 import ImageGrid
 from slice_inflate.datasets.align_mmwhs import cut_slice
 
 
-# %%
-for sample in [training_dataset[idx] for idx in range(5)]:
 
+# %%
+training_dataset.train(augment=False)
+training_dataset.self_attributes['augment_angle_std'] = 2
+print(training_dataset.do_augment)
+for sample in [training_dataset[idx] for idx in [1]]:
+    pass
     fig = plt.figure(figsize=(16., 4.))
     grid = ImageGrid(fig, 111,  # similar to subplot(111)
         nrows_ncols=(1, 6),  # creates 2x2 grid of axes
@@ -116,8 +123,64 @@ for sample in [training_dataset[idx] for idx in range(5)]:
     ]
 
     for ax, im in zip(grid, show_row):
-        ax.imshow(im, cmap='gray')
+        ax.imshow(im, cmap='gray', interpolation='none')
 
     plt.show()
+
+# %%
+training_dataset.train()
+import nibabel as nib
+training_dataset.self_attributes['augment_angle_std'] = 10
+print(training_dataset.do_augment)
+import torch
+lbl, sa_label, hla_label = torch.zeros(128,128), torch.zeros(128,128), torch.zeros(128,128)
+for idx in range(15):
+    sample = training_dataset[1]
+    nib.save(nib.Nifti1Image(sample['label'].cpu().numpy(), affine=torch.eye(4).numpy()), f'out{idx}.nii.gz')
+    lbl += cut_slice(sample['label']).cpu()
+    sa_label += sample['sa_label_slc'].cpu()
+    hla_label += sample['hla_label_slc'].cpu()
+fig = plt.figure(figsize=(16., 4.))
+grid = ImageGrid(fig, 111,  # similar to subplot(111)
+    nrows_ncols=(1, 3),  # creates 2x2 grid of axes
+    axes_pad=0.0,  # pad between axes in inch.
+)
+
+show_row = [
+    lbl, sa_label, hla_label
+]
+
+for ax, im in zip(grid, show_row):
+    ax.imshow(im, cmap='magma', interpolation='none')
+
+plt.show()
+
+# %%
+training_dataset.train(augment=False)
+training_dataset.self_attributes['augment_angle_std'] = 2
+print(training_dataset.do_augment)
+import torch
+lbl, sa_label, hla_label = torch.zeros(128,128), torch.zeros(128,128), torch.zeros(128,128)
+for _ in range(5):
+    sample = training_dataset[1]
+
+    lbl += cut_slice(sample['label']).cpu()
+    sa_label += sample['sa_label_slc'].cpu()
+    hla_label += sample['hla_label_slc'].cpu()
+
+fig = plt.figure(figsize=(16., 4.))
+grid = ImageGrid(fig, 111,  # similar to subplot(111)
+    nrows_ncols=(1, 3),  # creates 2x2 grid of axes
+    axes_pad=0.0,  # pad between axes in inch.
+)
+
+show_row = [
+    lbl, sa_label, hla_label
+]
+
+for ax, im in zip(grid, show_row):
+    ax.imshow(im, cmap='magma', interpolation='none')
+
+plt.show()
 
 # %%
