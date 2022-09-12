@@ -19,6 +19,8 @@ jupytext = "^1.14.1"
 tqdm = "^4.64.1"
 joblib = "^1.1.0"
 ipywidgets = "^8.0.2"
+wandb = "^0.13.3"
+scikit-learn = "^1.1.2"
 
 
 [build-system]

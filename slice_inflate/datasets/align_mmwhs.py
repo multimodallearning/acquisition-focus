@@ -139,9 +139,9 @@ def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, 
     hla_affine = align_affine @ torch.from_numpy(np.loadtxt(hla_affine_path))
     sa_affine =  align_affine @ torch.from_numpy(np.loadtxt(sa_affine_path))
 
-    aligned_hla_volume, _ = slicer_slice_transform(volume, initial_affine, hla_affine, fov_mm=FOV_MM, fov_vox=FOV_VOX, is_label=is_label)
-
-    # Do only retrieve the center slice for SA view
-    aligned_sa_volume, _ = slicer_slice_transform(volume, initial_affine, sa_affine, fov_mm=torch.tensor([300.,300.,1.5]), fov_vox=torch.tensor([200,200,1]), is_label=is_label)
+    # Do only retrieve the center slice for HLA view
+    aligned_hla_volume, _ = slicer_slice_transform(volume, initial_affine, hla_affine, fov_mm=torch.tensor([300.,300.,1.5]), fov_vox=torch.tensor([200,200,1]), is_label=is_label)
+    
+    aligned_sa_volume, _ = slicer_slice_transform(volume, initial_affine, sa_affine, fov_mm=FOV_MM, fov_vox=FOV_VOX, is_label=is_label)
 
     return aligned_sa_volume, aligned_hla_volume

@@ -27,8 +27,9 @@ class MMWHSDataset(HybridIdDataset):
             "left_ventricle",
             "right_atrium",
             "right_ventricle",
-            "ascending_aorta",
-            "pulmonary_artery"),
+            # "ascending_aorta", # This label is currently purged from the data
+            # "pulmonary_artery" # This label is currently purged from the data
+        ),
         **kwargs):
         self.state = state
 
@@ -291,7 +292,7 @@ def load_data(self_attributes: dict):
     label_paths = {}
 
     if self.debug:
-        files = files[:4]
+        files = files[:10]
 
     for _path in files:
         trailing_name = str(_path).split("/")[-1]
