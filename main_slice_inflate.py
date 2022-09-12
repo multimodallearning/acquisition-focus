@@ -30,14 +30,16 @@ import nibabel as nib
 
 from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset, load_data, extract_2d_data
 from slice_inflate.utils.common_utils import DotDict, get_script_dir
-from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense
+from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, get_batch_dice_over_all, get_batch_dice_per_class, save_model
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
 from slice_inflate.datasets.align_mmwhs import cut_slice
-from slice_inflate.utils.log_utils import get_global_idx
+from slice_inflate.utils.log_utils import get_global_idx, log_class_dices
 from sklearn.model_selection import KFold
 from torch.utils.data import DataLoader
 
+from mdl_seg_class.metrics import dice3d
+import numpy as np
 THIS_SCRIPT_DIR = get_script_dir()
 
 PROJECT_NAME = "slice_inflate"
@@ -414,10 +416,10 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
 
 # %%
-def inference_wrap(model, img, use_2d, use_mind):
+def inference_wrap(model, seg, use_2d, use_mind):
     with torch.inference_mode():
-        b_img = img.unsqueeze(0).unsqueeze(0).float()
-        b_out = model(b_img)[0]
+        b_seg = seg.unsqueeze(0).unsqueeze(0).float()
+        b_out = model(b_seg)[0]
         b_out = b_out.argmax(1)
         return b_out
 
@@ -447,10 +449,9 @@ def train_DL(run_name, config, training_dataset):
     for fold_idx, (train_idxs, val_idxs) in fold_iter:
         train_idxs = torch.tensor(train_idxs)
         val_idxs = torch.tensor(val_idxs)
-        val_3d_ids = training_dataset.switch_3d_identifiers(val_idxs)
-        all_3d_ids = training_dataset.get_3d_ids()
+        val_ids = training_dataset.switch_3d_identifiers(val_idxs)
 
-        print(f"Will run validation with these 3D samples (#{len(val_3d_ids)}):", sorted(val_3d_ids))
+        print(f"Will run validation with these 3D samples (#{len(val_ids)}):", sorted(val_ids))
 
         ### Add train sampler and dataloaders ##
         train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
@@ -484,6 +485,7 @@ def train_DL(run_name, config, training_dataset):
             print("Fetching training metrics for samples.")
 
             training_dataset.eval()
+
             for sample in tqdm((training_dataset[idx] for idx in train_idxs), desc="metric:", total=len(train_idxs)):
                 d_idxs = sample['dataset_idx']
                 label = sample['label']
@@ -517,27 +519,34 @@ def train_DL(run_name, config, training_dataset):
 
                 optimizer.zero_grad()
 
-                b_img = batch['image']
+                b_hla_slc_seg = batch['hla_label_slc']
+                b_sa_slc_seg = batch['sa_label_slc']
+                b_input = torch.cat(
+                    [b_sa_slc_seg.unsqueeze(1).repeat(1,64,1,1),
+                     b_hla_slc_seg.unsqueeze(1).repeat(1,64,1,1)],
+                     dim=1
+                )
                 b_seg = batch['label']
 
                 b_idxs_dataset = batch['dataset_idx']
-                b_img = b_img.float()
+                
 
-                b_img = b_img.to(device=config.device)
+                b_input = b_input.to(device=config.device)
                 b_idxs_dataset = b_idxs_dataset.to(device=config.device)
                 b_seg = b_seg.to(device=config.device)
 
-                b_img = b_img.unsqueeze(1)
-
+                # b_input = b_input.unsqueeze(1)
+                b_input = F.one_hot(b_input, len(training_dataset.label_tags)).permute(0,4,1,2,3)
+                b_input = b_input.float()
                 ### Forward pass ###
                 with amp.autocast(enabled=autocast_enabled):
-                    assert b_img.dim() == len(n_dims)+2, \
-                        f"Input image for model must be {len(n_dims)+2}D: BxCxSPATIAL but is {b_img.shape}"
+                    assert b_input.dim() == len(n_dims)+2, \
+                        f"Input image for model must be {len(n_dims)+2}D: BxCxSPATIAL but is {b_input.shape}"
                     for param in model.parameters():
                         param.requires_grad = True
 
                     model.use_checkpointing = True
-                    logits = model(b_img)['out']
+                    logits = model(b_input)[0]
 
                     ### Calculate loss ###
                     assert logits.dim() == len(n_dims)+2, \
@@ -556,7 +565,7 @@ def train_DL(run_name, config, training_dataset):
                 logits_for_score = logits.argmax(1)
 
                 # Calculate dice score
-                b_dice = dice_func(
+                b_dice = dice3d(
                     torch.nn.functional.one_hot(logits_for_score, len(training_dataset.label_tags)),
                     torch.nn.functional.one_hot(b_seg, len(training_dataset.label_tags)), # Calculate dice score with original segmentation (no disturbance)
                     one_hot_torch_style=True
@@ -598,18 +607,17 @@ def train_DL(run_name, config, training_dataset):
                 save_model(
                     Path(THIS_SCRIPT_DIR, _path),
                     model=model,
-                    optimizer=optimizer, optimizer_dp=optimizer_dp,
+                    optimizer=optimizer,
                     scheduler=scheduler,
-                    scaler=scaler,
-                    scaler_dp=scaler_dp)
+                    scaler=scaler)
 
-                (model, optimizer, scheduler, optimizer_dp, embedding, scaler, scaler_dp) = \
+                (model, optimizer, scheduler, scaler) = \
                     get_model(
                         config, len(training_dataset),
                         len(training_dataset.label_tags),
                         THIS_SCRIPT_DIR=THIS_SCRIPT_DIR,
                         _path=_path, device=config.device)
-
+            continue # TODO remove
             print()
             print("### Validation")
             model.eval()
@@ -620,7 +628,7 @@ def train_DL(run_name, config, training_dataset):
 
             with amp.autocast(enabled=autocast_enabled):
                 with torch.no_grad():
-                    for val_idx in val_3d_idxs:
+                    for val_idx in val_idxs:
                         val_sample = training_dataset.get_3d_item(val_idx)
                         stack_dim = training_dataset.use_2d_normal_to
                         # Create batch out of single val sample
@@ -631,7 +639,7 @@ def train_DL(run_name, config, training_dataset):
                         b_val_seg = b_val_seg.to(device=config.device)
 
                         
-                        output_val = model(b_val_img)['out']
+                        output_val = model(b_val_img)[0]
                         val_logits_for_score = output_val.argmax(1)
 
                         b_val_dice = dice3d(

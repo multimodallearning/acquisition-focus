@@ -132,7 +132,7 @@ class MMWHSDataset(HybridIdDataset):
             label=sa_label.cpu(),
             sa_label_slc=sa_label_slc.cpu(),
             hla_label_slc=hla_label_slc.cpu(),
-            modified_label=modified_label.cpu(),
+            # modified_label=modified_label.cpu(),
 
             additional_data=additional_data
         )

@@ -461,6 +461,27 @@ rtd = ["sphinx-book-theme (>=0.1.0,<0.2.0)", "myst-parser (>=0.14.0,<0.15.0)"]
 code_style = ["pre-commit (==2.6)"]
 
 [[package]]
+name = "mdl-seg-class"
+version = "0.1.1"
+description = "UzL IMI Medical Deep Learning Segmentation and classification utils"
+category = "main"
+optional = false
+python-versions = "^3.8"
+develop = false
+
+[package.dependencies]
+jupyter-core = "*"
+matplotlib = "^3.4.2"
+numpy = "^1.20.3"
+torch = "^1.8.1"
+
+[package.source]
+type = "git"
+url = "git@github.com:MDL-UzL/SegmentationClassification.git"
+reference = "HEAD"
+resolved_reference = "11f5e0761230aea7417b5906af314834f8a5f80c"
+
+[[package]]
 name = "mdurl"
 version = "0.1.2"
 description = "Markdown URL utilities"
@@ -1052,7 +1073,7 @@ python-versions = ">=3.7"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.9"
-content-hash = "b2e0f3eea0d46f0765d73aecb94fbfe57769d37319c8aad383d4250827f13a5e"
+content-hash = "802fa29266d6cd279cb282c261e9b68e324a14daf250155a73a5da7f6b5e09ed"
 
 [metadata.files]
 appnope = [
@@ -1347,6 +1368,7 @@ mdit-py-plugins = [
     {file = "mdit-py-plugins-0.3.0.tar.gz", hash = "sha256:ecc24f51eeec6ab7eecc2f9724e8272c2fb191c2e93cf98109120c2cace69750"},
     {file = "mdit_py_plugins-0.3.0-py3-none-any.whl", hash = "sha256:b1279701cee2dbf50e188d3da5f51fee8d78d038cdf99be57c6b9d1aa93b4073"},
 ]
+mdl-seg-class = []
 mdurl = [
     {file = "mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"},
     {file = "mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba"},
