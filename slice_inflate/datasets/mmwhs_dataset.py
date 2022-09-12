@@ -99,12 +99,15 @@ class MMWHSDataset(HybridIdDataset):
             augment_affine = torch.eye(4)
             augment_affine[:3,:3] = get_rotation_matrix_3d_from_angles(deg_angles)
 
-        sa_image, sa_image_slc, hla_image_slc = retrieve_augmented_hybrid_aligned(self.base_dir, image, additional_data,
-            is_label=False, augment_affine=augment_affine
-        )
         sa_label, sa_label_slc, hla_label_slc = retrieve_augmented_hybrid_aligned(self.base_dir, label, additional_data,
             is_label=True, augment_affine=augment_affine
         )
+
+        # Do not resample image slices. They are not used currently
+        # sa_image, sa_image_slc, hla_image_slc = retrieve_augmented_hybrid_aligned(self.base_dir, image, additional_data,
+        #     is_label=False, augment_affine=augment_affine
+        # )
+        sa_image, sa_image_slc, hla_image_slc = torch.zeros_like(sa_label), torch.zeros_like(sa_label_slc), torch.zeros_like(hla_label_slc)
 
         if self.self_attributes['crop_around_3d_label_center'] is not None:
             _3d_vox_size = torch.as_tensor(self.self_attributes['crop_around_3d_label_center'])
@@ -121,14 +124,14 @@ class MMWHSDataset(HybridIdDataset):
             image_path=image_path,
             label_path=label_path,
 
-            image=sa_image,
-            sa_image_slc=sa_image_slc,
-            hla_image_slc=hla_image_slc,
+            image=sa_image.cpu(),
+            sa_image_slc=sa_image_slc.cpu(),
+            hla_image_slc=hla_image_slc.cpu(),
 
-            label=sa_label,
-            sa_label_slc=sa_label_slc,
-            hla_label_slc=hla_label_slc,
-            modified_label=modified_label,
+            label=sa_label.cpu(),
+            sa_label_slc=sa_label_slc.cpu(),
+            hla_label_slc=hla_label_slc.cpu(),
+            modified_label=modified_label.cpu(),
 
             additional_data=additional_data
         )
@@ -143,6 +146,7 @@ def retrieve_augmented_hybrid_aligned(base_dir, volume, additional_data, is_labe
         align_affine = align_affine @ augment_affine.to(dtype=initial_affine.dtype)
 
     sa_volume, hla_volume = align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, is_label)
+
     return sa_volume, cut_slice(sa_volume), cut_slice(hla_volume)
 
 
@@ -287,7 +291,7 @@ def load_data(self_attributes: dict):
     label_paths = {}
 
     if self.debug:
-        files = files[:10]
+        files = files[:4]
 
     for _path in files:
         trailing_name = str(_path).split("/")[-1]

@@ -3,9 +3,6 @@ import torch
 import nibabel as nib
 from pathlib import Path
 
-FOV_MM = torch.tensor([300,300,300])
-FOV_VOX = torch.tensor([200,200,200])
-
 
 
 def switch_rows(affine_mat):
@@ -76,7 +73,7 @@ def slicer_slice_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_
     else:
         resampled = torch.nn.functional.grid_sample(volume, grid, align_corners=False)
 
-    resampled = resampled.squeeze()
+    resampled = resampled.view(fov_vox.tolist())
 
     resampled_affine = torch.eye(4)
     resampled_affine[:3,:3] = torch.diag(fov_mm/fov_vox) # TODO: This is not 100% correct - volume is not aligned correctly in space but at least undistorted
@@ -132,6 +129,9 @@ def cut_slice(volume):
 
 
 def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, is_label):
+    FOV_MM = torch.tensor([300,300,300])
+    FOV_VOX = torch.tensor([200,200,200])
+
     base_dir = Path(base_dir)
     hla_affine_path = Path(base_dir.parent.parent, "slice_inflate/preprocessing", "mmwhs_1002_HLA_red_slice_to_ras.mat")
     sa_affine_path =  Path(base_dir.parent.parent, "slice_inflate/preprocessing", "mmwhs_1002_SA_yellow_slice_to_ras.mat")
@@ -140,9 +140,8 @@ def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, 
     sa_affine =  align_affine @ torch.from_numpy(np.loadtxt(sa_affine_path))
 
     aligned_hla_volume, _ = slicer_slice_transform(volume, initial_affine, hla_affine, fov_mm=FOV_MM, fov_vox=FOV_VOX, is_label=is_label)
-    aligned_sa_volume, _ = slicer_slice_transform(volume, initial_affine, sa_affine, fov_mm=FOV_MM, fov_vox=FOV_VOX, is_label=is_label)
 
-    # hla_slc = cut_slice(aligned_hla_volume)
-    # sa_slc = cut_slice(aligned_sa_volume)
+    # Do only retrieve the center slice for SA view
+    aligned_sa_volume, _ = slicer_slice_transform(volume, initial_affine, sa_affine, fov_mm=torch.tensor([300.,300.,1.5]), fov_vox=torch.tensor([200,200,1]), is_label=is_label)
 
     return aligned_sa_volume, aligned_hla_volume
