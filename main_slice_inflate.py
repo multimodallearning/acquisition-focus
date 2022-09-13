@@ -52,11 +52,11 @@ config_dict = DotDict({
     # 'checkpoint_epx': 0,
 
     'use_mind': False,                      # If true use MIND features (https://pubmed.ncbi.nlm.nih.gov/22722056/)
-    'epochs': 40,
+    'epochs': 1000,
 
-    'batch_size': 8,
+    'batch_size': 4,
     'val_batch_size': 1,
-    'modality': 'all',
+    'modality': 'mr',
     'use_2d_normal_to': None,               # Can be None or 'D', 'H', 'W'. If not None 2D slices will be selected for training
 
     'dataset': 'mmwhs',                 # The dataset prepared with our preprocessing scripts
@@ -67,14 +67,14 @@ config_dict = DotDict({
     'crop_3d_region': ((0,128), (0,128), (0,128)),        # dimension range in which 3D samples are cropped
     'crop_2d_slices_gt_num_threshold': 0,   # Drop 2D slices if less than threshold pixels are positive
 
-    'lr': 0.01,
+    'lr': 0.001,
     'use_scheduling': True,
 
-    'save_every': 200,
+    'save_every': 500,
     'mdl_save_prefix': 'data/models',
 
-    'debug': True,
-    'wandb_mode': 'disabled',                         # e.g. online, disabled. Use weights and biases online logging
+    'debug': False,
+    'wandb_mode': 'online',                         # e.g. online, disabled. Use weights and biases online logging
     'do_sweep': False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
@@ -389,6 +389,18 @@ training_dataset = prepare_data(config_dict)
 
 
 # %%
+def nan_hook(self, inp, output):
+    if not isinstance(output, tuple):
+        outputs = [output]
+    else:
+        outputs = output
+
+    for i, out in enumerate(outputs):
+        nan_mask = torch.isnan(out)
+        if nan_mask.any():
+            print("In", self.__class__.__name__)
+            raise RuntimeError(f"Found NAN in output {i} at indices: ", nan_mask.nonzero(), "where:", out[nan_mask.nonzero()[:, 0].unique(sorted=True)])
+
 def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, device='cpu'):
     _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
@@ -400,10 +412,10 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
     scaler = amp.GradScaler()
 
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=.99)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, verbose=True)
 
     if _path and _path.is_dir():
-        print(f"Loading lr-aspp model, optimizers and grad scalers from {_path}")
+        print(f"Loading model, optimizers and grad scalers from {_path}")
         model.load_state_dict(torch.load(_path.joinpath('model.pth'), map_location=device))
         optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
         scheduler.load_state_dict(torch.load(_path.joinpath('scheduler.pth'), map_location=device))
@@ -411,6 +423,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     else:
         print(f"Generating fresh '{type(model).__name__}' model, optimizer and grad scaler.")
 
+    for submodule in model.modules():
+        submodule.register_forward_hook(nan_hook)
     return (model, optimizer, scheduler, scaler)
 
 
@@ -477,31 +491,18 @@ def train_DL(run_name, config, training_dataset):
         (model, optimizer, scheduler, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags),
             THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device=config.device)
 
-        bn_count = torch.zeros([len(training_dataset.label_tags)], device='cpu')
-        wise_dice = torch.zeros([len(training_dataset), len(training_dataset.label_tags)])
-        gt_num = torch.zeros([len(training_dataset)])
+        all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
 
-        with torch.no_grad():
-            print("Fetching training metrics for samples.")
+        for bn_counts in training_dataset.bincounts_3d.values():
+            all_bn_counts += bn_counts
 
-            training_dataset.eval()
-
-            for sample in tqdm((training_dataset[idx] for idx in train_idxs), desc="metric:", total=len(train_idxs)):
-                d_idxs = sample['dataset_idx']
-                label = sample['label']
-                label = label.to(device=config.device)
-                label, _ = ensure_dense(label)
-
-                bn_count = bn_count + torch.bincount(label.reshape(-1).long(), minlength=len(training_dataset.label_tags)).cpu()
-                gt_num[d_idxs] = (label > 0).sum(dim=n_dims).float().cpu()
-
-            class_weights = 1 / (bn_count).float().pow(.35)
-            class_weights /= class_weights.mean()
+        class_weights = 1 / (all_bn_counts).float().pow(.35)
+        class_weights /= class_weights.mean()
 
         class_weights = class_weights.to(device=config.device)
 
         autocast_enabled = 'cuda' in config.device
-
+            
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
 
@@ -528,16 +529,12 @@ def train_DL(run_name, config, training_dataset):
                 )
                 b_seg = batch['label']
 
-                b_idxs_dataset = batch['dataset_idx']
-                
-
                 b_input = b_input.to(device=config.device)
-                b_idxs_dataset = b_idxs_dataset.to(device=config.device)
                 b_seg = b_seg.to(device=config.device)
 
-                # b_input = b_input.unsqueeze(1)
                 b_input = F.one_hot(b_input, len(training_dataset.label_tags)).permute(0,4,1,2,3)
                 b_input = b_input.float()
+
                 ### Forward pass ###
                 with amp.autocast(enabled=autocast_enabled):
                     assert b_input.dim() == len(n_dims)+2, \
@@ -555,6 +552,9 @@ def train_DL(run_name, config, training_dataset):
                         f"Target shape for loss must be BxSPATIAL but is {b_seg.shape}"
 
                     ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg)
+
+                    if torch.any(torch.isnan(ce_loss)):
+                        raise RuntimeError("NaNs detetected.")
 
                     scaler.scale(ce_loss).backward()
                     scaler.step(optimizer)
@@ -594,6 +594,8 @@ def train_DL(run_name, config, training_dataset):
 
             mean_loss = torch.tensor(epx_losses).mean()
             wandb.log({f'losses/loss_fold{fold_idx}': mean_loss}, step=global_idx)
+            print(f'losses/loss_fold{fold_idx}', f"{mean_loss}")
+            print(f'losses/loss_fold{fold_idx}', f"{mean_loss}")
 
             mean_dice = np.nanmean(dices)
             print(f'dice_mean_wo_bg_fold{fold_idx}', f"{mean_dice*100:.2f}%")
@@ -617,7 +619,7 @@ def train_DL(run_name, config, training_dataset):
                         len(training_dataset.label_tags),
                         THIS_SCRIPT_DIR=THIS_SCRIPT_DIR,
                         _path=_path, device=config.device)
-            continue # TODO remove
+
             print()
             print("### Validation")
             model.eval()
@@ -629,17 +631,25 @@ def train_DL(run_name, config, training_dataset):
             with amp.autocast(enabled=autocast_enabled):
                 with torch.no_grad():
                     for val_idx in val_idxs:
-                        val_sample = training_dataset.get_3d_item(val_idx)
-                        stack_dim = training_dataset.use_2d_normal_to
+                        val_sample = training_dataset[val_idx]
+
                         # Create batch out of single val sample
-                        b_val_img = val_sample['image'].unsqueeze(0)
+                        b_val_hla_slc_seg = val_sample['hla_label_slc'].unsqueeze(0)
+                        b_val_sa_slc_seg = val_sample['sa_label_slc'].unsqueeze(0)
+                        b_val_input = torch.cat([
+                            b_val_sa_slc_seg.unsqueeze(1).repeat(1,64,1,1),
+                            b_val_hla_slc_seg.unsqueeze(1).repeat(1,64,1,1)
+                        ], dim=1)
+
                         b_val_seg = val_sample['label'].unsqueeze(0)
 
-                        b_val_img = b_val_img.unsqueeze(1).float().to(device=config.device)
+                        b_val_input = b_val_input.to(device=config.device)
                         b_val_seg = b_val_seg.to(device=config.device)
 
-                        
-                        output_val = model(b_val_img)[0]
+                        b_val_input = F.one_hot(b_val_input, len(training_dataset.label_tags)).permute(0,4,1,2,3)
+                        b_val_input = b_val_input.float()
+  
+                        output_val = model(b_val_input)[0]
                         val_logits_for_score = output_val.argmax(1)
 
                         b_val_dice = dice3d(

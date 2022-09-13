@@ -399,3 +399,9 @@ def get_rotation_matrix_3d_from_angles(deg_angles, device='cpu'):
                         [torch.sin(az),  torch.cos(az), 0],
                         [0, 0, 1]], device=device)
     return Rz @ Ry @ Rx
+
+
+
+def get_bincounts(label, num_classes):
+    bn_counts = torch.bincount(label.reshape(-1).long(), minlength=num_classes)
+    return bn_counts

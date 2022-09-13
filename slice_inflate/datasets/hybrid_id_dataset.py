@@ -6,7 +6,7 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset
 
-from slice_inflate.utils.torch_utils import interpolate_sample, augment_noise, spatial_augment, torch_manual_seeded, ensure_dense
+from slice_inflate.utils.torch_utils import interpolate_sample, augment_noise, spatial_augment, torch_manual_seeded, ensure_dense, get_bincounts
 from slice_inflate.utils.common_utils import LabelDisturbanceMode
 
 class HybridIdDataset(Dataset):
@@ -93,6 +93,11 @@ class HybridIdDataset(Dataset):
         print(f"Removed {orig_3d_num - postprocessed_3d_num} 3D images in postprocessing")
         #check for consistency
         print(f"Equal image and label numbers: {set(self.img_data_3d)==set(self.label_data_3d)==set(self.modified_label_data_3d)} ({len(self.img_data_3d)})")
+
+        self.bincounts_3d = {}
+
+        for _3d_id, label  in self.label_data_3d.items():
+            self.bincounts_3d[_3d_id] = get_bincounts(label, len(self.label_tags))
 
         # Retrieve slices and plugin modified data
         self.img_data_2d = {}
