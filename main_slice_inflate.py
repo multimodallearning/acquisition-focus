@@ -230,7 +230,7 @@ def temp_forward_hooks(modules, pre_fwd_hook_fn=None, post_fwd_hook_fn=None):
     yield
     for hand in handles:
         hand.remove()
-        
+
 def debug_forward_pass(module, inpt, STEP_MODE=False):
     named_leaves = get_named_layers_leaves(module)
     leave_mod_dict = {mod:keychain for keychain, mod in named_leaves}
@@ -270,19 +270,19 @@ class BlendowskiAE(torch.nn.Module):
             in_channels = [in_channels] + out_channels_list[:-1]
             for op_idx in range(len(out_channels_list)):
                 ops.append(torch.nn.Conv3d(
-                    in_channels[op_idx], 
-                    out_channels_list[op_idx], 
-                    kernel_size=3, 
+                    in_channels[op_idx],
+                    out_channels_list[op_idx],
+                    kernel_size=3,
                     stride=strides_list[op_idx],
                     padding=1
                 ))
 
             self.block = torch.nn.Sequential(*ops)
-        
+
         def forward(self, x):
             return self.block(x)
 
-        
+
 
     def __init__(self, in_channels, out_channels, decoder_in_channels=2, debug_mode=False):
         super().__init__()
@@ -327,7 +327,7 @@ class BlendowskiAE(torch.nn.Module):
             return debug_forward_pass(self.encoder, x, STEP_MODE=False)
         else:
             return self.encoder(x)
-    
+
     def decode(self, z):
         if self.debug_mode:
             return debug_forward_pass(self.decoder, z, STEP_MODE=False)
@@ -337,7 +337,7 @@ class BlendowskiAE(torch.nn.Module):
     def forward(self, x):
         z = self.encode(x)
         return self.decode(z), z
-        
+
 
 
 class BlendowskiVAE(BlendowskiAE):
@@ -502,7 +502,7 @@ def train_DL(run_name, config, training_dataset):
         class_weights = class_weights.to(device=config.device)
 
         autocast_enabled = 'cuda' in config.device
-            
+
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
 
@@ -576,12 +576,13 @@ def train_DL(run_name, config, training_dataset):
                 class_dices.append(get_batch_dice_per_class(
                     b_dice, training_dataset.label_tags, exclude_bg=True))
 
-                ###  Scheduler management ###
-                if config.use_scheduling:
-                    scheduler.step()
 
                 if config.debug:
                     break
+
+            ###  Scheduler management ###
+            if config.use_scheduling:
+                scheduler.step(ce_loss)
 
             ### Logging ###
             print(f"### Log epoch {epx}")
@@ -594,7 +595,6 @@ def train_DL(run_name, config, training_dataset):
 
             mean_loss = torch.tensor(epx_losses).mean()
             wandb.log({f'losses/loss_fold{fold_idx}': mean_loss}, step=global_idx)
-            print(f'losses/loss_fold{fold_idx}', f"{mean_loss}")
             print(f'losses/loss_fold{fold_idx}', f"{mean_loss}")
 
             mean_dice = np.nanmean(dices)
@@ -648,7 +648,7 @@ def train_DL(run_name, config, training_dataset):
 
                         b_val_input = F.one_hot(b_val_input, len(training_dataset.label_tags)).permute(0,4,1,2,3)
                         b_val_input = b_val_input.float()
-  
+
                         output_val = model(b_val_input)[0]
                         val_logits_for_score = output_val.argmax(1)
 
