@@ -52,7 +52,7 @@ config_dict = DotDict({
     # 'checkpoint_epx': 0,
 
     'use_mind': False,                      # If true use MIND features (https://pubmed.ncbi.nlm.nih.gov/22722056/)
-    'epochs': 1000,
+    'epochs': 150,
 
     'batch_size': 4,
     'val_batch_size': 1,
@@ -404,7 +404,7 @@ def nan_hook(self, inp, output):
 def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, device='cpu'):
     _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
-    model = BlendowskiAE(in_channels=num_classes, out_channels=num_classes)
+    model = BlendowskiVAE(in_channels=num_classes, out_channels=num_classes)
 
     model.to(device)
     print(f"Param count model: {sum(p.numel() for p in model.parameters())}")
