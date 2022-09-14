@@ -74,7 +74,7 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'debug': False,
-    'wandb_mode': 'online',                         # e.g. online, disabled. Use weights and biases online logging
+    'wandb_mode': 'disabled',                         # e.g. online, disabled. Use weights and biases online logging
     'do_sweep': False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
@@ -263,18 +263,23 @@ def debug_forward_pass(module, inpt, STEP_MODE=False):
 class BlendowskiAE(torch.nn.Module):
 
     class ConvBlock(torch.nn.Module):
-        def __init__(self, in_channels: int, out_channels_list: list, strides_list: list):
+        def __init__(self, in_channels: int, out_channels_list: list, strides_list: list, kernels_list:list=None, paddings_list:list=None):
             super().__init__()
 
             ops = []
             in_channels = [in_channels] + out_channels_list[:-1]
+            if kernels_list is None:
+                kernels_list = [3] * len(out_channels_list)
+            if paddings_list is None:
+                paddings_list = [1] * len(out_channels_list)
+
             for op_idx in range(len(out_channels_list)):
                 ops.append(torch.nn.Conv3d(
                     in_channels[op_idx],
                     out_channels_list[op_idx],
-                    kernel_size=3,
+                    kernel_size=kernels_list[op_idx],
                     stride=strides_list[op_idx],
-                    padding=1
+                    padding=paddings_list[op_idx]
                 ))
 
             self.block = torch.nn.Sequential(*ops)
@@ -301,14 +306,13 @@ class BlendowskiAE(torch.nn.Module):
         self.fourth_layer_encoder = self.ConvBlock(40, out_channels_list=[60,60,60], strides_list=[2,1,1])
         self.fourth_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[40], strides_list=[1])
 
-        self.fifth_layer = self.ConvBlock(60, out_channels_list=[60,20,2], strides_list=[2,1,1])
+        self.deepest_layer = self.ConvBlock(60, out_channels_list=[60,20,2], strides_list=[2,1,1])
 
         self.encoder = torch.nn.Sequential(
             self.first_layer_encoder,
             self.second_layer_encoder,
             self.third_layer_encoder,
             self.fourth_layer_encoder,
-            self.fifth_layer
         )
 
         self.decoder = torch.nn.Sequential(
@@ -323,10 +327,13 @@ class BlendowskiAE(torch.nn.Module):
         )
 
     def encode(self, x):
-        if self.debug_mode:
-            return debug_forward_pass(self.encoder, x, STEP_MODE=False)
-        else:
-            return self.encoder(x)
+        h = self.encoder(x)
+        h = self.deepest_layer(h)
+        return h
+        # if self.debug_mode:
+        #     return debug_forward_pass(self.encoder, x, STEP_MODE=False)
+        # else:
+        #     return self.encoder(x)
 
     def decode(self, z):
         if self.debug_mode:
@@ -345,12 +352,23 @@ class BlendowskiVAE(BlendowskiAE):
         kwargs['decoder_in_channels'] = 1
         super().__init__(*args, **kwargs)
 
+        self.deepest_layer = nn.ModuleList([
+            self.ConvBlock(60, out_channels_list=[60,20,20,1], strides_list=[2,1,1,1], kernels_list=[3,3,3,1], paddings_list=[1,1,1,0]),
+            self.ConvBlock(60, out_channels_list=[60,20,20,1], strides_list=[2,1,1,1], kernels_list=[3,3,3,1], paddings_list=[1,1,1,0]),
+        ])
+
     def sample_z(self, mean, std):
-        return torch.normal(mean=mean, std=std).unsqueeze(1)
+        return torch.normal(mean=mean, std=std)
+
+    def encode(self, x):
+        h = self.encoder(x)
+        mean = self.deepest_layer[0](h)
+        log_var = self.deepest_layer[1](h)
+        return mean, log_var
 
     def forward(self, x):
-        h = self.encode(x)
-        z = self.sample_z(h[:,0], (h[:,1]**2).sqrt())
+        mean, log_var = self.encode(x)
+        z = self.sample_z(mean=mean, std=torch.exp(logvar/2))
         return self.decode(z), z
 
 
