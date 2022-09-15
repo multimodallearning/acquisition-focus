@@ -52,7 +52,7 @@ config_dict = DotDict({
     # 'checkpoint_epx': 0,
 
     'use_mind': False,                      # If true use MIND features (https://pubmed.ncbi.nlm.nih.gov/22722056/)
-    'epochs': 150,
+    'epochs': 100,
 
     'batch_size': 4,
     'val_batch_size': 1,
@@ -70,7 +70,7 @@ config_dict = DotDict({
     'lr': 0.001,
     'use_scheduling': True,
 
-    'save_every': 500,
+    'save_every': 'best',
     'mdl_save_prefix': 'data/models',
 
     'debug': False,
@@ -430,7 +430,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
     scaler = amp.GradScaler()
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, verbose=True)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=20, verbose=True)
 
     if _path and _path.is_dir():
         print(f"Loading model, optimizers and grad scalers from {_path}")
@@ -448,7 +448,25 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
 
 # %%
-def inference_wrap(model, seg, use_2d, use_mind):
+def get_model_input(batch, config, num_classes):
+    b_hla_slc_seg = batch['hla_label_slc']
+    b_sa_slc_seg = batch['sa_label_slc']
+    b_input = torch.cat(
+        [b_sa_slc_seg.unsqueeze(1).repeat(1,64,1,1),
+            b_hla_slc_seg.unsqueeze(1).repeat(1,64,1,1)],
+            dim=1
+    )
+    b_seg = batch['label']
+
+    b_input = b_input.to(device=config.device)
+    b_seg = b_seg.to(device=config.device)
+
+    b_input = F.one_hot(b_input, num_classes).permute(0,4,1,2,3)
+    b_input = b_input.float()
+
+    return b_input, b_seg
+
+def inference_wrap(model, seg):
     with torch.inference_mode():
         b_seg = seg.unsqueeze(0).unsqueeze(0).float()
         b_out = model(b_seg)[0]
@@ -478,6 +496,8 @@ def train_DL(run_name, config, training_dataset):
 
     fold_means_no_bg = []
 
+    best_val_score = 0
+
     for fold_idx, (train_idxs, val_idxs) in fold_iter:
         train_idxs = torch.tensor(train_idxs)
         val_idxs = torch.tensor(val_idxs)
@@ -487,11 +507,14 @@ def train_DL(run_name, config, training_dataset):
 
         ### Add train sampler and dataloaders ##
         train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
-        # val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
+        val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
 
         train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
             sampler=train_subsampler, pin_memory=False, drop_last=False,
             # collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
+        )
+        val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
+            sampler=val_subsampler, pin_memory=False, drop_last=False,
         )
 
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
@@ -538,20 +561,7 @@ def train_DL(run_name, config, training_dataset):
 
                 optimizer.zero_grad()
 
-                b_hla_slc_seg = batch['hla_label_slc']
-                b_sa_slc_seg = batch['sa_label_slc']
-                b_input = torch.cat(
-                    [b_sa_slc_seg.unsqueeze(1).repeat(1,64,1,1),
-                     b_hla_slc_seg.unsqueeze(1).repeat(1,64,1,1)],
-                     dim=1
-                )
-                b_seg = batch['label']
-
-                b_input = b_input.to(device=config.device)
-                b_seg = b_seg.to(device=config.device)
-
-                b_input = F.one_hot(b_input, len(training_dataset.label_tags)).permute(0,4,1,2,3)
-                b_input = b_input.float()
+                b_input, b_seg = get_model_input(batch, config, len(training_dataset.label_tags))
 
                 ### Forward pass ###
                 with amp.autocast(enabled=autocast_enabled):
@@ -621,23 +631,6 @@ def train_DL(run_name, config, training_dataset):
 
             log_class_dices("scores/dice_mean_", f"_fold{fold_idx}", class_dices, global_idx)
 
-            if (epx % config.save_every == 0) \
-                or (epx+1 == config.epochs):
-                _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx}"
-                save_model(
-                    Path(THIS_SCRIPT_DIR, _path),
-                    model=model,
-                    optimizer=optimizer,
-                    scheduler=scheduler,
-                    scaler=scaler)
-
-                (model, optimizer, scheduler, scaler) = \
-                    get_model(
-                        config, len(training_dataset),
-                        len(training_dataset.label_tags),
-                        THIS_SCRIPT_DIR=THIS_SCRIPT_DIR,
-                        _path=_path, device=config.device)
-
             print()
             print("### Validation")
             model.eval()
@@ -648,24 +641,9 @@ def train_DL(run_name, config, training_dataset):
 
             with amp.autocast(enabled=autocast_enabled):
                 with torch.no_grad():
-                    for val_idx in val_idxs:
-                        val_sample = training_dataset[val_idx]
+                    for val_batch_idx, val_batch in tqdm(enumerate(val_dataloader), desc="batch:", total=len(val_dataloader)):
 
-                        # Create batch out of single val sample
-                        b_val_hla_slc_seg = val_sample['hla_label_slc'].unsqueeze(0)
-                        b_val_sa_slc_seg = val_sample['sa_label_slc'].unsqueeze(0)
-                        b_val_input = torch.cat([
-                            b_val_sa_slc_seg.unsqueeze(1).repeat(1,64,1,1),
-                            b_val_hla_slc_seg.unsqueeze(1).repeat(1,64,1,1)
-                        ], dim=1)
-
-                        b_val_seg = val_sample['label'].unsqueeze(0)
-
-                        b_val_input = b_val_input.to(device=config.device)
-                        b_val_seg = b_val_seg.to(device=config.device)
-
-                        b_val_input = F.one_hot(b_val_input, len(training_dataset.label_tags)).permute(0,4,1,2,3)
-                        b_val_input = b_val_input.float()
+                        b_val_input, b_val_seg = get_model_input(val_batch, config, len(training_dataset.label_tags))
 
                         output_val = model(b_val_input)[0]
                         val_logits_for_score = output_val.argmax(1)
@@ -684,11 +662,44 @@ def train_DL(run_name, config, training_dataset):
                             b_val_dice, training_dataset.label_tags, exclude_bg=True))
 
                     mean_val_dice = np.nanmean(val_dices)
+
                     print(f'val_dice_mean_wo_bg_fold{fold_idx}', f"{mean_val_dice*100:.2f}%")
                     wandb.log({f'scores/val_dice_mean_wo_bg_fold{fold_idx}': mean_val_dice}, step=global_idx)
                     log_class_dices("scores/val_dice_mean_", f"_fold{fold_idx}", val_class_dices, global_idx)
 
             print()
+
+            # Save model
+            if config.save_every is None:
+                pass
+
+            elif config.save_every == 'best':
+                if mean_val_dice > best_val_score:
+                    best_val_score = mean_val_dice
+                    save_path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_best"
+                    save_model(
+                        Path(THIS_SCRIPT_DIR, save_path),
+                        model=model,
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        scaler=scaler)
+
+            elif (epx % config.save_every == 0) or (epx+1 == config.epochs):
+                save_path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx}"
+                save_model(
+                    Path(THIS_SCRIPT_DIR, save_path),
+                    model=model,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    scaler=scaler)
+
+                # (model, optimizer, scheduler, scaler) = \
+                #     get_model(
+                #         config, len(training_dataset),
+                #         len(training_dataset.label_tags),
+                #         THIS_SCRIPT_DIR=THIS_SCRIPT_DIR,
+                #         _path=_path, device=config.device)
+
             # End of training loop
 
             if config.debug:

@@ -234,8 +234,15 @@ class HybridIdDataset(Dataset):
             return len(self.img_data_2d)
         return len(self.img_data_3d)
 
-    def __getitem__(self, dataset_idx, use_2d_override=None):
+    def __getitem__(self, dataset_id, use_2d_override=None):
         use_2d = self.use_2d(use_2d_override)
+        if isinstance(dataset_id, str) and use_2d:
+            dataset_idx = self.switch_2d_identifiers(dataset_id)
+        elif isinstance(dataset_id, str) and not use_2d:
+            dataset_idx = self.switch_3d_identifiers(dataset_id)
+        else:
+            dataset_idx = dataset_id
+
         if use_2d:
             all_ids = self.get_2d_ids()
             _id = all_ids[dataset_idx]
@@ -318,8 +325,8 @@ class HybridIdDataset(Dataset):
             'additional_data': additional_data
         }
 
-    def get_3d_item(self, _3d_dataset_idx):
-        return self.__getitem__(_3d_dataset_idx, use_2d_override=False)
+    def get_3d_item(self, _3d_dataset_id):
+        return self.__getitem__(_3d_dataset_id, use_2d_override=False)
 
     def get_data(self, use_2d_override=None):
         if self.use_2d(use_2d_override):

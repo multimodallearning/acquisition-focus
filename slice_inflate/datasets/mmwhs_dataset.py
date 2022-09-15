@@ -51,8 +51,15 @@ class MMWHSDataset(HybridIdDataset):
         items = list(filter(None, items))
         return "-".join(items)
 
-    def __getitem__(self, dataset_idx, use_2d_override=None):
+    def __getitem__(self, dataset_id, use_2d_override=None):
         use_2d = self.use_2d(use_2d_override)
+        if isinstance(dataset_id, str) and use_2d:
+            dataset_idx = self.switch_2d_identifiers(dataset_id)
+        elif isinstance(dataset_id, str) and not use_2d:
+            dataset_idx = self.switch_3d_identifiers(dataset_id)
+        else:
+            dataset_idx = dataset_id
+
         if use_2d:
             all_ids = self.get_2d_ids()
             _id = all_ids[dataset_idx]
@@ -104,11 +111,12 @@ class MMWHSDataset(HybridIdDataset):
             is_label=True, augment_affine=augment_affine
         )
 
-        # Do not resample image slices. They are not used currently
-        # sa_image, sa_image_slc, hla_image_slc = retrieve_augmented_hybrid_aligned(self.base_dir, image, additional_data,
-        #     is_label=False, augment_affine=augment_affine
-        # )
-        sa_image, sa_image_slc, hla_image_slc = torch.zeros_like(sa_label), torch.zeros_like(sa_label_slc), torch.zeros_like(hla_label_slc)
+        if False:
+            sa_image, sa_image_slc, hla_image_slc = retrieve_augmented_hybrid_aligned(self.base_dir, image, additional_data,
+                is_label=False, augment_affine=augment_affine
+            )
+        else:
+            sa_image, sa_image_slc, hla_image_slc = torch.zeros_like(sa_label), torch.zeros_like(sa_label_slc), torch.zeros_like(hla_label_slc)
 
         if self.self_attributes['crop_around_3d_label_center'] is not None:
             _3d_vox_size = torch.as_tensor(self.self_attributes['crop_around_3d_label_center'])
