@@ -53,8 +53,7 @@ config_dict = DotDict({
     'only_first_fold': True,                # If true do not contiue with training after the first fold
     # 'fold_override': 0,
     # 'checkpoint_epx': 0,
-
-    'use_mind': False,                      # If true use MIND features (https://pubmed.ncbi.nlm.nih.gov/22722056/)
+                   # If true use MIND features (https://pubmed.ncbi.nlm.nih.gov/22722056/)
     'epochs': 500,
 
     'batch_size': 4,
@@ -70,8 +69,8 @@ config_dict = DotDict({
     'crop_3d_region': ((0,128), (0,128), (0,128)),        # dimension range in which 3D samples are cropped
     'crop_2d_slices_gt_num_threshold': 0,   # Drop 2D slices if less than threshold pixels are positive
 
-    'lr': 1e-3,
-    'use_scheduling': False,
+    'lr': 1e-2,
+    'use_scheduling': True,
 
     'save_every': 'best',
     'mdl_save_prefix': 'data/models',
@@ -485,7 +484,7 @@ def inference_wrap(model, seg):
 
 
 def gaussian_likelihood(y_hat, log_var_scale, y_target):
-    B, *_ = y_hat.shape
+    B, C, *_ = y_hat.shape
     mean = y_hat
     scale = torch.exp(log_var_scale/2)
     dist = torch.distributions.Normal(mean, scale)
@@ -494,13 +493,13 @@ def gaussian_likelihood(y_hat, log_var_scale, y_target):
     log_pxz = dist.log_prob(y_target)
 
     # GLH
-    return log_pxz.reshape(B, -1).sum(-1)
+    return log_pxz.reshape(B, C, -1).sum(-1)
 
 
 
 def kl_divergence(z, mean, std):
     # See https://towardsdatascience.com/variational-autoencoder-demystified-with-pytorch-implementation-3a06bee395ed
-    B, *_ = z.shape
+    B,C, *_ = z.shape
     p = torch.distributions.Normal(torch.zeros_like(mean), torch.ones_like(std))
     q = torch.distributions.Normal(mean, std)
 
@@ -511,7 +510,7 @@ def kl_divergence(z, mean, std):
     kl = (log_qzx - log_pz)
 
     # Reduce spatial dimensions
-    kl = kl.view(B, -1).sum(-1)
+    kl = kl.view(B, C, -1).sum(-1)
     return kl
 
 
@@ -633,7 +632,7 @@ def train_DL(run_name, config, training_dataset):
                     # elbo
                     elbo = (kl - recon_loss)
                     # print("ls", elbo, kl, recon_loss)
-                    elbo = elbo.mean()
+                    elbo = (elbo * class_weights.view(1,-1)).mean()
                     vae_loss = elbo
 
                     scaler.scale(vae_loss).backward()
