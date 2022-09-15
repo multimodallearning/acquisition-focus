@@ -298,6 +298,8 @@ class BlendowskiAE(torch.nn.Module):
 
         self.debug_mode = debug_mode
 
+        self.input_batchnorm = torch.nn.BatchNorm3d(in_channels)
+
         self.first_layer_encoder = self.ConvBlock(in_channels, out_channels_list=[8], strides_list=[1])
         self.first_layer_decoder = self.ConvBlock(8, out_channels_list=[8,out_channels], strides_list=[1,1])
 
@@ -313,6 +315,7 @@ class BlendowskiAE(torch.nn.Module):
         self.deepest_layer = self.ConvBlock(60, out_channels_list=[60,20,2], strides_list=[2,1,1])
 
         self.encoder = torch.nn.Sequential(
+            self.input_batchnorm,
             self.first_layer_encoder,
             self.second_layer_encoder,
             self.third_layer_encoder,
@@ -523,6 +526,8 @@ def kl_divergence(z, mean, std):
 
 def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
     # Reconstruction loss
+    y_target = y_target / y_target.std()
+    y_target = y_target - y_target.mean()
     recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
 
     # kl
@@ -619,8 +624,9 @@ def train_DL(run_name, config, training_dataset):
             for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch:", total=len(train_dataloader)):
 
                 optimizer.zero_grad()
-
                 b_input, b_seg = get_model_input(batch, config, len(training_dataset.label_tags))
+                # b_input = b_input / b_input.std()
+                # b_input = b_input - b_input.mean()
 
                 ### Forward pass ###
                 with amp.autocast(enabled=autocast_enabled):
