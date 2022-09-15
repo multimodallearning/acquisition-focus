@@ -621,7 +621,7 @@ def train_DL(run_name, config, training_dataset):
                     # ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg)
 
                     # Reconstruction loss
-                    recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, b_seg.float)
+                    recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, b_seg.float())
 
                     # kl
                     kl = kl_divergence(z, mean, std)
