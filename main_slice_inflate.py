@@ -19,6 +19,9 @@ from pathlib import Path
 
 os.environ['MMWHS_CACHE_PATH'] = str(Path('.', '.cache'))
 
+from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
+os.environ.update(get_vars("*"))
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -67,14 +70,14 @@ config_dict = DotDict({
     'crop_3d_region': ((0,128), (0,128), (0,128)),        # dimension range in which 3D samples are cropped
     'crop_2d_slices_gt_num_threshold': 0,   # Drop 2D slices if less than threshold pixels are positive
 
-    'lr': 1e-5,
+    'lr': 1e-4,
     'use_scheduling': True,
 
     'save_every': 'best',
     'mdl_save_prefix': 'data/models',
 
     'debug': False,
-    'wandb_mode': 'disabled',                         # e.g. online, disabled. Use weights and biases online logging
+    'wandb_mode': 'online',                         # e.g. online, disabled. Use weights and biases online logging
     'do_sweep': False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
@@ -446,7 +449,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)
-    
+
     return (model, optimizer, scheduler, scaler)
 
 
@@ -618,7 +621,7 @@ def train_DL(run_name, config, training_dataset):
                     # ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg)
 
                     # Reconstruction loss
-                    recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, b_seg)
+                    recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, b_seg.float)
 
                     # kl
                     kl = kl_divergence(z, mean, std)
