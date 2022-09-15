@@ -67,7 +67,7 @@ config_dict = DotDict({
     'crop_3d_region': ((0,128), (0,128), (0,128)),        # dimension range in which 3D samples are cropped
     'crop_2d_slices_gt_num_threshold': 0,   # Drop 2D slices if less than threshold pixels are positive
 
-    'lr': 0.001,
+    'lr': 1e-5,
     'use_scheduling': True,
 
     'save_every': 'best',
@@ -357,6 +357,8 @@ class BlendowskiVAE(BlendowskiAE):
             self.ConvBlock(60, out_channels_list=[60,20,20,1], strides_list=[2,1,1,1], kernels_list=[3,3,3,1], paddings_list=[1,1,1,0]),
         ])
 
+        self.log_var_scale = nn.Parameter(torch.Tensor([0.0]))
+
     def sample_z(self, mean, std):
         return torch.normal(mean=mean, std=std)
 
@@ -368,8 +370,9 @@ class BlendowskiVAE(BlendowskiAE):
 
     def forward(self, x):
         mean, log_var = self.encode(x)
-        z = self.sample_z(mean=mean, std=torch.exp(logvar/2))
-        return self.decode(z), z
+        std = torch.exp(log_var/2) + 1e-6
+        z = self.sample_z(mean=mean, std=std)
+        return self.decode(z), (z, mean, std)
 
 
 
@@ -407,17 +410,17 @@ training_dataset = prepare_data(config_dict)
 
 
 # %%
-def nan_hook(self, inp, output):
-    if not isinstance(output, tuple):
-        outputs = [output]
-    else:
-        outputs = output
+# def nan_hook(self, inp, output):
+#     if not isinstance(output, tuple):
+#         outputs = [output]
+#     else:
+#         outputs = output
 
-    for i, out in enumerate(outputs):
-        nan_mask = torch.isnan(out)
-        if nan_mask.any():
-            print("In", self.__class__.__name__)
-            raise RuntimeError(f"Found NAN in output {i} at indices: ", nan_mask.nonzero(), "where:", out[nan_mask.nonzero()[:, 0].unique(sorted=True)])
+#     for i, out in enumerate(outputs):
+#         nan_mask = torch.isnan(out)
+#         if nan_mask.any():
+#             print("In", self.__class__.__name__)
+#             raise RuntimeError(f"Found NAN in output {i} at indices: ", nan_mask.nonzero(), "where:", out[nan_mask.nonzero()[:, 0].unique(sorted=True)])
 
 def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, device='cpu'):
     _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
@@ -441,10 +444,10 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     else:
         print(f"Generating fresh '{type(model).__name__}' model, optimizer and grad scaler.")
 
-    for submodule in model.modules():
-        submodule.register_forward_hook(nan_hook)
+    # for submodule in model.modules():
+    #     submodule.register_forward_hook(nan_hook)
+    
     return (model, optimizer, scheduler, scaler)
-
 
 
 # %%
@@ -472,6 +475,38 @@ def inference_wrap(model, seg):
         b_out = model(b_seg)[0]
         b_out = b_out.argmax(1)
         return b_out
+
+
+
+def gaussian_likelihood(y_hat, log_var_scale, y_target):
+    B, *_ = y_hat.shape
+    mean = y_hat
+    scale = torch.exp(log_var_scale/2)
+    dist = torch.distributions.Normal(mean, scale)
+
+    # measure prob of seeing image under p(x|z)
+    log_pxz = dist.log_prob(y_hat)
+
+    # GLH, mean instead of sum..
+    return log_pxz.view(B, -1).mean(-1)
+
+
+
+def kl_divergence(z, mean, std):
+    # See https://towardsdatascience.com/variational-autoencoder-demystified-with-pytorch-implementation-3a06bee395ed
+    B, *_ = z.shape
+    p = torch.distributions.Normal(torch.zeros_like(mean), torch.ones_like(std))
+    q = torch.distributions.Normal(mean, std)
+
+    log_qzx = q.log_prob(z)
+    log_pz = p.log_prob(z)
+
+    # KL divergence
+    kl = (log_qzx - log_pz)
+
+    # Reduce spatial dimensions, mean instead of sum
+    kl = kl.view(B, -1).mean(-1)
+    return kl
 
 
 
@@ -571,7 +606,8 @@ def train_DL(run_name, config, training_dataset):
                         param.requires_grad = True
 
                     model.use_checkpointing = True
-                    logits = model(b_input)[0]
+                    y_hat, (z, mean, std) = model(b_input)
+                    logits = y_hat
 
                     ### Calculate loss ###
                     assert logits.dim() == len(n_dims)+2, \
@@ -579,16 +615,25 @@ def train_DL(run_name, config, training_dataset):
                     assert b_seg.dim() == len(n_dims)+1, \
                         f"Target shape for loss must be BxSPATIAL but is {b_seg.shape}"
 
-                    ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg)
+                    # ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg)
 
-                    if torch.any(torch.isnan(ce_loss)):
-                        raise RuntimeError("NaNs detetected.")
+                    # Reconstruction loss
+                    recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, b_seg)
 
-                    scaler.scale(ce_loss).backward()
+                    # kl
+                    kl = kl_divergence(z, mean, std)
+
+                    # elbo
+                    elbo = (kl - recon_loss)
+                    # print("ls", elbo, kl, recon_loss)
+                    elbo = elbo.mean()
+                    vae_loss = elbo
+
+                    scaler.scale(vae_loss).backward()
                     scaler.step(optimizer)
                     scaler.update()
 
-                    epx_losses.append(ce_loss.item())
+                    epx_losses.append(vae_loss.item())
 
                 logits_for_score = logits.argmax(1)
 
@@ -610,7 +655,7 @@ def train_DL(run_name, config, training_dataset):
 
             ###  Scheduler management ###
             if config.use_scheduling:
-                scheduler.step(ce_loss)
+                scheduler.step(vae_loss)
 
             ### Logging ###
             print(f"### Log epoch {epx}")
