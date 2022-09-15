@@ -499,7 +499,7 @@ def gaussian_likelihood(y_hat, log_var_scale, y_target):
     log_pxz = dist.log_prob(y_target)
 
     # GLH
-    return log_pxz.reshape(B, C, -1).sum(-1)
+    return log_pxz.reshape(B, C, -1).mean(-1)
 
 
 
@@ -516,7 +516,7 @@ def kl_divergence(z, mean, std):
     kl = (log_qzx - log_pz)
 
     # Reduce spatial dimensions
-    kl = kl.view(B, C, -1).sum(-1)
+    kl = kl.view(-1).mean(-1)
     return kl
 
 
@@ -529,9 +529,8 @@ def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
     kl = kl_divergence(z, mean, std)
 
     # elbo
-    elbo = (kl - recon_loss)
+    elbo = kl - (recon_loss * class_weights.view(1,-1)).mean()
     # print("ls", elbo, kl, recon_loss)
-    elbo = (elbo * class_weights.view(1,-1)).mean()
     return elbo
 
 def train_DL(run_name, config, training_dataset):
