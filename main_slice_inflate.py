@@ -69,7 +69,7 @@ config_dict = DotDict({
     'crop_3d_region': ((0,128), (0,128), (0,128)),        # dimension range in which 3D samples are cropped
     'crop_2d_slices_gt_num_threshold': 0,   # Drop 2D slices if less than threshold pixels are positive
 
-    'lr': 1e-2,
+    'lr': 1e-3,
     'use_scheduling': True,
 
     'save_every': 'best',
@@ -374,8 +374,14 @@ class BlendowskiVAE(BlendowskiAE):
 
     def forward(self, x):
         mean, log_var = self.encode(x)
-        std = torch.exp(log_var/2) + 1e-6
+
+        if self.training:
+            std = torch.exp(log_var/2) + 1e-6
+        else:
+            std = 1e-6 * torch.ones_like(log_var)
+
         z = self.sample_z(mean=mean, std=std)
+
         return self.decode(z), (z, mean, std)
 
 
@@ -515,6 +521,19 @@ def kl_divergence(z, mean, std):
 
 
 
+def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
+    # Reconstruction loss
+    recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
+
+    # kl
+    kl = kl_divergence(z, mean, std)
+
+    # elbo
+    elbo = (kl - recon_loss)
+    # print("ls", elbo, kl, recon_loss)
+    elbo = (elbo * class_weights.view(1,-1)).mean()
+    return elbo
+
 def train_DL(run_name, config, training_dataset):
     reset_determinism()
 
@@ -613,39 +632,28 @@ def train_DL(run_name, config, training_dataset):
 
                     model.use_checkpointing = True
                     y_hat, (z, mean, std) = model(b_input)
-                    logits = y_hat
 
                     ### Calculate loss ###
-                    assert logits.dim() == len(n_dims)+2, \
-                        f"Input shape for loss must be BxNUM_CLASSESxSPATIAL but is {logits.shape}"
+                    assert y_hat.dim() == len(n_dims)+2, \
+                        f"Input shape for loss must be BxNUM_CLASSESxSPATIAL but is {y_hat.shape}"
                     assert b_seg.dim() == len(n_dims)+2, \
                         f"Target shape for loss must be BxNUM_CLASSESxSPATIAL but is {b_seg.shape}"
 
-                    # ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg)
+                    # ce_loss = nn.CrossEntropyLoss(class_weights)(y_hat, b_seg)
 
-                    # Reconstruction loss
-                    recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, b_seg.float())
+                    loss = get_vae_loss_value(y_hat, b_seg.float(), z, mean, std, class_weights, model)
 
-                    # kl
-                    kl = kl_divergence(z, mean, std)
-
-                    # elbo
-                    elbo = (kl - recon_loss)
-                    # print("ls", elbo, kl, recon_loss)
-                    elbo = (elbo * class_weights.view(1,-1)).mean()
-                    vae_loss = elbo
-
-                    scaler.scale(vae_loss).backward()
+                    scaler.scale(loss).backward()
                     scaler.step(optimizer)
                     scaler.update()
 
-                    epx_losses.append(vae_loss.item())
+                    epx_losses.append(loss.item())
 
-                logits_for_score = logits.argmax(1)
+                pred_seg = y_hat.argmax(1)
 
                 # Calculate dice score
                 b_dice = dice3d(
-                    torch.nn.functional.one_hot(logits_for_score, len(training_dataset.label_tags)).permute(0,4,1,2,3),
+                    torch.nn.functional.one_hot(pred_seg, len(training_dataset.label_tags)).permute(0,4,1,2,3),
                     b_seg, # Calculate dice score with original segmentation (no disturbance)
                     one_hot_torch_style=False
                 )
@@ -661,7 +669,7 @@ def train_DL(run_name, config, training_dataset):
 
             ###  Scheduler management ###
             if config.use_scheduling:
-                scheduler.step(vae_loss)
+                scheduler.step(loss)
 
             ### Logging ###
             print(f"### Log epoch {epx}")
@@ -688,6 +696,7 @@ def train_DL(run_name, config, training_dataset):
             training_dataset.eval()
 
             val_dices = []
+            val_losses = []
             val_class_dices = []
 
             with amp.autocast(enabled=autocast_enabled):
@@ -695,24 +704,29 @@ def train_DL(run_name, config, training_dataset):
                     for val_batch_idx, val_batch in tqdm(enumerate(val_dataloader), desc="batch:", total=len(val_dataloader)):
 
                         b_val_input, b_val_seg = get_model_input(val_batch, config, len(training_dataset.label_tags))
-
-                        output_val = model(b_val_input)[0]
-                        val_logits_for_score = output_val.argmax(1)
+                        y_hat_val, (z_val, mean_val, std_val) = model(b_val_input)
+                        val_loss = get_vae_loss_value(y_hat_val, b_val_seg.float(), z_val, mean_val, std_val, class_weights, model)
+                        val_pred_seg = y_hat_val.argmax(1)
 
                         b_val_dice = dice3d(
-                            torch.nn.functional.one_hot(val_logits_for_score, len(training_dataset.label_tags)).permute(0,4,1,2,3),
+                            torch.nn.functional.one_hot(val_pred_seg, len(training_dataset.label_tags)).permute(0,4,1,2,3),
                             b_val_seg,
                             one_hot_torch_style=False
                         )
 
                         # Get mean score over batch
+                        val_losses.append(val_loss)
                         val_dices.append(get_batch_dice_over_all(
                             b_val_dice, exclude_bg=True))
 
                         val_class_dices.append(get_batch_dice_per_class(
                             b_val_dice, training_dataset.label_tags, exclude_bg=True))
 
+                    mean_val_loss = torch.tensor(val_losses).mean()
                     mean_val_dice = np.nanmean(val_dices)
+
+                    wandb.log({f'losses/val_loss_fold{fold_idx}': mean_val_loss}, step=global_idx)
+                    print(f'losses/val_loss_fold{fold_idx}', f"{mean_val_loss}")
 
                     print(f'val_dice_mean_wo_bg_fold{fold_idx}', f"{mean_val_dice*100:.2f}%")
                     wandb.log({f'scores/val_dice_mean_wo_bg_fold{fold_idx}': mean_val_dice}, step=global_idx)
