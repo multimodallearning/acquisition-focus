@@ -70,14 +70,14 @@ config_dict = DotDict({
     'crop_3d_region': ((0,128), (0,128), (0,128)),        # dimension range in which 3D samples are cropped
     'crop_2d_slices_gt_num_threshold': 0,   # Drop 2D slices if less than threshold pixels are positive
 
-    'lr': 1e-4,
-    'use_scheduling': True,
+    'lr': 1e-3,
+    'use_scheduling': False,
 
     'save_every': 'best',
     'mdl_save_prefix': 'data/models',
 
     'debug': False,
-    'wandb_mode': 'online',                         # e.g. online, disabled. Use weights and biases online logging
+    'wandb_mode': 'disabled',                         # e.g. online, disabled. Use weights and biases online logging
     'do_sweep': False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
@@ -284,6 +284,8 @@ class BlendowskiAE(torch.nn.Module):
                     stride=strides_list[op_idx],
                     padding=paddings_list[op_idx]
                 ))
+                ops.append(torch.nn.BatchNorm3d(out_channels_list[op_idx]))
+                ops.append(torch.nn.LeakyReLU())
 
             self.block = torch.nn.Sequential(*ops)
 
@@ -469,6 +471,7 @@ def get_model_input(batch, config, num_classes):
 
     b_input = F.one_hot(b_input, num_classes).permute(0,4,1,2,3)
     b_input = b_input.float()
+    b_seg = F.one_hot(b_seg, num_classes).permute(0,4,1,2,3)
 
     return b_input, b_seg
 
@@ -488,10 +491,10 @@ def gaussian_likelihood(y_hat, log_var_scale, y_target):
     dist = torch.distributions.Normal(mean, scale)
 
     # measure prob of seeing image under p(x|z)
-    log_pxz = dist.log_prob(y_hat)
+    log_pxz = dist.log_prob(y_target)
 
-    # GLH, mean instead of sum..
-    return log_pxz.view(B, -1).mean(-1)
+    # GLH
+    return log_pxz.reshape(B, -1).sum(-1)
 
 
 
@@ -507,8 +510,8 @@ def kl_divergence(z, mean, std):
     # KL divergence
     kl = (log_qzx - log_pz)
 
-    # Reduce spatial dimensions, mean instead of sum
-    kl = kl.view(B, -1).mean(-1)
+    # Reduce spatial dimensions
+    kl = kl.view(B, -1).sum(-1)
     return kl
 
 
@@ -581,6 +584,7 @@ def train_DL(run_name, config, training_dataset):
         class_weights = class_weights.to(device=config.device)
 
         autocast_enabled = 'cuda' in config.device
+        autocast_enabled = False
 
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
@@ -615,8 +619,8 @@ def train_DL(run_name, config, training_dataset):
                     ### Calculate loss ###
                     assert logits.dim() == len(n_dims)+2, \
                         f"Input shape for loss must be BxNUM_CLASSESxSPATIAL but is {logits.shape}"
-                    assert b_seg.dim() == len(n_dims)+1, \
-                        f"Target shape for loss must be BxSPATIAL but is {b_seg.shape}"
+                    assert b_seg.dim() == len(n_dims)+2, \
+                        f"Target shape for loss must be BxNUM_CLASSESxSPATIAL but is {b_seg.shape}"
 
                     # ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg)
 
@@ -642,9 +646,9 @@ def train_DL(run_name, config, training_dataset):
 
                 # Calculate dice score
                 b_dice = dice3d(
-                    torch.nn.functional.one_hot(logits_for_score, len(training_dataset.label_tags)),
-                    torch.nn.functional.one_hot(b_seg, len(training_dataset.label_tags)), # Calculate dice score with original segmentation (no disturbance)
-                    one_hot_torch_style=True
+                    torch.nn.functional.one_hot(logits_for_score, len(training_dataset.label_tags)).permute(0,4,1,2,3),
+                    b_seg, # Calculate dice score with original segmentation (no disturbance)
+                    one_hot_torch_style=False
                 )
 
                 dices.append(get_batch_dice_over_all(
@@ -697,9 +701,9 @@ def train_DL(run_name, config, training_dataset):
                         val_logits_for_score = output_val.argmax(1)
 
                         b_val_dice = dice3d(
-                            torch.nn.functional.one_hot(val_logits_for_score, len(training_dataset.label_tags)),
-                            torch.nn.functional.one_hot(b_val_seg, len(training_dataset.label_tags)),
-                            one_hot_torch_style=True
+                            torch.nn.functional.one_hot(val_logits_for_score, len(training_dataset.label_tags)).permute(0,4,1,2,3),
+                            b_val_seg,
+                            one_hot_torch_style=False
                         )
 
                         # Get mean score over batch
