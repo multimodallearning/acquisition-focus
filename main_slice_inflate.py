@@ -71,12 +71,13 @@ config_dict = DotDict({
 
     'lr': 1e-3,
     'use_scheduling': True,
+    'model_type': 'ae',
 
     'save_every': 'best',
     'mdl_save_prefix': 'data/models',
 
     'debug': False,
-    'wandb_mode': 'online',                         # e.g. online, disabled. Use weights and biases online logging
+    'wandb_mode': 'disabled',                         # e.g. online, disabled. Use weights and biases online logging
     'do_sweep': False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
@@ -419,6 +420,7 @@ class BlendowskiVAE(BlendowskiAE):
 # y, _ = model(smp)
 
 # %%
+
 training_dataset = prepare_data(config_dict)
 
 
@@ -438,8 +440,12 @@ training_dataset = prepare_data(config_dict)
 def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, device='cpu'):
     _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
-    model = BlendowskiVAE(in_channels=num_classes, out_channels=num_classes)
-
+    if config.model_type == 'vae':
+        model = BlendowskiVAE(in_channels=num_classes, out_channels=num_classes)
+    elif config.model_type == 'ae':
+            model = BlendowskiAE(in_channels=num_classes, out_channels=num_classes)
+    else:
+        raise ValueError
     model.to(device)
     print(f"Param count model: {sum(p.numel() for p in model.parameters())}")
 
@@ -524,10 +530,12 @@ def kl_divergence(z, mean, std):
 
 
 
+def get_ae_loss_value(y_hat, y_target, class_weights):
+    return nn.CrossEntropyLoss(class_weights)(y_hat, y_target)
+
+
 def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
     # Reconstruction loss
-    y_target = y_target / y_target.std()
-    y_target = y_target - y_target.mean()
     recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
 
     # kl
@@ -625,8 +633,6 @@ def train_DL(run_name, config, training_dataset):
 
                 optimizer.zero_grad()
                 b_input, b_seg = get_model_input(batch, config, len(training_dataset.label_tags))
-                # b_input = b_input / b_input.std()
-                # b_input = b_input - b_input.mean()
 
                 ### Forward pass ###
                 with amp.autocast(enabled=autocast_enabled):
@@ -636,17 +642,23 @@ def train_DL(run_name, config, training_dataset):
                         param.requires_grad = True
 
                     model.use_checkpointing = True
-                    y_hat, (z, mean, std) = model(b_input)
-
+                    if config.model_type == 'vae':
+                        y_hat, (z, mean, std) = model(b_input)
+                    elif config.model_type == 'ae':
+                        y_hat, _ = model(b_input)
+                    else:
+                        raise ValueError
+                        
                     ### Calculate loss ###
                     assert y_hat.dim() == len(n_dims)+2, \
                         f"Input shape for loss must be BxNUM_CLASSESxSPATIAL but is {y_hat.shape}"
                     assert b_seg.dim() == len(n_dims)+2, \
                         f"Target shape for loss must be BxNUM_CLASSESxSPATIAL but is {b_seg.shape}"
 
-                    # ce_loss = nn.CrossEntropyLoss(class_weights)(y_hat, b_seg)
-
-                    loss = get_vae_loss_value(y_hat, b_seg.float(), z, mean, std, class_weights, model)
+                    if "vae" in type(model).__name__.lower():
+                        loss = get_vae_loss_value(y_hat, b_seg.float(), z, mean, std, class_weights, model)
+                    else:
+                        loss = get_ae_loss_value(y_hat, b_seg.float(), class_weights)
 
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
@@ -709,8 +721,16 @@ def train_DL(run_name, config, training_dataset):
                     for val_batch_idx, val_batch in tqdm(enumerate(val_dataloader), desc="batch:", total=len(val_dataloader)):
 
                         b_val_input, b_val_seg = get_model_input(val_batch, config, len(training_dataset.label_tags))
-                        y_hat_val, (z_val, mean_val, std_val) = model(b_val_input)
-                        val_loss = get_vae_loss_value(y_hat_val, b_val_seg.float(), z_val, mean_val, std_val, class_weights, model)
+                        
+                        if config.model_type == 'vae':
+                            y_hat_val, (z_val, mean_val, std_val) = model(b_val_input)
+                            val_loss = get_vae_loss_value(y_hat_val, b_val_seg.float(), z_val, mean_val, std_val, class_weights, model)
+                        elif config.model_type == 'ae':
+                            y_hat_val, _ = model(b_val_input)
+                            val_loss = get_ae_loss_value(y_hat_val, b_val_seg.float(), class_weights)
+                        else:
+                            raise ValueError
+                        
                         val_pred_seg = y_hat_val.argmax(1)
 
                         b_val_dice = dice3d(
