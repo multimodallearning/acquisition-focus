@@ -46,6 +46,8 @@ import numpy as np
 THIS_SCRIPT_DIR = get_script_dir()
 
 PROJECT_NAME = "slice_inflate"
+
+training_dataset = None
 # %%
 
 config_dict = DotDict({
@@ -77,7 +79,7 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'debug': False,
-    'wandb_mode': 'disabled',                         # e.g. online, disabled. Use weights and biases online logging
+    'wandb_mode': 'online',                         # e.g. online, disabled. Use weights and biases online logging
     'do_sweep': False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
@@ -299,8 +301,6 @@ class BlendowskiAE(torch.nn.Module):
 
         self.debug_mode = debug_mode
 
-        self.input_batchnorm = torch.nn.BatchNorm3d(in_channels)
-
         self.first_layer_encoder = self.ConvBlock(in_channels, out_channels_list=[8], strides_list=[1])
         self.first_layer_decoder = self.ConvBlock(8, out_channels_list=[8,out_channels], strides_list=[1,1])
 
@@ -316,7 +316,6 @@ class BlendowskiAE(torch.nn.Module):
         self.deepest_layer = self.ConvBlock(60, out_channels_list=[60,20,2], strides_list=[2,1,1])
 
         self.encoder = torch.nn.Sequential(
-            self.input_batchnorm,
             self.first_layer_encoder,
             self.second_layer_encoder,
             self.third_layer_encoder,
@@ -350,6 +349,7 @@ class BlendowskiAE(torch.nn.Module):
             return self.decoder(z)
 
     def forward(self, x):
+        x = torch.nn.functional.instance_norm(x)
         z = self.encode(x)
         return self.decode(z), z
 
@@ -421,7 +421,8 @@ class BlendowskiVAE(BlendowskiAE):
 
 # %%
 
-training_dataset = prepare_data(config_dict)
+if training_dataset is None:
+    training_dataset = prepare_data(config_dict)
 
 
 # %%
@@ -531,19 +532,21 @@ def kl_divergence(z, mean, std):
 
 
 def get_ae_loss_value(y_hat, y_target, class_weights):
+    y_hat = torch.nn.functional.instance_norm(y_hat)
+    y_target = torch.nn.functional.instance_norm(y_target)
     return nn.CrossEntropyLoss(class_weights)(y_hat, y_target)
 
 
 def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
     # Reconstruction loss
-    recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
-
+    # recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, y_target.float()) # TODO Does not work
+    recon_loss = get_ae_loss_value(y_hat, y_target, class_weights)
     # kl
     kl = kl_divergence(z, mean, std)
 
     # elbo
-    elbo = kl - (recon_loss * class_weights.view(1,-1)).mean()
-    # print("ls", elbo, kl, recon_loss)
+    elbo = kl.mean() + recon_loss
+
     return elbo
 
 def train_DL(run_name, config, training_dataset):
@@ -633,7 +636,9 @@ def train_DL(run_name, config, training_dataset):
 
                 optimizer.zero_grad()
                 b_input, b_seg = get_model_input(batch, config, len(training_dataset.label_tags))
-
+                b_input = (b_input/b_input.std((0,-1,-2,-3)).view(1,6,1,1,1))
+                b_input = (b_input-b_input.mean((0,-1,-2,-3)).view(1,6,1,1,1))
+                
                 ### Forward pass ###
                 with amp.autocast(enabled=autocast_enabled):
                     assert b_input.dim() == len(n_dims)+2, \
@@ -842,7 +847,6 @@ sweep_config_dict = dict(
 )
 
 # %%
-
 def normal_run():
     with wandb.init(project=PROJECT_NAME, group="training", job_type="train",
             config=config_dict, settings=wandb.Settings(start_method="thread"),
