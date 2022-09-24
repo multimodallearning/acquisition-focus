@@ -32,7 +32,7 @@ import wandb
 import nibabel as nib
 
 from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset, load_data, extract_2d_data
-from slice_inflate.utils.common_utils import DotDict, get_script_dir
+from slice_inflate.utils.common_utils import DotDict, get_script_dir, in_notebook
 from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, get_batch_dice_over_all, get_batch_dice_per_class, save_model
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
@@ -79,7 +79,7 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'debug': False,
-    'wandb_mode': 'online',                         # e.g. online, disabled. Use weights and biases online logging
+    'wandb_mode': 'disabled',                         # e.g. online, disabled. Use weights and biases online logging
     'do_sweep': False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
@@ -620,6 +620,8 @@ def train_DL(run_name, config, training_dataset):
         autocast_enabled = 'cuda' in config.device
         autocast_enabled = False
 
+        io_normalisation_values = torch.load("io_normalisation_values.pth")
+
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
 
@@ -634,11 +636,10 @@ def train_DL(run_name, config, training_dataset):
 
             # Load data
             for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch:", total=len(train_dataloader)):
-
                 optimizer.zero_grad()
                 b_input, b_seg = get_model_input(batch, config, len(training_dataset.label_tags))
-                # b_input = (b_input/b_input.std((-1,-2,-3)).view(4,6,1,1,1))
-                # b_input = (b_input-b_input.mean((-1,-2,-3)).view(4,6,1,1,1))
+                b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
+                b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
                 
                 ### Forward pass ###
                 with amp.autocast(enabled=autocast_enabled):
@@ -654,7 +655,10 @@ def train_DL(run_name, config, training_dataset):
                         y_hat, _ = model(b_input)
                     else:
                         raise ValueError
-                        
+                    
+                    y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
+                    y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
+
                     ### Calculate loss ###
                     assert y_hat.dim() == len(n_dims)+2, \
                         f"Input shape for loss must be BxNUM_CLASSESxSPATIAL but is {y_hat.shape}"
@@ -727,8 +731,8 @@ def train_DL(run_name, config, training_dataset):
                     for val_batch_idx, val_batch in tqdm(enumerate(val_dataloader), desc="batch:", total=len(val_dataloader)):
 
                         b_val_input, b_val_seg = get_model_input(val_batch, config, len(training_dataset.label_tags))
-                        # b_val_input = (b_val_input/b_val_input.std((-1,-2,-3)).view(1,6,1,1,1))
-                        # b_val_input = (b_val_input-b_val_input.mean((-1,-2,-3)).view(1,6,1,1,1))
+                        b_val_input = b_val_input/io_normalisation_values['input_std'].to(b_val_input.device)
+                        b_val_input = b_val_input-io_normalisation_values['input_mean'].to(b_val_input.device)
 
                         if config.model_type == 'vae':
                             y_hat_val, (z_val, mean_val, std_val) = model(b_val_input)
@@ -738,7 +742,10 @@ def train_DL(run_name, config, training_dataset):
                             val_loss = get_ae_loss_value(y_hat_val, b_val_seg.float(), class_weights)
                         else:
                             raise ValueError
-                        
+
+                        y_hat_val = y_hat_val*io_normalisation_values['target_std'].to(b_val_input.device)
+                        y_hat_val = y_hat_val+io_normalisation_values['target_mean'].to(b_val_input.device)
+
                         val_pred_seg = y_hat_val.argmax(1)
 
                         b_val_dice = dice3d(
@@ -805,6 +812,21 @@ def train_DL(run_name, config, training_dataset):
 
         # End of fold loop
 
+
+# %%
+# training_dataset.eval()
+# eval_dataloader = DataLoader(training_dataset, batch_size=20,  pin_memory=False, drop_last=False)
+
+# for large_batch in eval_dataloader:
+#     large_b_input = get_model_input(large_batch, config_dict, num_classes=len(training_dataset.label_tags))
+
+# input_mean, input_std = large_b_input[0].float().mean((0,-3,-2,-1), keepdim=True).cpu(), large_b_input[0].float().std((0,-3,-2,-1), keepdim=True).cpu()
+# target_mean, target_std = large_b_input[1].float().mean((0,-3,-2,-1), keepdim=True).cpu(), large_b_input[1].float().std((0,-3,-2,-1), keepdim=True).cpu()
+
+# print(input_mean.shape, input_std.shape)
+# print(target_mean.shape, target_std.shape)
+
+# torch.save(dict(input_mean=input_mean, input_std=input_std, target_mean=target_mean, target_std=target_std), "io_normalisation_values.pth")
 
 # %%
 # Config overrides
