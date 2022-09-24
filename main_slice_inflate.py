@@ -286,8 +286,8 @@ class BlendowskiAE(torch.nn.Module):
                     stride=strides_list[op_idx],
                     padding=paddings_list[op_idx]
                 ))
-                ops.append(torch.nn.BatchNorm3d(out_channels_list[op_idx]))
-                ops.append(torch.nn.LeakyReLU())
+                # ops.append(torch.nn.BatchNorm3d(out_channels_list[op_idx]))
+                # ops.append(torch.nn.LeakyReLU())
 
             self.block = torch.nn.Sequential(*ops)
 
@@ -349,7 +349,7 @@ class BlendowskiAE(torch.nn.Module):
             return self.decoder(z)
 
     def forward(self, x):
-        x = torch.nn.functional.instance_norm(x)
+        # x = torch.nn.functional.instance_norm(x)
         z = self.encode(x)
         return self.decode(z), z
 
@@ -532,8 +532,9 @@ def kl_divergence(z, mean, std):
 
 
 def get_ae_loss_value(y_hat, y_target, class_weights):
-    y_hat = torch.nn.functional.instance_norm(y_hat)
-    y_target = torch.nn.functional.instance_norm(y_target)
+    B, *_ = y_target.shape
+    # y_target = (y_target/y_target.std((-1,-2,-3)).view(B,6,1,1,1))
+    # y_target = (y_target-y_target.mean((-1,-2,-3)).view(B,6,1,1,1))
     return nn.CrossEntropyLoss(class_weights)(y_hat, y_target)
 
 
@@ -615,7 +616,7 @@ def train_DL(run_name, config, training_dataset):
         class_weights /= class_weights.mean()
 
         class_weights = class_weights.to(device=config.device)
-
+        # class_weights = None
         autocast_enabled = 'cuda' in config.device
         autocast_enabled = False
 
@@ -636,8 +637,8 @@ def train_DL(run_name, config, training_dataset):
 
                 optimizer.zero_grad()
                 b_input, b_seg = get_model_input(batch, config, len(training_dataset.label_tags))
-                b_input = (b_input/b_input.std((0,-1,-2,-3)).view(1,6,1,1,1))
-                b_input = (b_input-b_input.mean((0,-1,-2,-3)).view(1,6,1,1,1))
+                # b_input = (b_input/b_input.std((-1,-2,-3)).view(4,6,1,1,1))
+                # b_input = (b_input-b_input.mean((-1,-2,-3)).view(4,6,1,1,1))
                 
                 ### Forward pass ###
                 with amp.autocast(enabled=autocast_enabled):
@@ -726,7 +727,9 @@ def train_DL(run_name, config, training_dataset):
                     for val_batch_idx, val_batch in tqdm(enumerate(val_dataloader), desc="batch:", total=len(val_dataloader)):
 
                         b_val_input, b_val_seg = get_model_input(val_batch, config, len(training_dataset.label_tags))
-                        
+                        # b_val_input = (b_val_input/b_val_input.std((-1,-2,-3)).view(1,6,1,1,1))
+                        # b_val_input = (b_val_input-b_val_input.mean((-1,-2,-3)).view(1,6,1,1,1))
+
                         if config.model_type == 'vae':
                             y_hat_val, (z_val, mean_val, std_val) = model(b_val_input)
                             val_loss = get_vae_loss_value(y_hat_val, b_val_seg.float(), z_val, mean_val, std_val, class_weights, model)
