@@ -79,7 +79,7 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'debug': False,
-    'wandb_mode': 'disabled',                         # e.g. online, disabled. Use weights and biases online logging
+    'wandb_mode': 'online',                         # e.g. online, disabled. Use weights and biases online logging
     'do_sweep': False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
@@ -640,7 +640,7 @@ def train_DL(run_name, config, training_dataset):
                 b_input, b_seg = get_model_input(batch, config, len(training_dataset.label_tags))
                 b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
                 b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
-                
+
                 ### Forward pass ###
                 with amp.autocast(enabled=autocast_enabled):
                     assert b_input.dim() == len(n_dims)+2, \
@@ -655,7 +655,7 @@ def train_DL(run_name, config, training_dataset):
                         y_hat, _ = model(b_input)
                     else:
                         raise ValueError
-                    
+
                     y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
                     y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
 
@@ -734,6 +734,9 @@ def train_DL(run_name, config, training_dataset):
                         b_val_input = b_val_input/io_normalisation_values['input_std'].to(b_val_input.device)
                         b_val_input = b_val_input-io_normalisation_values['input_mean'].to(b_val_input.device)
 
+                        y_hat_val = y_hat_val*io_normalisation_values['target_std'].to(b_val_input.device)
+                        y_hat_val = y_hat_val+io_normalisation_values['target_mean'].to(b_val_input.device)
+                        
                         if config.model_type == 'vae':
                             y_hat_val, (z_val, mean_val, std_val) = model(b_val_input)
                             val_loss = get_vae_loss_value(y_hat_val, b_val_seg.float(), z_val, mean_val, std_val, class_weights, model)
@@ -742,9 +745,6 @@ def train_DL(run_name, config, training_dataset):
                             val_loss = get_ae_loss_value(y_hat_val, b_val_seg.float(), class_weights)
                         else:
                             raise ValueError
-
-                        y_hat_val = y_hat_val*io_normalisation_values['target_std'].to(b_val_input.device)
-                        y_hat_val = y_hat_val+io_normalisation_values['target_mean'].to(b_val_input.device)
 
                         val_pred_seg = y_hat_val.argmax(1)
 
