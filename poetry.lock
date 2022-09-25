@@ -207,6 +207,14 @@ unicode = ["unicodedata2 (>=14.0.0)"]
 woff = ["zopfli (>=0.1.4)", "brotlicffi (>=0.8.0)", "brotli (>=1.0.1)"]
 
 [[package]]
+name = "git-filter-repo"
+version = "2.34.0"
+description = "Quickly rewrite git repository history"
+category = "main"
+optional = false
+python-versions = ">=3.5"
+
+[[package]]
 name = "gitdb"
 version = "4.0.9"
 description = "Git Object Database"
@@ -1193,7 +1201,7 @@ python-versions = ">=3.7"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.9"
-content-hash = "c4f51e2f6573fb10771f04574927d7d0d05b5b33ce9ad27d84bede8a64fe3a81"
+content-hash = "6517ce3dea75a02de30d9a6f69ae12a4727895fc88b8b64ce4125fc6d2704b64"
 
 [metadata.files]
 appnope = [
@@ -1383,6 +1391,10 @@ fastjsonschema = [
 fonttools = [
     {file = "fonttools-4.37.1-py3-none-any.whl", hash = "sha256:fff6b752e326c15756c819fe2fe7ceab69f96a1dbcfe8911d0941cdb49905007"},
     {file = "fonttools-4.37.1.zip", hash = "sha256:4606e1a88ee1f6699d182fea9511bd9a8a915d913eab4584e5226da1180fcce7"},
+]
+git-filter-repo = [
+    {file = "git-filter-repo-2.34.0.tar.gz", hash = "sha256:b5a09f383865de0a164b06ba174461e55d9167cc6fbb06cf2a1e62dbf0cdba63"},
+    {file = "git_filter_repo-2.34.0-py2.py3-none-any.whl", hash = "sha256:cded6aa06d0acbe81e6330055f63bc4757048c91abad70e676605161f66ad62a"},
 ]
 gitdb = [
     {file = "gitdb-4.0.9-py3-none-any.whl", hash = "sha256:8033ad4e853066ba6ca92050b9df2f89301b8fc8bf7e9324d412a63f8bf1a8fd"},
