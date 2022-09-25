@@ -49,7 +49,6 @@ PROJECT_NAME = "slice_inflate"
 
 training_dataset = None
 # %%
-
 config_dict = DotDict({
     'num_folds': 5,
     'only_first_fold': True,                # If true do not contiue with training after the first fold
@@ -67,9 +66,10 @@ config_dict = DotDict({
     'data_base_path': str(Path(THIS_SCRIPT_DIR, "data/MMWHS")),
     'reg_state': None, # Registered (noisy) labels used in training. See prepare_data() for valid reg_states
     'train_set_max_len': None,              # Length to cut of dataloader sample count
-    'crop_around_3d_label_center': (128,128,128),
-    'crop_3d_region': ((0,128), (0,128), (0,128)),        # dimension range in which 3D samples are cropped
+    'crop_around_3d_label_center': None, #(128,128,128),
+    'crop_3d_region': None, #((0,128), (0,128), (0,128)), # dimension range in which 3D samples are cropped
     'crop_2d_slices_gt_num_threshold': 0,   # Drop 2D slices if less than threshold pixels are positive
+    'crop_around_2d_label_center': None, #(128,128),
 
     'lr': 1e-3,
     'use_scheduling': True,
@@ -108,7 +108,7 @@ def prepare_data(config):
         pre_interpolation_factor=1., # When getting the data, resize the data by this factor
         ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
         use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
-        crop_around_2d_label_center=(128,128),
+        crop_around_2d_label_center=config.crop_around_2d_label_center,
 
         augment_angle_std=5,
 
@@ -120,13 +120,15 @@ def prepare_data(config):
 
 
 # %%
-if False:
+if training_dataset is None:
     training_dataset = prepare_data(config_dict)
-    training_dataset.train(augment=False)
-    training_dataset.self_attributes['augment_angle_std'] = 2
-    print(training_dataset.do_augment)
-    for sample in [training_dataset[idx] for idx in [1]]:
-        pass
+
+# %%
+if False:
+    training_dataset.train(augment=True)
+    training_dataset.self_attributes['augment_angle_std'] = 5
+    print("do_augment", training_dataset.do_augment)
+    for sample in [training_dataset[idx] for idx in range(20)]:
         fig = plt.figure(figsize=(16., 4.))
         grid = ImageGrid(fig, 111,  # similar to subplot(111)
             nrows_ncols=(1, 6),  # creates 2x2 grid of axes
@@ -151,37 +153,36 @@ if False:
 
 # %%
 if False:
-    training_dataset = prepare_data(config_dict)
     training_dataset.train()
 
-    training_dataset.self_attributes['augment_angle_std'] = 10
-    print(training_dataset.do_augment)
-    import torch
-    lbl, sa_label, hla_label = torch.zeros(128,128), torch.zeros(128,128), torch.zeros(128,128)
-    for idx in range(15):
-        sample = training_dataset[1]
-        # nib.save(nib.Nifti1Image(sample['label'].cpu().numpy(), affine=torch.eye(4).numpy()), f'out{idx}.nii.gz')
-        lbl += cut_slice(sample['label']).cpu()
-        sa_label += sample['sa_label_slc'].cpu()
-        hla_label += sample['hla_label_slc'].cpu()
-    fig = plt.figure(figsize=(16., 4.))
-    grid = ImageGrid(fig, 111,  # similar to subplot(111)
-        nrows_ncols=(1, 3),  # creates 2x2 grid of axes
-        axes_pad=0.0,  # pad between axes in inch.
-    )
+    training_dataset.self_attributes['augment_angle_std'] = 5
+    print("do_augment", training_dataset.do_augment)
+    for sample_idx in range(20):
+        lbl, sa_label, hla_label = torch.zeros(128,128), torch.zeros(128,128), torch.zeros(128,128)
+        for augment_idx in range(15):
+            sample = training_dataset[sample_idx]
+            nib.save(nib.Nifti1Image(sample['label'].cpu().numpy(), affine=torch.eye(4).numpy()), f'out{sample_idx}.nii.gz')
+            lbl += cut_slice(sample['label']).cpu()
+            sa_label += sample['sa_label_slc'].cpu()
+            hla_label += sample['hla_label_slc'].cpu()
+        
+        fig = plt.figure(figsize=(16., 4.))
+        grid = ImageGrid(fig, 111,  # similar to subplot(111)
+            nrows_ncols=(1, 3),  # creates 2x2 grid of axes
+            axes_pad=0.0,  # pad between axes in inch.
+        )
 
-    show_row = [
-        lbl, sa_label, hla_label
-    ]
+        show_row = [
+            lbl, sa_label, hla_label
+        ]
 
-    for ax, im in zip(grid, show_row):
-        ax.imshow(im, cmap='magma', interpolation='none')
+        for ax, im in zip(grid, show_row):
+            ax.imshow(im, cmap='magma', interpolation='none')
 
-    plt.show()
+        plt.show()
 
 # %%
 if False:
-    training_dataset = prepare_data(config_dict)
     training_dataset.train(augment=False)
     training_dataset.self_attributes['augment_angle_std'] = 2
     print(training_dataset.do_augment)
@@ -420,12 +421,6 @@ class BlendowskiVAE(BlendowskiAE):
 # y, _ = model(smp)
 
 # %%
-
-if training_dataset is None:
-    training_dataset = prepare_data(config_dict)
-
-
-# %%
 # def nan_hook(self, inp, output):
 #     if not isinstance(output, tuple):
 #         outputs = [output]
@@ -638,24 +633,21 @@ def train_DL(run_name, config, training_dataset):
             for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch:", total=len(train_dataloader)):
                 optimizer.zero_grad()
                 b_input, b_seg = get_model_input(batch, config, len(training_dataset.label_tags))
-                b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
                 b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
-
+                b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
+                
                 ### Forward pass ###
                 with amp.autocast(enabled=autocast_enabled):
                     assert b_input.dim() == len(n_dims)+2, \
                         f"Input image for model must be {len(n_dims)+2}D: BxCxSPATIAL but is {b_input.shape}"
-                    for param in model.parameters():
-                        param.requires_grad = True
 
-                    model.use_checkpointing = True
                     if config.model_type == 'vae':
                         y_hat, (z, mean, std) = model(b_input)
                     elif config.model_type == 'ae':
                         y_hat, _ = model(b_input)
                     else:
                         raise ValueError
-
+                    # Reverse normalisation to outputs
                     y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
                     y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
 
@@ -731,17 +723,23 @@ def train_DL(run_name, config, training_dataset):
                     for val_batch_idx, val_batch in tqdm(enumerate(val_dataloader), desc="batch:", total=len(val_dataloader)):
 
                         b_val_input, b_val_seg = get_model_input(val_batch, config, len(training_dataset.label_tags))
-                        b_val_input = b_val_input/io_normalisation_values['input_std'].to(b_val_input.device)
                         b_val_input = b_val_input-io_normalisation_values['input_mean'].to(b_val_input.device)
+                        b_val_input = b_val_input/io_normalisation_values['input_std'].to(b_val_input.device)
 
-                        y_hat_val = y_hat_val*io_normalisation_values['target_std'].to(b_val_input.device)
-                        y_hat_val = y_hat_val+io_normalisation_values['target_mean'].to(b_val_input.device)
-                        
                         if config.model_type == 'vae':
                             y_hat_val, (z_val, mean_val, std_val) = model(b_val_input)
-                            val_loss = get_vae_loss_value(y_hat_val, b_val_seg.float(), z_val, mean_val, std_val, class_weights, model)
                         elif config.model_type == 'ae':
                             y_hat_val, _ = model(b_val_input)
+                        else:
+                            raise ValueError
+
+                        # Reverse normalisation to outputs
+                        y_hat_val = y_hat_val*io_normalisation_values['target_std'].to(b_val_input.device)
+                        y_hat_val = y_hat_val+io_normalisation_values['target_mean'].to(b_val_input.device)
+
+                        if config.model_type == 'vae':
+                            val_loss = get_vae_loss_value(y_hat_val, b_val_seg.float(), z_val, mean_val, std_val, class_weights, model)
+                        elif config.model_type == 'ae':
                             val_loss = get_ae_loss_value(y_hat_val, b_val_seg.float(), class_weights)
                         else:
                             raise ValueError
