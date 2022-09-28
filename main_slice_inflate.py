@@ -484,7 +484,7 @@ def get_model_input(batch, config, num_classes):
     b_input = b_input.float()
     b_seg = F.one_hot(b_seg, num_classes).permute(0,4,1,2,3)
 
-    return b_input, b_seg
+    return b_seg, b_seg
 
 def inference_wrap(model, seg):
     with torch.inference_mode():
@@ -634,8 +634,8 @@ def train_DL(run_name, config, training_dataset):
             for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch:", total=len(train_dataloader)):
                 optimizer.zero_grad()
                 b_input, b_seg = get_model_input(batch, config, len(training_dataset.label_tags))
-                b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
-                b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
+                b_input = b_input-io_normalisation_values['target_mean'].to(b_input.device)
+                b_input = b_input/io_normalisation_values['target_std'].to(b_input.device)
 
                 ### Forward pass ###
                 with amp.autocast(enabled=autocast_enabled):
@@ -724,8 +724,8 @@ def train_DL(run_name, config, training_dataset):
                     for val_batch_idx, val_batch in tqdm(enumerate(val_dataloader), desc="batch:", total=len(val_dataloader)):
 
                         b_val_input, b_val_seg = get_model_input(val_batch, config, len(training_dataset.label_tags))
-                        b_val_input = b_val_input-io_normalisation_values['input_mean'].to(b_val_input.device)
-                        b_val_input = b_val_input/io_normalisation_values['input_std'].to(b_val_input.device)
+                        b_val_input = b_val_input-io_normalisation_values['target_mean'].to(b_val_input.device)
+                        b_val_input = b_val_input/io_normalisation_values['target_std'].to(b_val_input.device)
 
                         if config.model_type == 'vae':
                             y_hat_val, (z_val, mean_val, std_val) = model(b_val_input)
