@@ -23,6 +23,7 @@ wandb = "^0.13.3"
 scikit-learn = "^1.1.2"
 mdl-seg-class = { git = "git@github.com:MDL-UzL/SegmentationClassification.git" }
 meidic-vtach-utils = { git = "git@github.com:MDL-UzL/meidic_vtach_utils.git" }
+scikit-image = "^0.19.3"
 
 
 [build-system]
