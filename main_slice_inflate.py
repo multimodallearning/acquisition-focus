@@ -165,7 +165,7 @@ if False:
             lbl += cut_slice(sample['label']).cpu()
             sa_label += sample['sa_label_slc'].cpu()
             hla_label += sample['hla_label_slc'].cpu()
-        
+
         fig = plt.figure(figsize=(16., 4.))
         grid = ImageGrid(fig, 111,  # similar to subplot(111)
             nrows_ncols=(1, 3),  # creates 2x2 grid of axes
@@ -287,8 +287,8 @@ class BlendowskiAE(torch.nn.Module):
                     stride=strides_list[op_idx],
                     padding=paddings_list[op_idx]
                 ))
-                # ops.append(torch.nn.BatchNorm3d(out_channels_list[op_idx]))
-                # ops.append(torch.nn.LeakyReLU())
+                ops.append(torch.nn.BatchNorm3d(out_channels_list[op_idx]))
+                ops.append(torch.nn.LeakyReLU())
 
             self.block = torch.nn.Sequential(*ops)
 
@@ -314,7 +314,10 @@ class BlendowskiAE(torch.nn.Module):
         self.fourth_layer_encoder = self.ConvBlock(40, out_channels_list=[60,60,60], strides_list=[2,1,1])
         self.fourth_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[40], strides_list=[1])
 
-        self.deepest_layer = self.ConvBlock(60, out_channels_list=[60,20,2], strides_list=[2,1,1])
+        self.deepest_layer = torch.nn.Sequential(
+            self.ConvBlock(60, out_channels_list=[60,40,20], strides_list=[2,1,1]),
+            torch.nn.Conv3d(20, 2, kernel_size=1, stride=1, padding=0)
+        )
 
         self.encoder = torch.nn.Sequential(
             self.first_layer_encoder,
@@ -337,11 +340,9 @@ class BlendowskiAE(torch.nn.Module):
     def encode(self, x):
         h = self.encoder(x)
         h = self.deepest_layer(h)
+        # h = debug_forward_pass(self.encoder, x, STEP_MODE=False)
+        # h = debug_forward_pass(self.deepest_layer, h, STEP_MODE=False)
         return h
-        # if self.debug_mode:
-        #     return debug_forward_pass(self.encoder, x, STEP_MODE=False)
-        # else:
-        #     return self.encoder(x)
 
     def decode(self, z):
         if self.debug_mode:
@@ -635,7 +636,7 @@ def train_DL(run_name, config, training_dataset):
                 b_input, b_seg = get_model_input(batch, config, len(training_dataset.label_tags))
                 b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
                 b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
-                
+
                 ### Forward pass ###
                 with amp.autocast(enabled=autocast_enabled):
                     assert b_input.dim() == len(n_dims)+2, \
