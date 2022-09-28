@@ -309,13 +309,13 @@ class BlendowskiAE(torch.nn.Module):
         self.second_layer_decoder = self.ConvBlock(20, out_channels_list=[8], strides_list=[1])
 
         self.third_layer_encoder = self.ConvBlock(20, out_channels_list=[40,40,40], strides_list=[2,1,1])
-        self.third_layer_decoder = self.ConvBlock(40, out_channels_list=[20], strides_list=[1])
+        self.third_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[20], strides_list=[1])
 
-        self.fourth_layer_encoder = self.ConvBlock(40, out_channels_list=[60,60,60], strides_list=[2,1,1])
-        self.fourth_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[40], strides_list=[1])
+        # self.fourth_layer_encoder = self.ConvBlock(40, out_channels_list=[60,60,60], strides_list=[2,1,1])
+        # self.fourth_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[40], strides_list=[1])
 
         self.deepest_layer = torch.nn.Sequential(
-            self.ConvBlock(60, out_channels_list=[60,40,20], strides_list=[2,1,1]),
+            self.ConvBlock(40, out_channels_list=[40,30,20], strides_list=[2,1,1]),
             torch.nn.Conv3d(20, 2, kernel_size=1, stride=1, padding=0)
         )
 
@@ -323,12 +323,12 @@ class BlendowskiAE(torch.nn.Module):
             self.first_layer_encoder,
             self.second_layer_encoder,
             self.third_layer_encoder,
-            self.fourth_layer_encoder,
+            # self.fourth_layer_encoder,
         )
 
         self.decoder = torch.nn.Sequential(
-            torch.nn.Upsample(scale_factor=2),
-            self.fourth_layer_decoder,
+            # torch.nn.Upsample(scale_factor=2),
+            # self.fourth_layer_decoder,
             torch.nn.Upsample(scale_factor=2),
             self.third_layer_decoder,
             torch.nn.Upsample(scale_factor=2),
