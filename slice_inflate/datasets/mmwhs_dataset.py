@@ -107,16 +107,27 @@ class MMWHSDataset(HybridIdDataset):
             augment_affine = torch.eye(4)
             augment_affine[:3,:3] = get_rotation_matrix_3d_from_angles(deg_angles)
 
-        sa_label, sa_label_slc, hla_label_slc = retrieve_augmented_hybrid_aligned(self.base_dir, label, additional_data,
+
+        align_label_dict = retrieve_augmented_hybrid_aligned(self.base_dir, label, additional_data,
             is_label=True, augment_affine=augment_affine
         )
 
         if False:
-            sa_image, sa_image_slc, hla_image_slc = retrieve_augmented_hybrid_aligned(self.base_dir, image, additional_data,
+            align_image_dict = retrieve_augmented_hybrid_aligned(self.base_dir, image, additional_data,
                 is_label=False, augment_affine=augment_affine
             )
         else:
-            sa_image, sa_image_slc, hla_image_slc = torch.zeros_like(sa_label), torch.zeros_like(sa_label_slc), torch.zeros_like(hla_label_slc)
+            align_image_dict = dict(
+                aligned_sa_volume=torch.zeros_like(align_label_dict['aligned_sa_volume']),
+                aligned_sa_slice=torch.zeros_like(align_label_dict['aligned_sa_slice']),
+                aligned_hla_slice=torch.zeros_like(align_label_dict['aligned_hla_slice']),
+                aligned_sa_affine=align_label_dict['aligned_sa_affine'],
+                aligned_hla_affine=align_label_dict['aligned_hla_affine']
+            )
+
+        sa_image, sa_label = align_image_dict['aligned_sa_volume'], align_label_dict['aligned_sa_volume']
+        sa_image_slc, sa_label_slc = align_image_dict['aligned_sa_slice'], align_label_dict['aligned_sa_slice']
+        hla_image_slc, hla_label_slc = align_image_dict['aligned_hla_slice'], align_label_dict['aligned_hla_slice']
 
         if self.self_attributes['crop_around_3d_label_center'] is not None:
             _3d_vox_size = torch.as_tensor(self.self_attributes['crop_around_3d_label_center'])
@@ -140,7 +151,9 @@ class MMWHSDataset(HybridIdDataset):
             label=sa_label.cpu(),
             sa_label_slc=sa_label_slc.cpu(),
             hla_label_slc=hla_label_slc.cpu(),
-            # modified_label=modified_label.cpu(),
+
+            sa_affine=align_label_dict['aligned_sa_affine'],
+            hla_affine=align_label_dict['aligned_hla_affine'],
 
             additional_data=additional_data
         )
@@ -154,9 +167,16 @@ def retrieve_augmented_hybrid_aligned(base_dir, volume, additional_data, is_labe
     if augment_affine is not None:
         align_affine = align_affine @ augment_affine.to(dtype=initial_affine.dtype)
 
-    sa_volume, hla_volume = align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, is_label)
+    align_dict = align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, is_label)
+    aligned_sa_volume, aligned_hla_volume = align_dict['aligned_sa_volume'], align_dict['aligned_hla_volume']
 
-    return sa_volume, cut_slice(sa_volume), cut_slice(hla_volume)
+    return dict(
+        aligned_sa_volume=aligned_sa_volume,
+        aligned_sa_slice=cut_slice(aligned_sa_volume),
+        aligned_hla_slice=cut_slice(aligned_hla_volume),
+        aligned_sa_affine=align_dict['aligned_sa_affine'],
+        aligned_hla_affine=align_dict['aligned_hla_affine']
+    )
 
 
 
@@ -185,14 +205,17 @@ def extract_2d_data(self_attributes: dict):
         for _3d_id, image in self.img_data_3d.items():
             initial_affine = self.additional_data_3d[_3d_id]['initial_affine']
             align_affine = self.additional_data_3d[_3d_id]['align_affine']
-            sa_volume, hla_volume = align_to_sa_hla_from_volume(self.base_dir, image, initial_affine, align_affine, is_label=False)
+            align_dict = align_to_sa_hla_from_volume(self.base_dir, image, initial_affine, align_affine, is_label=False)
+            hla_volume, sa_volume = align_dict['aligned_hla_volume'], align_dict['aligned_sa_volume']
+
             img_data_2d[f"{_3d_id}:HLA"] = cut_slice(hla_volume)
             img_data_2d[f"{_3d_id}:SA"] = cut_slice(sa_volume)
 
         for _3d_id, label in self.label_data_3d.items():
             initial_affine = self.additional_data_3d[_3d_id]['initial_affine']
             align_affine = self.additional_data_3d[_3d_id]['align_affine']
-            sa_volume, hla_volume = align_to_sa_hla_from_volume(self.base_dir, label, initial_affine, align_affine, is_label=True)
+            align_dict = align_to_sa_hla_from_volume(self.base_dir, image, initial_affine, align_affine, is_label=False)
+            hla_volume, sa_volume = align_dict['aligned_hla_volume'], align_dict['aligned_sa_volume']
             label_data_2d[f"{_3d_id}:HLA"] = cut_slice(hla_volume)
             label_data_2d[f"{_3d_id}:SA"] = cut_slice(sa_volume)
 
