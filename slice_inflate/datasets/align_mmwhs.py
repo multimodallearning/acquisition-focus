@@ -181,8 +181,10 @@ def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, 
     aligned_sa_volume, aligned_sa_affine = nifti_transform(volume, initial_affine, sa_affine, fov_mm=FOV_MM, fov_vox=FOV_VOX,
         is_label=is_label)
 
-    # Do only retrieve the center slice for HLA view
-    aligned_hla_volume, aligned_hla_affine = nifti_transform(volume, initial_affine, hla_affine, fov_mm=FOV_MM_SLICE, fov_vox=FOV_VOX_SLICE,
+    # # Do only retrieve the center slice for HLA view: Be careful. Output volume is ok, but not hla_affine for 1-vox slice
+    # aligned_hla_volume, aligned_hla_affine = nifti_transform(volume, initial_affine, hla_affine, fov_mm=FOV_MM_SLICE, fov_vox=FOV_VOX_SLICE,
+    #     is_label=is_label)
+    aligned_hla_volume, aligned_hla_affine = nifti_transform(volume, initial_affine, hla_affine, fov_mm=FOV_MM, fov_vox=FOV_VOX,
         is_label=is_label)
 
     return dict(
