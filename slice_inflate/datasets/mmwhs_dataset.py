@@ -14,7 +14,7 @@ import numpy as np
 from slice_inflate.utils.common_utils import DotDict
 from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, get_rotation_matrix_3d_from_angles
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
-from slice_inflate.datasets.align_mmwhs import slicer_slice_transform, align_to_sa_hla_from_volume, crop_around_label_center, cut_slice
+from slice_inflate.datasets.align_mmwhs import align_to_sa_hla_from_volume, crop_around_label_center, cut_slice
 
 cache = Memory(location=os.environ['MMWHS_CACHE_PATH'])
 

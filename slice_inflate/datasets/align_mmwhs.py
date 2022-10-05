@@ -5,13 +5,6 @@ from pathlib import Path
 
 
 
-import numpy as np
-import torch
-import nibabel as nib
-from pathlib import Path
-
-
-
 def switch_rows(affine_mat):
     affine_mat = affine_mat.clone()
     affine_mat[:3] = affine_mat.detach()[:3].flip(0)
@@ -19,9 +12,20 @@ def switch_rows(affine_mat):
 
 
 
-def get_transformed_affine_from_grid_affine(grid_affine, fov_mm, fov_vox):
+def get_transformed_affine_from_grid_affine(grid_affine, volume_affine, volume_shape,
+    fov_mm, fov_vox, match_slicer_view_transform=False):
     # From torch grid resample affine [-1,+1] get the affine matrix for the transformed nifti volume
     transformed_affine = grid_affine.clone()
+
+    # if match_slicer_view_transform:
+    #     # Reflect on last dimension (only needed for slicer perfect view alignment, otherwise result is mirrored)
+    #     reflect_mat = torch.tensor([
+    #         [1,0,0,0],
+    #         [0,1,0,0],
+    #         [0,0,-1,0],
+    #         [0,0,0,1]
+    #     ]).to(dtype=volume_affine.dtype)
+    #     transformed_affine = reflect_mat @ transformed_affine
 
     # Switch back rows
     transformed_affine = switch_rows(transformed_affine)
@@ -30,40 +34,13 @@ def get_transformed_affine_from_grid_affine(grid_affine, fov_mm, fov_vox):
     transformed_affine = transformed_affine.T
 
     # Combine translation resulting from affine main 3x3 matrix and translational part 3x1
-    translat_rotat_part = (1.0 - transformed_affine[:3,:3].sum(1))*(fov_vox-1)/fov_vox
-    translat_tanslat_part = transformed_affine[:3,-1]
-    transformed_affine[:3,-1] = fov_mm/2.0 * (translat_tanslat_part + translat_rotat_part)
-
-    # Rescale the main 3x3 matrix by output scaling
-    fov_scale_mat_grid = torch.eye(4).to(dtype=grid_affine.dtype)
-    fov_scale_mat_grid[:3,:3] = torch.diag(fov_mm/fov_vox)
-    transformed_affine = transformed_affine @ fov_scale_mat_grid
-
-    return transformed_affine
-
-
-
-def get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape, fov_mm, match_slicer_view_transform=True):
-    ras_affine_mat = ras_affine_mat.to(dtype=volume_affine.dtype)
-
-    # (IJK -> RAS+).inverse() @ (Slice -> RAS+) == Slice -> IJK
-    affine_mat = volume_affine.inverse() @ ras_affine_mat
-
-    # Get spacing and size related metrics
-    volume_shape = torch.as_tensor(volume_shape)
-    origin = volume_affine[:3,-1]
-    fov_scale = fov_mm / volume_shape
-
-    # Rescale matrix for field of view
-    fov_scale_mat = torch.eye(4).to(dtype=volume_affine.dtype)
-    fov_scale_mat[:3,:3] = torch.diag(fov_scale)
-    affine_mat = affine_mat @ fov_scale_mat.double()
-
-    # Adjust offset
     if match_slicer_view_transform:
-        affine_mat[:3,-1] = (affine_mat[:3,-1])*2.0/(volume_shape-1) - 1.0
+        translat_rotat_part = (fov_mm/volume_shape - transformed_affine[:3,:3].sum(1)) * volume_shape/2.0
     else:
-        affine_mat[:3,-1] = (affine_mat[:3,-1])*2.0/(volume_shape-1)
+        translat_rotat_part = (1.0 - transformed_affine[:3,:3].sum(1)) * volume_shape/2.0
+
+    translat_tanslat_part = fov_mm/2.0 * transformed_affine[:3,-1]
+    transformed_affine[:3,-1] = translat_tanslat_part + translat_rotat_part
 
     # Rescale matrix by D,H,W dimension
     # affine_mat[:3, :3] = torch.tensor([
@@ -73,7 +50,56 @@ def get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape
     # ])
     # Is equivalent to:
     rescale_mat = \
-        volume_shape.view(1,3) * (1/volume_shape).view(3,1) # double spacing?
+        volume_shape.view(1,3) * (1/volume_shape).view(3,1)
+
+    transformed_affine[:3, :3] = transformed_affine[:3, :3] / rescale_mat
+
+    # Rescale the main 3x3 matrix by output scaling
+    fov_scale_mat_grid = torch.eye(4).to(dtype=grid_affine.dtype)
+    fov_scale_mat_grid[:3,:3] = torch.diag(volume_shape/fov_vox)
+    transformed_affine = transformed_affine @ fov_scale_mat_grid
+
+    # Compensate initial volume affine
+    transformed_affine = volume_affine @ transformed_affine
+    translat_volume_affine_part = (fov_mm-volume_shape)/volume_shape * volume_affine[:3,-1]
+    transformed_affine[:3,-1] = transformed_affine[:3,-1] + translat_volume_affine_part
+
+    return transformed_affine
+
+
+
+def get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat,
+    volume_shape, fov_mm, match_slicer_view_transform=False):
+
+    ras_affine_mat = ras_affine_mat.to(dtype=volume_affine.dtype)
+
+    # (IJK -> RAS+).inverse() @ (Slice -> RAS+) == Slice -> IJK
+    affine_mat = volume_affine.inverse() @ ras_affine_mat
+
+    # Get spacing and size related metrics
+    volume_shape = torch.as_tensor(volume_shape)
+    fov_scale = fov_mm / volume_shape
+
+    # Rescale matrix for field of view
+    fov_scale_mat = torch.eye(4).to(dtype=volume_affine.dtype)
+    fov_scale_mat[:3,:3] = torch.diag(fov_scale)
+    affine_mat = affine_mat @ fov_scale_mat
+
+    # Adjust offset
+    if match_slicer_view_transform:
+        affine_mat[:3,-1] = (affine_mat[:3,-1])*2.0/volume_shape - 1.0
+    else:
+        affine_mat[:3,-1] = (affine_mat[:3,-1])*2.0/volume_shape
+
+    # Rescale matrix by D,H,W dimension
+    # affine_mat[:3, :3] = torch.tensor([
+    #     [mat[0,0]*D/D, mat[0,1]*H/D, mat[0,2]*W/D],
+    #     [mat[1,0]*D/H, mat[1,1]*H/H, mat[1,2]*W/H],
+    #     [mat[2,0]*D/W, mat[2,1]*H/W, mat[2,2]*W/W]
+    # ])
+    # Is equivalent to:
+    rescale_mat = \
+        volume_shape.view(1,3) * (1/volume_shape).view(3,1)
 
     affine_mat[:3, :3] = affine_mat[:3, :3] * rescale_mat
 
@@ -90,34 +116,45 @@ def get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape
             [0,1,0,0],
             [0,0,-1,0],
             [0,0,0,1]
-        ]).double()
+        ]).to(dtype=volume_affine.dtype)
         affine_mat = affine_mat @ reflect_mat
     return affine_mat
 
 
 
-def slicer_slice_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_mat: torch.Tensor, fov_mm, fov_vox, is_label=False, match_slicer_view_transform=True):
+def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_mat: torch.Tensor, fov_mm, fov_vox,
+    is_label=False, match_slicer_view_transform=False, dtype=torch.float32):
+
     # Prepare volume
     volume_shape = torch.as_tensor(volume.shape)
     initial_dtype = volume.dtype
-    volume = volume.view([1,1]+volume_shape.tolist()).double()
+    volume = volume.view([1,1]+volume_shape.tolist())
 
     # Get the affine for torch grid resampling from RAS space
-    grid_affine = get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape, fov_mm, match_slicer_view_transform)
+    grid_affine = get_grid_affine_from_ras_affines(volume_affine,
+        ras_affine_mat, volume_shape, fov_mm, match_slicer_view_transform
+    )
 
     target_shape = torch.Size([1, 1] + fov_vox.tolist())
 
-    grid = torch.nn.functional.affine_grid(grid_affine[:3,:].view(1,3,4), target_shape, align_corners=False).to(device=volume.device)
+    grid = torch.nn.functional.affine_grid(
+        grid_affine[:3,:].view(1,3,4), target_shape, align_corners=False
+    ).to(device=volume.device)
 
     if is_label:
-        transformed = torch.nn.functional.grid_sample(volume, grid, align_corners=False, mode='nearest')
+        transformed = torch.nn.functional.grid_sample(
+            volume.to(dtype=dtype), grid.to(dtype=dtype), align_corners=False, mode='nearest'
+        )
     else:
-        transformed = torch.nn.functional.grid_sample(volume, grid, align_corners=False)
+        transformed = torch.nn.functional.grid_sample(
+            volume.to(dtype=dtype), grid.to(dtype=dtype), align_corners=False,
+        )
 
     transformed = transformed.view(fov_vox.tolist())
 
     # Rebuild affine
-    transformed_affine = get_transformed_affine_from_grid_affine(grid_affine, fov_mm, fov_vox)
+    transformed_affine = get_transformed_affine_from_grid_affine(grid_affine,
+        volume_affine, volume_shape, fov_mm, fov_vox, match_slicer_view_transform)
 
     return transformed.to(dtype=initial_dtype), transformed_affine
 
@@ -172,10 +209,12 @@ def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, 
     hla_affine = align_affine @ torch.from_numpy(np.loadtxt(hla_affine_path))
     sa_affine =  align_affine @ torch.from_numpy(np.loadtxt(sa_affine_path))
 
-    aligned_sa_volume, aligned_sa_affine = slicer_slice_transform(volume, initial_affine, sa_affine, fov_mm=FOV_MM, fov_vox=FOV_VOX, is_label=is_label)
+    aligned_sa_volume, aligned_sa_affine = nifti_transform(volume, initial_affine, sa_affine, fov_mm=FOV_MM, fov_vox=FOV_VOX,
+        is_label=is_label, match_slicer_view_transform=True)
 
     # Do only retrieve the center slice for HLA view
-    aligned_hla_volume, aligned_hla_affine = slicer_slice_transform(volume, initial_affine, hla_affine, fov_mm=FOV_MM_SLICE, fov_vox=FOV_VOX_SLICE, is_label=is_label)
+    aligned_hla_volume, aligned_hla_affine = nifti_transform(volume, initial_affine, hla_affine, fov_mm=FOV_MM_SLICE, fov_vox=FOV_VOX_SLICE,
+        is_label=is_label, match_slicer_view_transform=True)
 
     return dict(
         aligned_sa_volume=aligned_sa_volume,
