@@ -442,7 +442,7 @@ class BlendowskiVAE(BlendowskiAE):
 #             print("In", self.__class__.__name__)
 #             raise RuntimeError(f"Found NAN in output {i} at indices: ", nan_mask.nonzero(), "where:", out[nan_mask.nonzero()[:, 0].unique(sorted=True)])
 
-def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, device='cpu'):
+def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, device='cpu', load_model_only=False):
     _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
     if config.model_type == 'vae':
@@ -465,16 +465,20 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
     scaler = amp.GradScaler()
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=20, verbose=True)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=20, verbose=True)
 
     if _path and _path.is_dir():
-        print(f"Loading model, optimizers and grad scalers from {_path}")
         model_dict = torch.load(_path.joinpath('model.pth'), map_location=device)
         epx = model_dict.get('metadata', {}).get('epx', 0)
         model.load_state_dict(model_dict)
-        optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
-        scheduler.load_state_dict(torch.load(_path.joinpath('scheduler.pth'), map_location=device))
-        scaler.load_state_dict(torch.load(_path.joinpath('scaler.pth'), map_location=device))
+        print(f"Loading model from {_path}")
+
+        if not load_model_only:
+            print(f"Loading optimizer, scheduler, scaler from {_path}")
+            optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
+            scheduler.load_state_dict(torch.load(_path.joinpath('scheduler.pth'), map_location=device))
+            scaler.load_state_dict(torch.load(_path.joinpath('scaler.pth'), map_location=device))
+
     else:
         print(f"Generating fresh '{type(model).__name__}' model, optimizer and grad scaler.")
         epx = 0
@@ -673,7 +677,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
     log_id = f'losses/{phase}_loss{fold_postfix}'
     log_val = loss_mean
     wandb.log({log_id: log_val}, step=global_idx)
-    print(f'losses/{phase}_loss{fold_postfix}', f"{log_val}")
+    print(f'losses/{phase}_loss{fold_postfix}', log_val)
 
     log_label_metrics(f"scores/{phase}_mean", fold_postfix, seg_metrics_nanmean, global_idx,
         logger_selected_metrics=('dice', 'jaccard', 'hd', 'hd95'), print_selected_metrics=('dice'))
@@ -744,7 +748,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
         (model, optimizer, scheduler, scaler), epx_start = get_model(config, len(training_dataset), len(training_dataset.label_tags),
-            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=chk_path, device=config.device)
+            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=chk_path, device=config.device, load_model_only=True)
 
         all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
 
@@ -778,6 +782,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
             if config.use_scheduling:
                 scheduler.step(val_loss)
 
+            wandb.log({f'training/scheduler_lr': scheduler.optimizer.param_groups[0]['lr']}, step=global_idx)
             print()
 
             # Save model
