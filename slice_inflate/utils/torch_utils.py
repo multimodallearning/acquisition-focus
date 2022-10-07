@@ -432,16 +432,6 @@ def set_module(module, keychain, replacee):
 
 
 
-def save_model(_path, **statefuls):
-    _path = Path(_path).resolve()
-    _path.mkdir(exist_ok=True, parents=True)
-
-    for name, stful in statefuls.items():
-        if stful != None:
-            torch.save(stful.state_dict(), _path.joinpath(name+'.pth'))
-
-
-
 def reset_determinism():
     torch.manual_seed(0)
     random.seed(0)
@@ -450,13 +440,15 @@ def reset_determinism():
 
 
 
-def save_model(_path, **statefuls):
+def save_model(_path, epx=None, loss=None, **statefuls):
     _path = Path(_path).resolve()
     _path.mkdir(exist_ok=True, parents=True)
 
     for name, stful in statefuls.items():
         if stful != None:
-            torch.save(stful.state_dict(), _path.joinpath(name+'.pth'))
+            st_dict = stful.state_dict()
+            st_dict['metadata'] = dict(epx=epx, loss=loss)
+            torch.save(st_dict, _path.joinpath(name+'.pth'))
 
 
 

@@ -58,7 +58,6 @@ config_dict = DotDict(dict(
     num_folds=0,
     state='train', #
     # 'fold_override': 0,
-    # 'checkpoint_epx': 0,
                    # If true use MIND features (https://pubmed.ncbi.nlm.nih.gov/22722056/)
     epochs=500,
 
@@ -88,9 +87,8 @@ config_dict = DotDict(dict(
     do_sweep=False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
-    checkpoint_name=None,                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
+    checkpoint_path="/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/still-plasma-93_best",                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
     fold_override=None,                            # Training fold, e.g. 0
-    checkpoint_epx=None,                           # Training epx, e.g. 0
 
     do_plot=False,                                 # Generate plots (debugging purpose)
     save_dp_figures=False,                         # Plot data parameter value distribution
@@ -453,8 +451,16 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
             model = BlendowskiAE(in_channels=num_classes, out_channels=num_classes)
     else:
         raise ValueError
+
+    decoder_modules = filter(lambda elem: 'decoder' in elem[0], model.named_modules())
+    for nmod in decoder_modules:
+        for param in nmod[1].parameters():
+            param.requires_grad = False
+
     model.to(device)
-    print(f"Param count model: {sum(p.numel() for p in model.parameters())}")
+    print(f"Trainable param count model: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+    print(f"Non-trainable param count model: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}")
+    decoder_modules = filter(lambda elem: 'decoder' in elem[0], model.named_modules())
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
     scaler = amp.GradScaler()
@@ -463,38 +469,40 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
     if _path and _path.is_dir():
         print(f"Loading model, optimizers and grad scalers from {_path}")
-        model.load_state_dict(torch.load(_path.joinpath('model.pth'), map_location=device))
+        model_dict = torch.load(_path.joinpath('model.pth'), map_location=device)
+        epx = model_dict.get('metadata', {}).get('epx', 0)
+        model.load_state_dict(model_dict)
         optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
         scheduler.load_state_dict(torch.load(_path.joinpath('scheduler.pth'), map_location=device))
         scaler.load_state_dict(torch.load(_path.joinpath('scaler.pth'), map_location=device))
     else:
         print(f"Generating fresh '{type(model).__name__}' model, optimizer and grad scaler.")
+        epx = 0
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)
 
-    return (model, optimizer, scheduler, scaler)
+    return (model, optimizer, scheduler, scaler), epx
 
 
 # %%
 def get_model_input(batch, config, num_classes):
+    W_TARGET_LEN = 256
     b_hla_slc_seg = batch['hla_label_slc']
     b_sa_slc_seg = batch['sa_label_slc']
-    b_input = torch.cat(
-        [b_sa_slc_seg.unsqueeze(1).repeat(1,64,1,1),
-            b_hla_slc_seg.unsqueeze(1).repeat(1,64,1,1)],
-            dim=1
-    )
+    b_input = torch.cat([b_hla_slc_seg.unsqueeze(1), b_sa_slc_seg.unsqueeze(1)], dim=1)
+    b_input = b_input.repeat_interleave(int(W_TARGET_LEN/b_input.shape[1]), dim=1)
+
     b_seg = batch['label']
 
     b_input = b_input.to(device=config.device)
     b_seg = b_seg.to(device=config.device)
 
-    b_input = F.one_hot(b_input, num_classes).permute(0,4,1,2,3)
+    b_input = eo.rearrange(F.one_hot(b_input, num_classes), 'b d h w oh -> b oh d h w')
     b_input = b_input.float()
-    b_seg = F.one_hot(b_seg, num_classes).permute(0,4,1,2,3)
+    b_seg = eo.rearrange(F.one_hot(b_seg, num_classes), 'b d h w oh -> b oh d h w')
 
-    return b_seg, b_seg
+    return b_input, b_seg
 
 def inference_wrap(model, seg):
     with torch.inference_mode():
@@ -557,8 +565,8 @@ def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
     return elbo
 
 def model_step(config, model, b_input, b_target, label_tags, class_weights, io_normalisation_values, autocast_enabled=False):
-    b_input = b_input-io_normalisation_values['target_mean'].to(b_input.device)
-    b_input = b_input/io_normalisation_values['target_std'].to(b_input.device)
+    b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
+    b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
 
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
@@ -721,30 +729,22 @@ def run_dl(run_name, config, training_dataset, test_dataset):
         test_subsampler = torch.utils.data.SubsetRandomSampler(range(len(test_dataset)))
 
         train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
-            sampler=train_subsampler, pin_memory=False, drop_last=False,
+            sampler=train_subsampler, pin_memory=False, drop_last=False
             # collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
         )
         val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
-            sampler=val_subsampler, pin_memory=False, drop_last=False,
+            sampler=val_subsampler, pin_memory=False, drop_last=False
         )
         test_dataloader = DataLoader(test_dataset, batch_size=config.val_batch_size,
-            sampler=test_subsampler, pin_memory=False, drop_last=False,
+            sampler=test_subsampler, pin_memory=False, drop_last=False
         )
 
+        # Load from checkpoint, if any
+        chk_path = config.checkpoint_path if config.checkpoint_path else None
+
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
-        if 'checkpoint_epx' in config and config['checkpoint_epx'] is not None:
-            epx_start = config['checkpoint_epx']
-        else:
-            epx_start = 0
-
-        if config.checkpoint_name:
-            # Load from checkpoint
-            _path = f"{config.mdl_save_prefix}/{config.checkpoint_name}_fold{fold_idx}_epx{epx_start}"
-        else:
-            _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx_start}"
-
-        (model, optimizer, scheduler, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags),
-            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device=config.device)
+        (model, optimizer, scheduler, scaler), epx_start = get_model(config, len(training_dataset), len(training_dataset.label_tags),
+            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=chk_path, device=config.device)
 
         all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
 
@@ -757,7 +757,6 @@ def run_dl(run_name, config, training_dataset, test_dataset):
         class_weights = class_weights.to(device=config.device)
 
         autocast_enabled = 'cuda' in config.device
-        autocast_enabled = False
 
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
@@ -766,7 +765,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
             print(f"### Log epoch {epx}")
             wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
-            _ = epoch_iter(epx, global_idx, config, model, training_dataset, train_dataloader, class_weights, fold_postfix,
+            train_loss = epoch_iter(epx, global_idx, config, model, training_dataset, train_dataloader, class_weights, fold_postfix,
                 phase='train', autocast_enabled=autocast_enabled, optimizer=optimizer, scaler=scaler)
 
             val_loss = epoch_iter(epx, global_idx, config, model, training_dataset, val_dataloader, class_weights, fold_postfix,
@@ -791,6 +790,8 @@ def run_dl(run_name, config, training_dataset, test_dataset):
                     save_path = f"{config.mdl_save_prefix}/{wandb.run.name}{fold_postfix}_best"
                     save_model(
                         Path(THIS_SCRIPT_DIR, save_path),
+                        epx=epx,
+                        loss=train_loss,
                         model=model,
                         optimizer=optimizer,
                         scheduler=scheduler,
@@ -840,9 +841,8 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 # config_dict['wandb_mode'] = 'disabled'
 # config_dict['debug'] = True
 # Model loading
-# config_dict['checkpoint_name'] = 'ethereal-serenity-1138'
+# config_dict['checkpoint_path'] = 'ethereal-serenity-1138'
 # config_dict['fold_override'] = 0
-# config_dict['checkpoint_epx'] = 39
 
 # Define sweep override dict
 sweep_config_dict = dict(
