@@ -32,7 +32,7 @@ import wandb
 import nibabel as nib
 
 from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset, load_data, extract_2d_data
-from slice_inflate.utils.common_utils import DotDict, get_script_dir
+from slice_inflate.utils.common_utils import DotDict, get_script_dir, in_notebook
 from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, get_batch_dice_over_all, get_batch_dice_per_class, save_model
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
@@ -46,8 +46,9 @@ import numpy as np
 THIS_SCRIPT_DIR = get_script_dir()
 
 PROJECT_NAME = "slice_inflate"
-# %%
 
+training_dataset = None
+# %%
 config_dict = DotDict({
     'num_folds': 5,
     'only_first_fold': True,                # If true do not contiue with training after the first fold
@@ -65,12 +66,14 @@ config_dict = DotDict({
     'data_base_path': str(Path(THIS_SCRIPT_DIR, "data/MMWHS")),
     'reg_state': None, # Registered (noisy) labels used in training. See prepare_data() for valid reg_states
     'train_set_max_len': None,              # Length to cut of dataloader sample count
-    'crop_around_3d_label_center': (128,128,128),
-    'crop_3d_region': ((0,128), (0,128), (0,128)),        # dimension range in which 3D samples are cropped
+    'crop_around_3d_label_center': None, #(128,128,128),
+    'crop_3d_region': None, #((0,128), (0,128), (0,128)), # dimension range in which 3D samples are cropped
     'crop_2d_slices_gt_num_threshold': 0,   # Drop 2D slices if less than threshold pixels are positive
+    'crop_around_2d_label_center': None, #(128,128),
 
     'lr': 1e-3,
     'use_scheduling': True,
+    'model_type': 'ae',
 
     'save_every': 'best',
     'mdl_save_prefix': 'data/models',
@@ -105,7 +108,7 @@ def prepare_data(config):
         pre_interpolation_factor=1., # When getting the data, resize the data by this factor
         ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
         use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
-        crop_around_2d_label_center=(128,128),
+        crop_around_2d_label_center=config.crop_around_2d_label_center,
 
         augment_angle_std=5,
 
@@ -117,13 +120,15 @@ def prepare_data(config):
 
 
 # %%
-if False:
+if training_dataset is None:
     training_dataset = prepare_data(config_dict)
-    training_dataset.train(augment=False)
-    training_dataset.self_attributes['augment_angle_std'] = 2
-    print(training_dataset.do_augment)
-    for sample in [training_dataset[idx] for idx in [1]]:
-        pass
+
+# %%
+if False:
+    training_dataset.train(augment=True)
+    training_dataset.self_attributes['augment_angle_std'] = 5
+    print("do_augment", training_dataset.do_augment)
+    for sample in [training_dataset[idx] for idx in range(20)]:
         fig = plt.figure(figsize=(16., 4.))
         grid = ImageGrid(fig, 111,  # similar to subplot(111)
             nrows_ncols=(1, 6),  # creates 2x2 grid of axes
@@ -148,37 +153,36 @@ if False:
 
 # %%
 if False:
-    training_dataset = prepare_data(config_dict)
     training_dataset.train()
 
-    training_dataset.self_attributes['augment_angle_std'] = 10
-    print(training_dataset.do_augment)
-    import torch
-    lbl, sa_label, hla_label = torch.zeros(128,128), torch.zeros(128,128), torch.zeros(128,128)
-    for idx in range(15):
-        sample = training_dataset[1]
-        # nib.save(nib.Nifti1Image(sample['label'].cpu().numpy(), affine=torch.eye(4).numpy()), f'out{idx}.nii.gz')
-        lbl += cut_slice(sample['label']).cpu()
-        sa_label += sample['sa_label_slc'].cpu()
-        hla_label += sample['hla_label_slc'].cpu()
-    fig = plt.figure(figsize=(16., 4.))
-    grid = ImageGrid(fig, 111,  # similar to subplot(111)
-        nrows_ncols=(1, 3),  # creates 2x2 grid of axes
-        axes_pad=0.0,  # pad between axes in inch.
-    )
+    training_dataset.self_attributes['augment_angle_std'] = 5
+    print("do_augment", training_dataset.do_augment)
+    for sample_idx in range(20):
+        lbl, sa_label, hla_label = torch.zeros(128,128), torch.zeros(128,128), torch.zeros(128,128)
+        for augment_idx in range(15):
+            sample = training_dataset[sample_idx]
+            nib.save(nib.Nifti1Image(sample['label'].cpu().numpy(), affine=torch.eye(4).numpy()), f'out{sample_idx}.nii.gz')
+            lbl += cut_slice(sample['label']).cpu()
+            sa_label += sample['sa_label_slc'].cpu()
+            hla_label += sample['hla_label_slc'].cpu()
 
-    show_row = [
-        lbl, sa_label, hla_label
-    ]
+        fig = plt.figure(figsize=(16., 4.))
+        grid = ImageGrid(fig, 111,  # similar to subplot(111)
+            nrows_ncols=(1, 3),  # creates 2x2 grid of axes
+            axes_pad=0.0,  # pad between axes in inch.
+        )
 
-    for ax, im in zip(grid, show_row):
-        ax.imshow(im, cmap='magma', interpolation='none')
+        show_row = [
+            lbl, sa_label, hla_label
+        ]
 
-    plt.show()
+        for ax, im in zip(grid, show_row):
+            ax.imshow(im, cmap='magma', interpolation='none')
+
+        plt.show()
 
 # %%
 if False:
-    training_dataset = prepare_data(config_dict)
     training_dataset.train(augment=False)
     training_dataset.self_attributes['augment_angle_std'] = 2
     print(training_dataset.do_augment)
@@ -298,8 +302,6 @@ class BlendowskiAE(torch.nn.Module):
 
         self.debug_mode = debug_mode
 
-        self.input_batchnorm = torch.nn.BatchNorm3d(in_channels)
-
         self.first_layer_encoder = self.ConvBlock(in_channels, out_channels_list=[8], strides_list=[1])
         self.first_layer_decoder = self.ConvBlock(8, out_channels_list=[8,out_channels], strides_list=[1,1])
 
@@ -307,24 +309,26 @@ class BlendowskiAE(torch.nn.Module):
         self.second_layer_decoder = self.ConvBlock(20, out_channels_list=[8], strides_list=[1])
 
         self.third_layer_encoder = self.ConvBlock(20, out_channels_list=[40,40,40], strides_list=[2,1,1])
-        self.third_layer_decoder = self.ConvBlock(40, out_channels_list=[20], strides_list=[1])
+        self.third_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[20], strides_list=[1])
 
-        self.fourth_layer_encoder = self.ConvBlock(40, out_channels_list=[60,60,60], strides_list=[2,1,1])
-        self.fourth_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[40], strides_list=[1])
+        # self.fourth_layer_encoder = self.ConvBlock(40, out_channels_list=[60,60,60], strides_list=[2,1,1])
+        # self.fourth_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[40], strides_list=[1])
 
-        self.deepest_layer = self.ConvBlock(60, out_channels_list=[60,20,2], strides_list=[2,1,1])
+        self.deepest_layer = torch.nn.Sequential(
+            self.ConvBlock(40, out_channels_list=[40,30,20], strides_list=[2,1,1]),
+            torch.nn.Conv3d(20, 2, kernel_size=1, stride=1, padding=0)
+        )
 
         self.encoder = torch.nn.Sequential(
-            self.input_batchnorm,
             self.first_layer_encoder,
             self.second_layer_encoder,
             self.third_layer_encoder,
-            self.fourth_layer_encoder,
+            # self.fourth_layer_encoder,
         )
 
         self.decoder = torch.nn.Sequential(
-            torch.nn.Upsample(scale_factor=2),
-            self.fourth_layer_decoder,
+            # torch.nn.Upsample(scale_factor=2),
+            # self.fourth_layer_decoder,
             torch.nn.Upsample(scale_factor=2),
             self.third_layer_decoder,
             torch.nn.Upsample(scale_factor=2),
@@ -336,11 +340,9 @@ class BlendowskiAE(torch.nn.Module):
     def encode(self, x):
         h = self.encoder(x)
         h = self.deepest_layer(h)
+        # h = debug_forward_pass(self.encoder, x, STEP_MODE=False)
+        # h = debug_forward_pass(self.deepest_layer, h, STEP_MODE=False)
         return h
-        # if self.debug_mode:
-        #     return debug_forward_pass(self.encoder, x, STEP_MODE=False)
-        # else:
-        #     return self.encoder(x)
 
     def decode(self, z):
         if self.debug_mode:
@@ -349,6 +351,7 @@ class BlendowskiAE(torch.nn.Module):
             return self.decoder(z)
 
     def forward(self, x):
+        # x = torch.nn.functional.instance_norm(x)
         z = self.encode(x)
         return self.decode(z), z
 
@@ -419,10 +422,6 @@ class BlendowskiVAE(BlendowskiAE):
 # y, _ = model(smp)
 
 # %%
-training_dataset = prepare_data(config_dict)
-
-
-# %%
 # def nan_hook(self, inp, output):
 #     if not isinstance(output, tuple):
 #         outputs = [output]
@@ -438,8 +437,12 @@ training_dataset = prepare_data(config_dict)
 def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, device='cpu'):
     _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
-    model = BlendowskiVAE(in_channels=num_classes, out_channels=num_classes)
-
+    if config.model_type == 'vae':
+        model = BlendowskiVAE(in_channels=num_classes, out_channels=num_classes)
+    elif config.model_type == 'ae':
+            model = BlendowskiAE(in_channels=num_classes, out_channels=num_classes)
+    else:
+        raise ValueError
     model.to(device)
     print(f"Param count model: {sum(p.numel() for p in model.parameters())}")
 
@@ -481,7 +484,7 @@ def get_model_input(batch, config, num_classes):
     b_input = b_input.float()
     b_seg = F.one_hot(b_seg, num_classes).permute(0,4,1,2,3)
 
-    return b_input, b_seg
+    return b_seg, b_seg
 
 def inference_wrap(model, seg):
     with torch.inference_mode():
@@ -524,18 +527,23 @@ def kl_divergence(z, mean, std):
 
 
 
+def get_ae_loss_value(y_hat, y_target, class_weights):
+    B, *_ = y_target.shape
+    # y_target = (y_target/y_target.std((-1,-2,-3)).view(B,6,1,1,1))
+    # y_target = (y_target-y_target.mean((-1,-2,-3)).view(B,6,1,1,1))
+    return nn.CrossEntropyLoss(class_weights)(y_hat, y_target)
+
+
 def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
     # Reconstruction loss
-    y_target = y_target / y_target.std()
-    y_target = y_target - y_target.mean()
-    recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
-
+    # recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, y_target.float()) # TODO Does not work
+    recon_loss = get_ae_loss_value(y_hat, y_target, class_weights)
     # kl
     kl = kl_divergence(z, mean, std)
 
     # elbo
-    elbo = kl - (recon_loss * class_weights.view(1,-1)).mean()
-    # print("ls", elbo, kl, recon_loss)
+    elbo = kl.mean() + recon_loss
+
     return elbo
 
 def train_DL(run_name, config, training_dataset):
@@ -604,9 +612,11 @@ def train_DL(run_name, config, training_dataset):
         class_weights /= class_weights.mean()
 
         class_weights = class_weights.to(device=config.device)
-
+        # class_weights = None
         autocast_enabled = 'cuda' in config.device
         autocast_enabled = False
+
+        io_normalisation_values = torch.load("io_normalisation_values.pth")
 
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
@@ -622,21 +632,25 @@ def train_DL(run_name, config, training_dataset):
 
             # Load data
             for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch:", total=len(train_dataloader)):
-
                 optimizer.zero_grad()
                 b_input, b_seg = get_model_input(batch, config, len(training_dataset.label_tags))
-                # b_input = b_input / b_input.std()
-                # b_input = b_input - b_input.mean()
+                b_input = b_input-io_normalisation_values['target_mean'].to(b_input.device)
+                b_input = b_input/io_normalisation_values['target_std'].to(b_input.device)
 
                 ### Forward pass ###
                 with amp.autocast(enabled=autocast_enabled):
                     assert b_input.dim() == len(n_dims)+2, \
                         f"Input image for model must be {len(n_dims)+2}D: BxCxSPATIAL but is {b_input.shape}"
-                    for param in model.parameters():
-                        param.requires_grad = True
 
-                    model.use_checkpointing = True
-                    y_hat, (z, mean, std) = model(b_input)
+                    if config.model_type == 'vae':
+                        y_hat, (z, mean, std) = model(b_input)
+                    elif config.model_type == 'ae':
+                        y_hat, _ = model(b_input)
+                    else:
+                        raise ValueError
+                    # Reverse normalisation to outputs
+                    y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
+                    y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
 
                     ### Calculate loss ###
                     assert y_hat.dim() == len(n_dims)+2, \
@@ -644,9 +658,10 @@ def train_DL(run_name, config, training_dataset):
                     assert b_seg.dim() == len(n_dims)+2, \
                         f"Target shape for loss must be BxNUM_CLASSESxSPATIAL but is {b_seg.shape}"
 
-                    # ce_loss = nn.CrossEntropyLoss(class_weights)(y_hat, b_seg)
-
-                    loss = get_vae_loss_value(y_hat, b_seg.float(), z, mean, std, class_weights, model)
+                    if "vae" in type(model).__name__.lower():
+                        loss = get_vae_loss_value(y_hat, b_seg.float(), z, mean, std, class_weights, model)
+                    else:
+                        loss = get_ae_loss_value(y_hat, b_seg.float(), class_weights)
 
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
@@ -709,8 +724,27 @@ def train_DL(run_name, config, training_dataset):
                     for val_batch_idx, val_batch in tqdm(enumerate(val_dataloader), desc="batch:", total=len(val_dataloader)):
 
                         b_val_input, b_val_seg = get_model_input(val_batch, config, len(training_dataset.label_tags))
-                        y_hat_val, (z_val, mean_val, std_val) = model(b_val_input)
-                        val_loss = get_vae_loss_value(y_hat_val, b_val_seg.float(), z_val, mean_val, std_val, class_weights, model)
+                        b_val_input = b_val_input-io_normalisation_values['target_mean'].to(b_val_input.device)
+                        b_val_input = b_val_input/io_normalisation_values['target_std'].to(b_val_input.device)
+
+                        if config.model_type == 'vae':
+                            y_hat_val, (z_val, mean_val, std_val) = model(b_val_input)
+                        elif config.model_type == 'ae':
+                            y_hat_val, _ = model(b_val_input)
+                        else:
+                            raise ValueError
+
+                        # Reverse normalisation to outputs
+                        y_hat_val = y_hat_val*io_normalisation_values['target_std'].to(b_val_input.device)
+                        y_hat_val = y_hat_val+io_normalisation_values['target_mean'].to(b_val_input.device)
+
+                        if config.model_type == 'vae':
+                            val_loss = get_vae_loss_value(y_hat_val, b_val_seg.float(), z_val, mean_val, std_val, class_weights, model)
+                        elif config.model_type == 'ae':
+                            val_loss = get_ae_loss_value(y_hat_val, b_val_seg.float(), class_weights)
+                        else:
+                            raise ValueError
+
                         val_pred_seg = y_hat_val.argmax(1)
 
                         b_val_dice = dice3d(
@@ -779,6 +813,21 @@ def train_DL(run_name, config, training_dataset):
 
 
 # %%
+# training_dataset.eval()
+# eval_dataloader = DataLoader(training_dataset, batch_size=20,  pin_memory=False, drop_last=False)
+
+# for large_batch in eval_dataloader:
+#     large_b_input = get_model_input(large_batch, config_dict, num_classes=len(training_dataset.label_tags))
+
+# input_mean, input_std = large_b_input[0].float().mean((0,-3,-2,-1), keepdim=True).cpu(), large_b_input[0].float().std((0,-3,-2,-1), keepdim=True).cpu()
+# target_mean, target_std = large_b_input[1].float().mean((0,-3,-2,-1), keepdim=True).cpu(), large_b_input[1].float().std((0,-3,-2,-1), keepdim=True).cpu()
+
+# print(input_mean.shape, input_std.shape)
+# print(target_mean.shape, target_std.shape)
+
+# torch.save(dict(input_mean=input_mean, input_std=input_std, target_mean=target_mean, target_std=target_std), "io_normalisation_values.pth")
+
+# %%
 # Config overrides
 # config_dict['wandb_mode'] = 'disabled'
 # config_dict['debug'] = True
@@ -822,7 +871,6 @@ sweep_config_dict = dict(
 )
 
 # %%
-
 def normal_run():
     with wandb.init(project=PROJECT_NAME, group="training", job_type="train",
             config=config_dict, settings=wandb.Settings(start_method="thread"),
