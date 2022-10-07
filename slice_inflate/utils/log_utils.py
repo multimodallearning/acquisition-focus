@@ -4,6 +4,7 @@ import torch
 
 def get_global_idx(fold_idx, epoch_idx, max_epochs):
     # Get global index e.g. 2250 for fold_idx=2, epoch_idx=250 @ max_epochs<1000
+    fold_idx = max(0, fold_idx)
     return 10**len(str(int(max_epochs)))*fold_idx + epoch_idx
 
 

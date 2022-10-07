@@ -585,7 +585,7 @@ def model_step(config, model, b_input, b_target, label_tags, class_weights, io_n
 
 
 
-def epoch_iter(global_idx, config, model, dataset, dataloader, class_weights, fold_postfix, phase='train', autocast_enabled=False, optimizer=None, scheduler=None, scaler=None):
+def epoch_iter(global_idx, config, model, dataset, dataloader, class_weights, fold_postfix, phase='train', autocast_enabled=False, optimizer=None, scaler=None):
     PHASES = ['train', 'val', 'test']
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
 
@@ -609,10 +609,6 @@ def epoch_iter(global_idx, config, model, dataset, dataloader, class_weights, fo
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
-
-            ###  Scheduler management ###
-            if config.use_scheduling:
-                scheduler.step(loss)
 
         else:
             with torch.no_grad():
@@ -741,13 +737,17 @@ def run_dl(run_name, config, training_dataset, test_dataset):
             wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
             _ = epoch_iter(global_idx, config, model, training_dataset, train_dataloader, class_weights, fold_postfix,
-                phase='train', autocast_enabled=autocast_enabled, optimizer=optimizer, scheduler=scheduler, scaler=scaler)
+                phase='train', autocast_enabled=autocast_enabled, optimizer=optimizer, scaler=scaler)
 
             val_loss = epoch_iter(global_idx, config, model, training_dataset, val_dataloader, class_weights, fold_postfix,
-                phase='val', autocast_enabled=autocast_enabled, optimizer=None, scheduler=None, scaler=None)
+                phase='val', autocast_enabled=autocast_enabled, optimizer=None, scaler=None)
 
             _ = epoch_iter(global_idx, config, model, test_dataset, test_dataloader, class_weights, fold_postfix,
-                phase='test', autocast_enabled=autocast_enabled, optimizer=None, scheduler=None, scaler=None)
+                phase='test', autocast_enabled=autocast_enabled, optimizer=None, scaler=None)
+
+            ###  Scheduler management ###
+            if config.use_scheduling:
+                scheduler.step(val_loss)
 
             print()
 
