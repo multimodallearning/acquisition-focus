@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import random
 import numpy as np
 import torch
+import seg_metrics.seg_metrics as sg
 import torch.nn.functional as F
 from pathlib import Path
 import functools
@@ -252,6 +253,70 @@ def spatial_augment(b_image=None, b_label=None,
 
     return b_image_out, b_label_out, b_out_grid
 
+
+
+def get_seg_metrics_per_label(b_input, b_target, label_tags, spacing,
+    selected_metrics=('dice', 'jaccard', 'precision', 'recall', 'fpr', 'fnr', 'vs', 'hd', 'hd95', 'msd', 'mdsd','stdsd'),
+    wo_bg=True):
+
+    assert type(spacing) == np.ndarray and len(spacing) == 3
+    assert b_input.dim() == 5 and b_target.dim() == 5
+    assert len(label_tags) == b_input.shape[-1] == b_target.shape[-1]
+    assert 'background' in label_tags, "Always provide 'background' tag name. Omit it with 'wo_bg=True'"
+
+    b_input = b_input.cpu().numpy()
+    b_target = b_target.cpu().numpy()
+    B, *_ = b_input.shape
+
+    b_metrics = []
+    start_lbl_idx = 1 if wo_bg else 1
+
+    for b_idx in range(B):
+        md = sg.get_metrics_dict_all_labels(range(start_lbl_idx, len(label_tags)), b_input[b_idx], b_target[b_idx],
+            spacing=spacing, metrics_names=selected_metrics
+        )
+        del md['label']
+        b_metrics.append(md)
+
+    resorted_metrics = {}
+
+    label_tags = list(label_tags)
+
+    if wo_bg:
+        label_tags = label_tags[1:]
+
+    # Resort metrics: Metrics are inserted by label tag for each metric name
+    for tag in label_tags:
+        tag_idx = label_tags.index(tag)
+        for metrics in b_metrics:
+            for m_name, m_values in metrics.items():
+                label_metrics = resorted_metrics.get(m_name, {})
+                tag_metric = label_metrics.get(tag, []) + [m_values[tag_idx]]
+                label_metrics[tag] = tag_metric
+                resorted_metrics[m_name] = label_metrics
+
+    nanmean_per_label = resorted_metrics.copy()
+    std_per_label = resorted_metrics.copy()
+
+    # Reduce over samples -> score per labels
+    for m_name in resorted_metrics:
+        for tag in label_tags:
+            nanmean_per_label[m_name][tag] = np.nanmean(resorted_metrics[m_name][tag])
+            std_per_label[m_name][tag] = np.std(resorted_metrics[m_name][tag])
+
+    # Reduce over all -> score per metric
+    nanmean_over_all = {}
+    std_over_all = {}
+
+    for m_name in resorted_metrics:
+        all_metric_values = []
+        for tag in label_tags:
+            all_metric_values = all_metric_values + [resorted_metrics[m_name][tag]]
+
+        nanmean_over_all[m_name] = np.nanmean(all_metric_values)
+        std_over_all[m_name] = np.std(all_metric_values)
+
+    return nanmean_per_label, std_per_label, nanmean_over_all, std_over_all
 
 
 def get_batch_dice_per_class(b_dice, class_tags, exclude_bg=True) -> dict:

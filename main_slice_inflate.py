@@ -33,66 +33,70 @@ import nibabel as nib
 
 from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset, load_data, extract_2d_data
 from slice_inflate.utils.common_utils import DotDict, get_script_dir, in_notebook
-from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, get_batch_dice_over_all, get_batch_dice_per_class, save_model
+from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, get_batch_dice_over_all, get_batch_dice_per_class, save_model, get_seg_metrics_per_label
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
 from slice_inflate.datasets.align_mmwhs import cut_slice
-from slice_inflate.utils.log_utils import get_global_idx, log_class_dices
+from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, log_oa_metrics
 from sklearn.model_selection import KFold
 from torch.utils.data import DataLoader
 
 from mdl_seg_class.metrics import dice3d
 import numpy as np
+import seg_metrics.seg_metrics as sg
+
+import einops as eo
+
 THIS_SCRIPT_DIR = get_script_dir()
 
 PROJECT_NAME = "slice_inflate"
 
 training_dataset, test_dataset = None, None
 # %%
-config_dict = DotDict({
-    'num_folds': 0,
-    'state': 'train', #
+config_dict = DotDict(dict(
+    num_folds=0,
+    state='train', #
     # 'fold_override': 0,
     # 'checkpoint_epx': 0,
                    # If true use MIND features (https://pubmed.ncbi.nlm.nih.gov/22722056/)
-    'epochs': 500,
+    epochs=500,
 
-    'batch_size': 4,
-    'val_batch_size': 1,
-    'modality': 'all',
-    'use_2d_normal_to': None,               # Can be None or 'D', 'H', 'W'. If not None 2D slices will be selected for training
+    batch_size=2,
+    val_batch_size=1,
+    modality='all',
+    use_2d_normal_to=None,               # Can be None or 'D', 'H', 'W'. If not None 2D slices will be selected for training
 
-    'dataset': 'mmwhs',                 # The dataset prepared with our preprocessing scripts
-    'data_base_path': str(Path(THIS_SCRIPT_DIR, "data/MMWHS")),
-    'reg_state': None, # Registered (noisy) labels used in training. See prepare_data() for valid reg_states
-    'train_set_max_len': None,              # Length to cut of dataloader sample count
-    'crop_around_3d_label_center': None, #(128,128,128),
-    'crop_3d_region': None, #((0,128), (0,128), (0,128)), # dimension range in which 3D samples are cropped
-    'crop_2d_slices_gt_num_threshold': 0,   # Drop 2D slices if less than threshold pixels are positive
-    'crop_around_2d_label_center': None, #(128,128),
+    dataset='mmwhs',                 # The dataset prepared with our preprocessing scripts
+    data_base_path=str(Path(THIS_SCRIPT_DIR, "data/MMWHS")),
+    reg_state=None, # Registered (noisy) labels used in training. See prepare_data() for valid reg_states
+    train_set_max_len=None,              # Length to cut of dataloader sample count
+    crop_around_3d_label_center=None, #(128,128,128),
+    crop_3d_region=None, #((0,128), (0,128), (0,128)), # dimension range in which 3D samples are cropped
+    crop_2d_slices_gt_num_threshold=0,   # Drop 2D slices if less than threshold pixels are positive
+    crop_around_2d_label_center=None, #(128,128),
 
-    'lr': 1e-3,
-    'use_scheduling': True,
-    'model_type': 'ae',
+    lr=1e-3,
+    use_scheduling=True,
+    model_type='ae',
 
-    'save_every': 'best',
-    'mdl_save_prefix': 'data/models',
+    save_every='best',
+    mdl_save_prefix='data/models',
 
-    'debug': False,
-    'wandb_mode': 'online',                         # e.g. online, disabled. Use weights and biases online logging
-    'do_sweep': False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
+    debug=True,
+    wandb_mode='disabled',                         # e.g. online, disabled. Use weights and biases online logging
+    do_sweep=False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
-    'checkpoint_name': None,                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
-    'fold_override': None,                            # Training fold, e.g. 0
-    'checkpoint_epx': None,                           # Training epx, e.g. 0
+    checkpoint_name=None,                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
+    fold_override=None,                            # Training fold, e.g. 0
+    checkpoint_epx=None,                           # Training epx, e.g. 0
 
-    'do_plot': False,                                 # Generate plots (debugging purpose)
-    'save_dp_figures': False,                         # Plot data parameter value distribution
-    'save_labels': True,                              # Store training labels alongside data parameter values inside the training snapshot
+    do_plot=False,                                 # Generate plots (debugging purpose)
+    save_dp_figures=False,                         # Plot data parameter value distribution
+    save_labels=True,                              # Store training labels alongside data parameter values inside the training snapshot
 
-    'device': 'cuda'
-})
+    device='cuda'
+))
 
 def prepare_data(config):
     training_dataset = MMWHSDataset(
@@ -590,8 +594,10 @@ def epoch_iter(global_idx, config, model, dataset, dataloader, class_weights, fo
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
 
     epx_losses = []
-    dices = []
-    class_dices = []
+    seg_metrics_nanmean = {}
+    seg_metrics_std = {}
+    seg_metrics_nanmean_oa = {}
+    seg_metrics_std_oa = {}
 
     if phase == 'train':
         model.train()
@@ -601,7 +607,6 @@ def epoch_iter(global_idx, config, model, dataset, dataloader, class_weights, fo
         dataset.eval()
 
     for batch_idx, batch in tqdm(enumerate(dataloader), desc=phase, total=len(dataloader)):
-
         b_input, b_seg = get_model_input(batch, config, len(dataset.label_tags))
         if phase == 'train':
             optimizer.zero_grad()
@@ -618,17 +623,19 @@ def epoch_iter(global_idx, config, model, dataset, dataloader, class_weights, fo
 
         pred_seg = y_hat.argmax(1)
 
-        # Calculate dice score
-        b_dice = dice3d(
-            torch.nn.functional.one_hot(pred_seg, len(dataset.label_tags)).permute(0,4,1,2,3),
-            b_seg,
-            one_hot_torch_style=False
-        )
+        # Taken from nibabel nifti1.py
+        RZS = batch['sa_affine'][0][:3,:3].numpy()
+        nifti_zooms = np.sqrt(np.sum(RZS * RZS, axis=0))
 
-        dices.append(get_batch_dice_over_all(
-            b_dice, exclude_bg=True))
-        class_dices.append(get_batch_dice_per_class(
-            b_dice, dataset.label_tags, exclude_bg=True))
+        # Calculate scores
+        (seg_metrics_nanmean,
+         seg_metrics_std,
+         seg_metrics_nanmean_oa,
+         seg_metrics_std_oa) = get_seg_metrics_per_label(
+            torch.nn.functional.one_hot(pred_seg, len(dataset.label_tags)),
+            eo.rearrange(b_seg, 'b oh d h w -> b d h w oh'),
+            dataset.label_tags, nifti_zooms, selected_metrics=('dice', 'jaccard', 'hd', 'hd95'), wo_bg=True
+        )
 
         if config.debug: break
 
@@ -642,12 +649,17 @@ def epoch_iter(global_idx, config, model, dataset, dataloader, class_weights, fo
     wandb.log({log_id: log_val}, step=global_idx)
     print(f'losses/{phase}_loss{fold_postfix}', f"{log_val}")
 
-    log_id = f'scores/{phase}_dice_mean_wo_bg{fold_postfix}'
-    log_val = np.nanmean(dices)
-    print(log_id, f"{log_val*100:.2f}%")
-    wandb.log({log_id: log_val}, step=global_idx)
+    log_label_metrics(f"scores/{phase}_mean", fold_postfix, seg_metrics_nanmean, global_idx,
+        logger_selected_metrics=('dice', 'jaccard', 'hd', 'hd95'), print_selected_metrics=('dice'))
 
-    log_class_dices(f"scores/{phase}_dice_mean_", fold_postfix, class_dices, global_idx)
+    log_label_metrics(f"scores/{phase}_std", fold_postfix, seg_metrics_std, global_idx,
+        logger_selected_metrics=('dice', 'jaccard', 'hd', 'hd95'), print_selected_metrics=())
+
+    log_oa_metrics(f"scores/{phase}_mean_oa_wo_bg", fold_postfix, seg_metrics_nanmean_oa, global_idx,
+        logger_selected_metrics=('dice', 'jaccard', 'hd', 'hd95'), print_selected_metrics=('dice', 'hd', 'hd95'))
+
+    log_oa_metrics(f"scores/{phase}_std_oa_wo_bg", fold_postfix, seg_metrics_std_oa, global_idx,
+        logger_selected_metrics=('dice', 'jaccard', 'hd', 'hd95'), print_selected_metrics=())
     print()
     print()
 
@@ -678,7 +690,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
     for fold_idx, (train_idxs, val_idxs) in fold_iter:
         fold_postfix = f'_fold{fold_idx}' if fold_idx != -1 else ""
 
-        best_val_loss = 0
+        best_quality_metric = 1.e16
         train_idxs = torch.tensor(train_idxs)
         val_idxs = torch.tensor(val_idxs)
         val_ids = training_dataset.switch_3d_identifiers(val_idxs)
@@ -742,7 +754,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
             val_loss = epoch_iter(global_idx, config, model, training_dataset, val_dataloader, class_weights, fold_postfix,
                 phase='val', autocast_enabled=autocast_enabled, optimizer=None, scaler=None)
 
-            _ = epoch_iter(global_idx, config, model, test_dataset, test_dataloader, class_weights, fold_postfix,
+            quality_metric = test_loss = epoch_iter(global_idx, config, model, test_dataset, test_dataloader, class_weights, fold_postfix,
                 phase='test', autocast_enabled=autocast_enabled, optimizer=None, scaler=None)
 
             ###  Scheduler management ###
@@ -756,8 +768,8 @@ def run_dl(run_name, config, training_dataset, test_dataset):
                 pass
 
             elif config.save_every == 'best':
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
+                if quality_metric < best_quality_metric:
+                    best_quality_metric = quality_metric
                     save_path = f"{config.mdl_save_prefix}/{wandb.run.name}{fold_postfix}_best"
                     save_model(
                         Path(THIS_SCRIPT_DIR, save_path),

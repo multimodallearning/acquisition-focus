@@ -9,14 +9,23 @@ def get_global_idx(fold_idx, epoch_idx, max_epochs):
 
 
 
-def log_class_dices(log_prefix, log_postfix, class_dices, log_idx):
-    if not class_dices:
-        return
+def log_label_metrics(log_prefix, log_postfix, metrics, log_idx,
+    logger_selected_metrics=('dice'), print_selected_metrics=('dice')):
+    for m_name, m_content in metrics.items():
+        for tag in m_content.keys():
+            log_path = f"{log_prefix}_{m_name}_{tag}{log_postfix}"
 
-    for cls_name in class_dices[0].keys():
-        log_path = f"{log_prefix}{cls_name}{log_postfix}"
+            if m_name in logger_selected_metrics:
+                wandb.log({log_path: m_content[tag]}, step=log_idx)
+            if m_name in print_selected_metrics:
+                print(log_path, m_content[tag])
 
-        cls_dices = list(map(lambda dct: dct[cls_name], class_dices))
-        mean_per_class =np.nanmean(cls_dices)
-        print(log_path, f"{mean_per_class*100:.2f}%")
-        wandb.log({log_path: mean_per_class}, step=log_idx)
+def log_oa_metrics(log_prefix, log_postfix, metrics, log_idx,
+    logger_selected_metrics=('dice'), print_selected_metrics=('dice')):
+    for m_name, m_content in metrics.items():
+        log_path = f"{log_prefix}_{m_name}{log_postfix}"
+
+        if m_name in logger_selected_metrics:
+            wandb.log({log_path: m_content}, step=log_idx)
+        if m_name in print_selected_metrics:
+            print(log_path, m_content)
