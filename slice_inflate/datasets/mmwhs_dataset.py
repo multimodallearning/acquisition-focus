@@ -324,7 +324,7 @@ def load_data(self_attributes: dict):
     label_paths = {}
 
     if self.debug:
-        files = files[:10]
+        files = files[:2]
 
     for _path in files:
         trailing_name = str(_path).split("/")[-1]

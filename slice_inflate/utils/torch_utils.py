@@ -7,6 +7,7 @@ import seg_metrics.seg_metrics as sg
 import torch.nn.functional as F
 from pathlib import Path
 import functools
+import copy
 
 MOD_GET_FN = lambda self, key: self[int(key)] if isinstance(self, nn.Sequential) \
                                               else getattr(self, key)
@@ -255,21 +256,21 @@ def spatial_augment(b_image=None, b_label=None,
 
 
 
-def get_seg_metrics_per_label(b_input, b_target, label_tags, spacing,
+def get_seg_metrics_per_label(label_scores_epoch, b_input, b_target, label_tags, spacing,
     selected_metrics=('dice', 'jaccard', 'precision', 'recall', 'fpr', 'fnr', 'vs', 'hd', 'hd95', 'msd', 'mdsd','stdsd'),
-    wo_bg=True):
+    exclude_bg=True):
 
     assert type(spacing) == np.ndarray and len(spacing) == 3
     assert b_input.dim() == 5 and b_target.dim() == 5
     assert len(label_tags) == b_input.shape[-1] == b_target.shape[-1]
-    assert 'background' in label_tags, "Always provide 'background' tag name. Omit it with 'wo_bg=True'"
+    assert 'background' in label_tags, "Always provide 'background' tag name. Omit it with 'exclude_bg=True'"
 
     b_input = b_input.cpu().numpy()
     b_target = b_target.cpu().numpy()
     B, *_ = b_input.shape
 
     b_metrics = []
-    start_lbl_idx = 1 if wo_bg else 1
+    start_lbl_idx = 1 if exclude_bg else 1
 
     for b_idx in range(B):
         md = sg.get_metrics_dict_all_labels(range(start_lbl_idx, len(label_tags)), b_input[b_idx], b_target[b_idx],
@@ -278,11 +279,10 @@ def get_seg_metrics_per_label(b_input, b_target, label_tags, spacing,
         del md['label']
         b_metrics.append(md)
 
-    resorted_metrics = {}
 
     label_tags = list(label_tags)
 
-    if wo_bg:
+    if exclude_bg:
         label_tags = label_tags[1:]
 
     # Resort metrics: Metrics are inserted by label tag for each metric name
@@ -290,28 +290,32 @@ def get_seg_metrics_per_label(b_input, b_target, label_tags, spacing,
         tag_idx = label_tags.index(tag)
         for metrics in b_metrics:
             for m_name, m_values in metrics.items():
-                label_metrics = resorted_metrics.get(m_name, {})
+                label_metrics = label_scores_epoch.get(m_name, {})
                 tag_metric = label_metrics.get(tag, []) + [m_values[tag_idx]]
                 label_metrics[tag] = tag_metric
-                resorted_metrics[m_name] = label_metrics
+                label_scores_epoch[m_name] = label_metrics
+    return label_scores_epoch
 
-    nanmean_per_label = resorted_metrics.copy()
-    std_per_label = resorted_metrics.copy()
+def reduce_label_scores_epoch(label_scores_epoch):
+    scores = copy.deepcopy(label_scores_epoch)
+
+    nanmean_per_label = scores.copy()
+    std_per_label = scores.copy()
 
     # Reduce over samples -> score per labels
-    for m_name in resorted_metrics:
-        for tag in label_tags:
-            nanmean_per_label[m_name][tag] = np.nanmean(resorted_metrics[m_name][tag])
-            std_per_label[m_name][tag] = np.std(resorted_metrics[m_name][tag])
+    for m_name, m_dict in scores.items():
+        for tag in m_dict:
+            nanmean_per_label[m_name][tag] = np.nanmean(m_dict[tag])
+            std_per_label[m_name][tag] = np.std(m_dict[tag])
 
     # Reduce over all -> score per metric
     nanmean_over_all = {}
     std_over_all = {}
 
-    for m_name in resorted_metrics:
+    for m_name, m_dict in scores.items():
         all_metric_values = []
-        for tag in label_tags:
-            all_metric_values = all_metric_values + [resorted_metrics[m_name][tag]]
+        for tag in m_dict:
+            all_metric_values = all_metric_values + [m_dict[tag]]
 
         nanmean_over_all[m_name] = np.nanmean(all_metric_values)
         std_over_all[m_name] = np.std(all_metric_values)
@@ -319,20 +323,24 @@ def get_seg_metrics_per_label(b_input, b_target, label_tags, spacing,
     return nanmean_per_label, std_per_label, nanmean_over_all, std_over_all
 
 
-def get_batch_dice_per_class(b_dice, class_tags, exclude_bg=True) -> dict:
-    score_dict = {}
-    for cls_idx, cls_tag in enumerate(class_tags):
-        if exclude_bg and cls_idx == 0:
+def get_batch_dice_per_label(label_scores_epoch, b_dice, label_tags, exclude_bg=True) -> dict:
+    assert 'background' in label_tags, "Always provide 'background' tag name. Omit it with 'exclude_bg=True'"
+
+    for tag_idx, tag in enumerate(label_tags):
+        if exclude_bg and tag_idx == 0:
             continue
+        for dice_value in b_dice[:,tag_idx]:
+            if torch.isnan(dice_value).item():
+                dice_value = float('nan')
+            else:
+                dice_value = dice_value.item()
 
-        if torch.all(torch.isnan(b_dice[:,cls_idx])):
-            score = float('nan')
-        else:
-            score = np.nanmean(b_dice[:,cls_idx]).item()
-
-        score_dict[cls_tag] = score
-
-    return score_dict
+            dice_dict = label_scores_epoch.get('dice', {})
+            values = dice_dict.get(tag, [])
+            values += [dice_value]
+            dice_dict[tag] = values
+            label_scores_epoch['dice'] = dice_dict
+    return label_scores_epoch
 
 
 

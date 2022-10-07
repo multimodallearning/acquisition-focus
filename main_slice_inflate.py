@@ -34,7 +34,7 @@ import nibabel as nib
 
 from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset, load_data, extract_2d_data
 from slice_inflate.utils.common_utils import DotDict, get_script_dir, in_notebook
-from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, get_batch_dice_over_all, get_batch_dice_per_class, save_model, get_seg_metrics_per_label
+from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, get_batch_dice_over_all, get_batch_dice_per_label, save_model, get_seg_metrics_per_label, reduce_label_scores_epoch
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
 from slice_inflate.datasets.align_mmwhs import cut_slice
@@ -590,11 +590,12 @@ def model_step(config, model, b_input, b_target, label_tags, class_weights, io_n
 
 
 
-def epoch_iter(global_idx, config, model, dataset, dataloader, class_weights, fold_postfix, phase='train', autocast_enabled=False, optimizer=None, scaler=None):
+def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weights, fold_postfix, phase='train', autocast_enabled=False, optimizer=None, scaler=None):
     PHASES = ['train', 'val', 'test']
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
 
     epx_losses = []
+    label_scores_epoch = {}
     seg_metrics_nanmean = {}
     seg_metrics_std = {}
     seg_metrics_nanmean_oa = {}
@@ -629,16 +630,32 @@ def epoch_iter(global_idx, config, model, dataset, dataloader, class_weights, fo
         nifti_zooms = np.sqrt(np.sum(RZS * RZS, axis=0))
 
         # Calculate scores
-        (seg_metrics_nanmean,
-         seg_metrics_std,
-         seg_metrics_nanmean_oa,
-         seg_metrics_std_oa) = get_seg_metrics_per_label(
-            torch.nn.functional.one_hot(pred_seg, len(dataset.label_tags)),
-            eo.rearrange(b_seg, 'b oh d h w -> b d h w oh'),
-            dataset.label_tags, nifti_zooms, selected_metrics=('dice', 'jaccard', 'hd', 'hd95'), wo_bg=True
-        )
+        if epx % 20 == 0 and epx > 0:
+            # Get extensive score every 10-th epoch
+            selected_metrics=('dice', 'jaccard', 'hd', 'hd95')
+            label_scores_epoch = get_seg_metrics_per_label(
+                label_scores_epoch,
+                torch.nn.functional.one_hot(pred_seg, len(dataset.label_tags)),
+                eo.rearrange(b_seg, 'b oh d h w -> b d h w oh'),
+                dataset.label_tags, nifti_zooms, selected_metrics=selected_metrics, exclude_bg=True
+            )
+        else:
+            # Calculate fast dice score
+            b_dice = dice3d(
+                eo.rearrange(torch.nn.functional.one_hot(pred_seg, len(training_dataset.label_tags)), 'b d h w oh -> b oh d h w'),
+                b_seg, # Calculate dice score with original segmentation (no disturbance)
+                one_hot_torch_style=False
+            )
+
+            label_scores_epoch = get_batch_dice_per_label(label_scores_epoch,
+                b_dice, training_dataset.label_tags, exclude_bg=True)
 
         if config.debug: break
+
+    (seg_metrics_nanmean,
+     seg_metrics_std,
+     seg_metrics_nanmean_oa,
+     seg_metrics_std_oa) = reduce_label_scores_epoch(label_scores_epoch)
 
     loss_mean = torch.tensor(epx_losses).mean()
     ### Logging ###
@@ -656,10 +673,10 @@ def epoch_iter(global_idx, config, model, dataset, dataloader, class_weights, fo
     log_label_metrics(f"scores/{phase}_std", fold_postfix, seg_metrics_std, global_idx,
         logger_selected_metrics=('dice', 'jaccard', 'hd', 'hd95'), print_selected_metrics=())
 
-    log_oa_metrics(f"scores/{phase}_mean_oa_wo_bg", fold_postfix, seg_metrics_nanmean_oa, global_idx,
+    log_oa_metrics(f"scores/{phase}_mean_oa_exclude_bg", fold_postfix, seg_metrics_nanmean_oa, global_idx,
         logger_selected_metrics=('dice', 'jaccard', 'hd', 'hd95'), print_selected_metrics=('dice', 'hd', 'hd95'))
 
-    log_oa_metrics(f"scores/{phase}_std_oa_wo_bg", fold_postfix, seg_metrics_std_oa, global_idx,
+    log_oa_metrics(f"scores/{phase}_std_oa_exclude_bg", fold_postfix, seg_metrics_std_oa, global_idx,
         logger_selected_metrics=('dice', 'jaccard', 'hd', 'hd95'), print_selected_metrics=())
     print()
     print()
@@ -749,13 +766,13 @@ def run_dl(run_name, config, training_dataset, test_dataset):
             print(f"### Log epoch {epx}")
             wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
-            _ = epoch_iter(global_idx, config, model, training_dataset, train_dataloader, class_weights, fold_postfix,
+            _ = epoch_iter(epx, global_idx, config, model, training_dataset, train_dataloader, class_weights, fold_postfix,
                 phase='train', autocast_enabled=autocast_enabled, optimizer=optimizer, scaler=scaler)
 
-            val_loss = epoch_iter(global_idx, config, model, training_dataset, val_dataloader, class_weights, fold_postfix,
+            val_loss = epoch_iter(epx, global_idx, config, model, training_dataset, val_dataloader, class_weights, fold_postfix,
                 phase='val', autocast_enabled=autocast_enabled, optimizer=None, scaler=None)
 
-            quality_metric = test_loss = epoch_iter(global_idx, config, model, test_dataset, test_dataloader, class_weights, fold_postfix,
+            quality_metric = test_loss = epoch_iter(epx, global_idx, config, model, test_dataset, test_dataloader, class_weights, fold_postfix,
                 phase='test', autocast_enabled=autocast_enabled, optimizer=None, scaler=None)
 
             ###  Scheduler management ###
