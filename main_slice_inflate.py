@@ -15,6 +15,7 @@
 
 # %%
 import os
+import sys
 from pathlib import Path
 
 os.environ['MMWHS_CACHE_PATH'] = str(Path('.', '.cache'))
@@ -82,8 +83,8 @@ config_dict = DotDict(dict(
     save_every='best',
     mdl_save_prefix='data/models',
 
-    debug=True,
-    wandb_mode='disabled',                         # e.g. online, disabled. Use weights and biases online logging
+    debug=False,
+    wandb_mode='online',                         # e.g. online, disabled. Use weights and biases online logging
     do_sweep=False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
