@@ -197,7 +197,7 @@ class HybridIdDataset(Dataset):
             vals = [_ids.index(elem) if elem in _ids else None for elem in _3d_identifiers]
         else:
             raise ValueError
-        return vals[0] if len(vals) == 1 else vals
+        return vals
 
     def get_3d_from_2d_identifiers(self, _2d_identifiers, retrn='id'):
         assert self.use_2d(), "Dataloader does not provide 2D data."

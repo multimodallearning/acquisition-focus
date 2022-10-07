@@ -2,7 +2,11 @@
 **/__pycache__/**
 wandb/**
 *.so*
-data/**
+
+data/models
+data/MMWHS/*
+!data/MMWHS/mmwhs_io_normalisation_values.pth
+
 **/.ipynb_checkpoints/**
 **/.DS_Store
 **/._.DS_Store

@@ -47,11 +47,11 @@ THIS_SCRIPT_DIR = get_script_dir()
 
 PROJECT_NAME = "slice_inflate"
 
-training_dataset = None
+training_dataset, test_dataset = None, None
 # %%
 config_dict = DotDict({
-    'num_folds': 5,
-    'only_first_fold': True,                # If true do not contiue with training after the first fold
+    'num_folds': 0,
+    'state': 'train', #
     # 'fold_override': 0,
     # 'checkpoint_epx': 0,
                    # If true use MIND features (https://pubmed.ncbi.nlm.nih.gov/22722056/)
@@ -59,7 +59,7 @@ config_dict = DotDict({
 
     'batch_size': 4,
     'val_batch_size': 1,
-    'modality': 'mr',
+    'modality': 'all',
     'use_2d_normal_to': None,               # Can be None or 'D', 'H', 'W'. If not None 2D slices will be selected for training
 
     'dataset': 'mmwhs',                 # The dataset prepared with our preprocessing scripts
@@ -97,7 +97,7 @@ config_dict = DotDict({
 def prepare_data(config):
     training_dataset = MMWHSDataset(
         config.data_base_path,
-        state="training",
+        state=config.state,
         load_func=load_data,
         extract_slice_func=extract_2d_data,
         modality=config.modality,
@@ -122,6 +122,11 @@ def prepare_data(config):
 # %%
 if training_dataset is None:
     training_dataset = prepare_data(config_dict)
+
+if test_dataset is None:
+    test_config = config_dict.copy()
+    test_config['state'] = 'test'
+    test_dataset = prepare_data(DotDict(test_config))
 
 # %%
 if False:
@@ -546,30 +551,138 @@ def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
 
     return elbo
 
-def train_DL(run_name, config, training_dataset):
+def model_step(config, model, b_input, b_target, label_tags, class_weights, io_normalisation_values, autocast_enabled=False):
+    b_input = b_input-io_normalisation_values['target_mean'].to(b_input.device)
+    b_input = b_input/io_normalisation_values['target_std'].to(b_input.device)
+
+    ### Forward pass ###
+    with amp.autocast(enabled=autocast_enabled):
+        assert b_input.dim() == 5, \
+            f"Input image for model must be {5}D: BxCxSPATIAL but is {b_input.shape}"
+
+        if config.model_type == 'vae':
+            y_hat, (z, mean, std) = model(b_input)
+        elif config.model_type == 'ae':
+            y_hat, _ = model(b_input)
+        else:
+            raise ValueError
+        # Reverse normalisation to outputs
+        y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
+        y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
+
+        ### Calculate loss ###
+        assert y_hat.dim() == 5, \
+            f"Input shape for loss must be {5}D: BxNUM_CLASSESxSPATIAL but is {y_hat.shape}"
+        assert b_target.dim() == 5, \
+            f"Target shape for loss must be {5}D: BxNUM_CLASSESxSPATIAL but is {b_target.shape}"
+
+        if "vae" in type(model).__name__.lower():
+            loss = get_vae_loss_value(y_hat, b_target.float(), z, mean, std, class_weights, model)
+        else:
+            loss = get_ae_loss_value(y_hat, b_target.float(), class_weights)
+
+    return y_hat, loss
+
+
+
+def epoch_iter(global_idx, config, model, dataset, dataloader, class_weights, fold_postfix, phase='train', autocast_enabled=False, optimizer=None, scheduler=None, scaler=None):
+    PHASES = ['train', 'val', 'test']
+    assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
+
+    epx_losses = []
+    dices = []
+    class_dices = []
+
+    if phase == 'train':
+        model.train()
+        dataset.train(use_modified=False)
+    else:
+        model.eval()
+        dataset.eval()
+
+    for batch_idx, batch in tqdm(enumerate(dataloader), desc=phase, total=len(dataloader)):
+
+        b_input, b_seg = get_model_input(batch, config, len(dataset.label_tags))
+        if phase == 'train':
+            optimizer.zero_grad()
+            y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
+            ###  Scheduler management ###
+            if config.use_scheduling:
+                scheduler.step(loss)
+
+        else:
+            with torch.no_grad():
+                y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
+
+        epx_losses.append(loss.item())
+
+        pred_seg = y_hat.argmax(1)
+
+        # Calculate dice score
+        b_dice = dice3d(
+            torch.nn.functional.one_hot(pred_seg, len(dataset.label_tags)).permute(0,4,1,2,3),
+            b_seg,
+            one_hot_torch_style=False
+        )
+
+        dices.append(get_batch_dice_over_all(
+            b_dice, exclude_bg=True))
+        class_dices.append(get_batch_dice_per_class(
+            b_dice, dataset.label_tags, exclude_bg=True))
+
+        if config.debug: break
+
+    loss_mean = torch.tensor(epx_losses).mean()
+    ### Logging ###
+    print(f"### {phase.upper()}")
+
+    ### Log wandb data ###
+    log_id = f'losses/{phase}_loss{fold_postfix}'
+    log_val = loss_mean
+    wandb.log({log_id: log_val}, step=global_idx)
+    print(f'losses/{phase}_loss{fold_postfix}', f"{log_val}")
+
+    log_id = f'scores/{phase}_dice_mean_wo_bg{fold_postfix}'
+    log_val = np.nanmean(dices)
+    print(log_id, f"{log_val*100:.2f}%")
+    wandb.log({log_id: log_val}, step=global_idx)
+
+    log_class_dices(f"scores/{phase}_dice_mean_", fold_postfix, class_dices, global_idx)
+    print()
+    print()
+
+    return loss_mean
+
+
+
+def run_dl(run_name, config, training_dataset, test_dataset):
     reset_determinism()
 
     # Configure folds
-    kf = KFold(n_splits=config.num_folds)
-    # kf.get_n_splits(training_dataset.__len__(use_2d_override=False))
-    fold_iter = enumerate(kf.split(range(training_dataset.__len__(use_2d_override=False))))
+    if config.num_folds < 1:
+        train_idxs = range(training_dataset.__len__(use_2d_override=False))
+        val_idxs = []
+        fold_idx = -1
+        fold_iter = ([fold_idx, (train_idxs, val_idxs)],)
 
-    if config.get('fold_override', None):
-        selected_fold = config.get('fold_override', 0)
-        fold_iter = list(fold_iter)[selected_fold:selected_fold+1]
-    elif config.only_first_fold:
-        fold_iter = list(fold_iter)[0:1]
-
-    if config.use_2d_normal_to is not None:
-        n_dims = (-2,-1)
     else:
-        n_dims = (-3,-2,-1)
+        kf = KFold(n_splits=config.num_folds)
+        fold_iter = enumerate(kf.split(range(training_dataset.__len__(use_2d_override=False))))
+
+        if config.get('fold_override', None):
+            selected_fold = config.get('fold_override', 0)
+            fold_iter = list(fold_iter)[selected_fold:selected_fold+1]
 
     fold_means_no_bg = []
 
-    best_val_score = 0
-
     for fold_idx, (train_idxs, val_idxs) in fold_iter:
+        fold_postfix = f'_fold{fold_idx}' if fold_idx != -1 else ""
+
+        best_val_loss = 0
         train_idxs = torch.tensor(train_idxs)
         val_idxs = torch.tensor(val_idxs)
         val_ids = training_dataset.switch_3d_identifiers(val_idxs)
@@ -579,6 +692,7 @@ def train_DL(run_name, config, training_dataset):
         ### Add train sampler and dataloaders ##
         train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
         val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
+        test_subsampler = torch.utils.data.SubsetRandomSampler(range(len(test_dataset)))
 
         train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
             sampler=train_subsampler, pin_memory=False, drop_last=False,
@@ -586,6 +700,9 @@ def train_DL(run_name, config, training_dataset):
         )
         val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
             sampler=val_subsampler, pin_memory=False, drop_last=False,
+        )
+        test_dataloader = DataLoader(test_dataset, batch_size=config.val_batch_size,
+            sampler=test_subsampler, pin_memory=False, drop_last=False,
         )
 
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
@@ -612,164 +729,25 @@ def train_DL(run_name, config, training_dataset):
         class_weights /= class_weights.mean()
 
         class_weights = class_weights.to(device=config.device)
-        # class_weights = None
+
         autocast_enabled = 'cuda' in config.device
         autocast_enabled = False
 
-        io_normalisation_values = torch.load("io_normalisation_values.pth")
-
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
-
-            model.train()
-
-            ### Disturb samples ###
-            training_dataset.train(use_modified=False)
-
-            epx_losses = []
-            dices = []
-            class_dices = []
-
-            # Load data
-            for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch:", total=len(train_dataloader)):
-                optimizer.zero_grad()
-                b_input, b_seg = get_model_input(batch, config, len(training_dataset.label_tags))
-                b_input = b_input-io_normalisation_values['target_mean'].to(b_input.device)
-                b_input = b_input/io_normalisation_values['target_std'].to(b_input.device)
-
-                ### Forward pass ###
-                with amp.autocast(enabled=autocast_enabled):
-                    assert b_input.dim() == len(n_dims)+2, \
-                        f"Input image for model must be {len(n_dims)+2}D: BxCxSPATIAL but is {b_input.shape}"
-
-                    if config.model_type == 'vae':
-                        y_hat, (z, mean, std) = model(b_input)
-                    elif config.model_type == 'ae':
-                        y_hat, _ = model(b_input)
-                    else:
-                        raise ValueError
-                    # Reverse normalisation to outputs
-                    y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
-                    y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
-
-                    ### Calculate loss ###
-                    assert y_hat.dim() == len(n_dims)+2, \
-                        f"Input shape for loss must be BxNUM_CLASSESxSPATIAL but is {y_hat.shape}"
-                    assert b_seg.dim() == len(n_dims)+2, \
-                        f"Target shape for loss must be BxNUM_CLASSESxSPATIAL but is {b_seg.shape}"
-
-                    if "vae" in type(model).__name__.lower():
-                        loss = get_vae_loss_value(y_hat, b_seg.float(), z, mean, std, class_weights, model)
-                    else:
-                        loss = get_ae_loss_value(y_hat, b_seg.float(), class_weights)
-
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
-
-                    epx_losses.append(loss.item())
-
-                pred_seg = y_hat.argmax(1)
-
-                # Calculate dice score
-                b_dice = dice3d(
-                    torch.nn.functional.one_hot(pred_seg, len(training_dataset.label_tags)).permute(0,4,1,2,3),
-                    b_seg, # Calculate dice score with original segmentation (no disturbance)
-                    one_hot_torch_style=False
-                )
-
-                dices.append(get_batch_dice_over_all(
-                    b_dice, exclude_bg=True))
-                class_dices.append(get_batch_dice_per_class(
-                    b_dice, training_dataset.label_tags, exclude_bg=True))
-
-
-                if config.debug:
-                    break
-
-            ###  Scheduler management ###
-            if config.use_scheduling:
-                scheduler.step(loss)
-
-            ### Logging ###
-            print(f"### Log epoch {epx}")
-            print("### Training")
-
-            ### Log wandb data ###
             # Log the epoch idx per fold - so we can recover the diagram by setting
             # ref_epoch_idx as x-axis in wandb interface
+            print(f"### Log epoch {epx}")
             wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
-            mean_loss = torch.tensor(epx_losses).mean()
-            wandb.log({f'losses/loss_fold{fold_idx}': mean_loss}, step=global_idx)
-            print(f'losses/loss_fold{fold_idx}', f"{mean_loss}")
+            _ = epoch_iter(global_idx, config, model, training_dataset, train_dataloader, class_weights, fold_postfix,
+                phase='train', autocast_enabled=autocast_enabled, optimizer=optimizer, scheduler=scheduler, scaler=scaler)
 
-            mean_dice = np.nanmean(dices)
-            print(f'dice_mean_wo_bg_fold{fold_idx}', f"{mean_dice*100:.2f}%")
-            wandb.log({f'scores/dice_mean_wo_bg_fold{fold_idx}': mean_dice}, step=global_idx)
+            val_loss = epoch_iter(global_idx, config, model, training_dataset, val_dataloader, class_weights, fold_postfix,
+                phase='val', autocast_enabled=autocast_enabled, optimizer=None, scheduler=None, scaler=None)
 
-            log_class_dices("scores/dice_mean_", f"_fold{fold_idx}", class_dices, global_idx)
-
-            print()
-            print("### Validation")
-            model.eval()
-            training_dataset.eval()
-
-            val_dices = []
-            val_losses = []
-            val_class_dices = []
-
-            with amp.autocast(enabled=autocast_enabled):
-                with torch.no_grad():
-                    for val_batch_idx, val_batch in tqdm(enumerate(val_dataloader), desc="batch:", total=len(val_dataloader)):
-
-                        b_val_input, b_val_seg = get_model_input(val_batch, config, len(training_dataset.label_tags))
-                        b_val_input = b_val_input-io_normalisation_values['target_mean'].to(b_val_input.device)
-                        b_val_input = b_val_input/io_normalisation_values['target_std'].to(b_val_input.device)
-
-                        if config.model_type == 'vae':
-                            y_hat_val, (z_val, mean_val, std_val) = model(b_val_input)
-                        elif config.model_type == 'ae':
-                            y_hat_val, _ = model(b_val_input)
-                        else:
-                            raise ValueError
-
-                        # Reverse normalisation to outputs
-                        y_hat_val = y_hat_val*io_normalisation_values['target_std'].to(b_val_input.device)
-                        y_hat_val = y_hat_val+io_normalisation_values['target_mean'].to(b_val_input.device)
-
-                        if config.model_type == 'vae':
-                            val_loss = get_vae_loss_value(y_hat_val, b_val_seg.float(), z_val, mean_val, std_val, class_weights, model)
-                        elif config.model_type == 'ae':
-                            val_loss = get_ae_loss_value(y_hat_val, b_val_seg.float(), class_weights)
-                        else:
-                            raise ValueError
-
-                        val_pred_seg = y_hat_val.argmax(1)
-
-                        b_val_dice = dice3d(
-                            torch.nn.functional.one_hot(val_pred_seg, len(training_dataset.label_tags)).permute(0,4,1,2,3),
-                            b_val_seg,
-                            one_hot_torch_style=False
-                        )
-
-                        # Get mean score over batch
-                        val_losses.append(val_loss)
-                        val_dices.append(get_batch_dice_over_all(
-                            b_val_dice, exclude_bg=True))
-
-                        val_class_dices.append(get_batch_dice_per_class(
-                            b_val_dice, training_dataset.label_tags, exclude_bg=True))
-
-                    mean_val_loss = torch.tensor(val_losses).mean()
-                    mean_val_dice = np.nanmean(val_dices)
-
-                    wandb.log({f'losses/val_loss_fold{fold_idx}': mean_val_loss}, step=global_idx)
-                    print(f'losses/val_loss_fold{fold_idx}', f"{mean_val_loss}")
-
-                    print(f'val_dice_mean_wo_bg_fold{fold_idx}', f"{mean_val_dice*100:.2f}%")
-                    wandb.log({f'scores/val_dice_mean_wo_bg_fold{fold_idx}': mean_val_dice}, step=global_idx)
-                    log_class_dices("scores/val_dice_mean_", f"_fold{fold_idx}", val_class_dices, global_idx)
+            _ = epoch_iter(global_idx, config, model, test_dataset, test_dataloader, class_weights, fold_postfix,
+                phase='test', autocast_enabled=autocast_enabled, optimizer=None, scheduler=None, scaler=None)
 
             print()
 
@@ -778,9 +756,9 @@ def train_DL(run_name, config, training_dataset):
                 pass
 
             elif config.save_every == 'best':
-                if mean_val_dice > best_val_score:
-                    best_val_score = mean_val_dice
-                    save_path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_best"
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    save_path = f"{config.mdl_save_prefix}/{wandb.run.name}{fold_postfix}_best"
                     save_model(
                         Path(THIS_SCRIPT_DIR, save_path),
                         model=model,
@@ -789,7 +767,7 @@ def train_DL(run_name, config, training_dataset):
                         scaler=scaler)
 
             elif (epx % config.save_every == 0) or (epx+1 == config.epochs):
-                save_path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx}"
+                save_path = f"{config.mdl_save_prefix}/{wandb.run.name}{fold_postfix}_epx{epx}"
                 save_model(
                     Path(THIS_SCRIPT_DIR, save_path),
                     model=model,
@@ -804,7 +782,7 @@ def train_DL(run_name, config, training_dataset):
                 #         THIS_SCRIPT_DIR=THIS_SCRIPT_DIR,
                 #         _path=_path, device=config.device)
 
-            # End of training loop
+            # End of epoch loop
 
             if config.debug:
                 break
@@ -882,7 +860,7 @@ def normal_run():
         # training_dataset = prepare_data(config_dict)
         config = wandb.config
 
-        train_DL(run_name, config, training_dataset)
+        run_dl(run_name, config, training_dataset, test_dataset)
 
 def sweep_run():
     with wandb.init() as run:
@@ -893,10 +871,10 @@ def sweep_run():
 
         run_name = run.name
         print("Running", run_name)
-        training_dataset = prepare_data(config)
+        # training_dataset = prepare_data(config)
         config = wandb.config
 
-        train_DL(run_name, config, training_dataset)
+        run_dl(run_name, config, training_dataset, test_dataset)
 
 if config_dict['do_sweep']:
     # Integrate all config_dict entries into sweep_dict.parameters -> sweep overrides config_dict

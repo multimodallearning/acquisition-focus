@@ -19,7 +19,7 @@ from slice_inflate.datasets.align_mmwhs import align_to_sa_hla_from_volume, crop
 cache = Memory(location=os.environ['MMWHS_CACHE_PATH'])
 
 class MMWHSDataset(HybridIdDataset):
-    def __init__(self, *args, state='training',
+    def __init__(self, *args, state='train',
         label_tags=(
             "background",
             "left_myocardium",
@@ -32,6 +32,7 @@ class MMWHSDataset(HybridIdDataset):
         ),
         **kwargs):
         self.state = state
+        self.io_normalisation_values = torch.load(Path(args[0], "mmwhs_io_normalisation_values.pth"))
 
         if kwargs['use_2d_normal_to'] is not None:
             warnings.warn("Static 2D data extraction for this dataset is skipped.")
@@ -300,14 +301,14 @@ def load_data(self_attributes: dict):
     files = []
 
     for mod in modalities:
-        if self.state.lower() == "training":
+        if self.state.lower() == "train":
             data_directory = f"{mod}_train"
 
         elif self.state.lower() == "test":
-            data_directory = f"{mod}_test"
+            data_directory = f"{mod}_test_selection"
 
         else:
-            raise Exception("Unknown data state. Choose either 'training or 'test'")
+            raise Exception("Unknown data state. Choose either 'train or 'test'")
 
         data_path = Path(self.base_dir, data_directory)
 
