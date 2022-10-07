@@ -452,36 +452,38 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     else:
         raise ValueError
 
-    decoder_modules = filter(lambda elem: 'decoder' in elem[0], model.named_modules())
-    for nmod in decoder_modules:
-        for param in nmod[1].parameters():
-            param.requires_grad = False
-
     model.to(device)
-    print(f"Trainable param count model: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
-    print(f"Non-trainable param count model: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}")
-    decoder_modules = filter(lambda elem: 'decoder' in elem[0], model.named_modules())
-
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
-    scaler = amp.GradScaler()
-
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=20, verbose=True)
 
     if _path and _path.is_dir():
         model_dict = torch.load(_path.joinpath('model.pth'), map_location=device)
         epx = model_dict.get('metadata', {}).get('epx', 0)
         model.load_state_dict(model_dict)
         print(f"Loading model from {_path}")
+    else:
+        print(f"Generating fresh '{type(model).__name__}' model.")
+        epx = 0
+        
+    decoder_modules = filter(lambda elem: 'decoder' in elem[0], model.named_modules())
+    for nmod in decoder_modules:
+        for param in nmod[1].parameters():
+            param.requires_grad = False
 
-        if not load_model_only:
-            print(f"Loading optimizer, scheduler, scaler from {_path}")
-            optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
-            scheduler.load_state_dict(torch.load(_path.joinpath('scheduler.pth'), map_location=device))
-            scaler.load_state_dict(torch.load(_path.joinpath('scaler.pth'), map_location=device))
+    print(f"Trainable param count model: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+    print(f"Non-trainable param count model: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}")
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+    scaler = amp.GradScaler()
+
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=20, verbose=True)
+
+    if _path and _path.is_dir() and not load_model_only:
+        print(f"Loading optimizer, scheduler, scaler from {_path}")
+        optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
+        scheduler.load_state_dict(torch.load(_path.joinpath('scheduler.pth'), map_location=device))
+        scaler.load_state_dict(torch.load(_path.joinpath('scaler.pth'), map_location=device))
 
     else:
-        print(f"Generating fresh '{type(model).__name__}' model, optimizer and grad scaler.")
-        epx = 0
+        print(f"Generating fresh optimizer, scheduler, scaler.")
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)
