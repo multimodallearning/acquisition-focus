@@ -299,8 +299,8 @@ def get_seg_metrics_per_label(label_scores_epoch, b_input, b_target, label_tags,
 def reduce_label_scores_epoch(label_scores_epoch):
     scores = copy.deepcopy(label_scores_epoch)
 
-    nanmean_per_label = scores.copy()
-    std_per_label = scores.copy()
+    nanmean_per_label = copy.deepcopy(scores)
+    std_per_label = copy.deepcopy(scores)
 
     # Reduce over samples -> score per labels
     for m_name, m_dict in scores.items():
@@ -315,7 +315,10 @@ def reduce_label_scores_epoch(label_scores_epoch):
     for m_name, m_dict in scores.items():
         all_metric_values = []
         for tag in m_dict:
-            all_metric_values = all_metric_values + [m_dict[tag]]
+            vals = m_dict[tag]
+            if not isinstance(vals, list):
+                vals = list(vals)
+            all_metric_values = all_metric_values + vals
 
         nanmean_over_all[m_name] = np.nanmean(all_metric_values)
         std_over_all[m_name] = np.std(all_metric_values)

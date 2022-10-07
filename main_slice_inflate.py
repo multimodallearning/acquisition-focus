@@ -643,7 +643,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
             # Calculate fast dice score
             b_dice = dice3d(
                 eo.rearrange(torch.nn.functional.one_hot(pred_seg, len(training_dataset.label_tags)), 'b d h w oh -> b oh d h w'),
-                b_seg, # Calculate dice score with original segmentation (no disturbance)
+                b_seg,
                 one_hot_torch_style=False
             )
 
