@@ -163,7 +163,7 @@ def cut_slice(volume):
 
 def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, is_label):
     FOV_MM = torch.tensor([300.,300.,300.])
-    FOV_VOX = torch.tensor([256,256,256])
+    FOV_VOX = torch.tensor([196,196,196])
 
     # Only grid sample the center slice
     FOV_MM_SLICE = FOV_MM.clone()

@@ -23,10 +23,11 @@ wandb = "^0.13.3"
 scikit-learn = "^1.1.2"
 mdl-seg-class = { git = "git@github.com:MDL-UzL/SegmentationClassification.git" }
 meidic-vtach-utils = { git = "git@github.com:MDL-UzL/meidic_vtach_utils.git" }
+nnunet = { git = "git@github.com:chr-wei/nnUNet.git" }
 scikit-image = "^0.19.3"
 git-filter-repo = "^2.34.0"
-seg-metrics = "^1.0.37"
 einops = "^0.5.0"
+dill = "^0.3.5.1"
 
 
 [build-system]

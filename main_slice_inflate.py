@@ -34,7 +34,7 @@ import nibabel as nib
 
 from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset, load_data, extract_2d_data
 from slice_inflate.utils.common_utils import DotDict, get_script_dir, in_notebook
-from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, get_batch_dice_over_all, get_batch_dice_per_label, save_model, get_seg_metrics_per_label, reduce_label_scores_epoch
+from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, get_batch_dice_over_all, get_batch_dice_per_label, save_model, reduce_label_scores_epoch
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
 from slice_inflate.datasets.align_mmwhs import cut_slice
@@ -44,7 +44,9 @@ from torch.utils.data import DataLoader
 
 from mdl_seg_class.metrics import dice3d
 import numpy as np
-import seg_metrics.seg_metrics as sg
+
+from slice_inflate.models.generic_UNet_opt_skip_connections import Generic_UNet
+import dill
 
 import einops as eo
 
@@ -70,14 +72,14 @@ config_dict = DotDict(dict(
     data_base_path=str(Path(THIS_SCRIPT_DIR, "data/MMWHS")),
     reg_state=None, # Registered (noisy) labels used in training. See prepare_data() for valid reg_states
     train_set_max_len=None,              # Length to cut of dataloader sample count
-    crop_around_3d_label_center=None, #(128,128,128),
+    crop_around_3d_label_center= (128,128,128), #(128,128,128),
     crop_3d_region=None, #((0,128), (0,128), (0,128)), # dimension range in which 3D samples are cropped
     crop_2d_slices_gt_num_threshold=0,   # Drop 2D slices if less than threshold pixels are positive
-    crop_around_2d_label_center=None, #(128,128),
+    crop_around_2d_label_center= (128,128),
 
     lr=1e-3,
     use_scheduling=True,
-    model_type='ae',
+    model_type='unet',
 
     save_every='best',
     mdl_save_prefix='data/models',
@@ -87,7 +89,7 @@ config_dict = DotDict(dict(
     do_sweep=False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
-    checkpoint_path="/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/still-plasma-93_best",                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
+    # checkpoint_path="/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/still-plasma-93_best",                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
     fold_override=None,                            # Training fold, e.g. 0
 
     do_plot=False,                                 # Generate plots (debugging purpose)
@@ -219,59 +221,6 @@ if False:
     plt.show()
 
 # %%
-import contextlib
-
-def get_named_layers_leaves(module):
-    """ Returns all leaf layers of a pytorch module and a keychain as identifier.
-        e.g.
-        ...
-        ('features.0.5', nn.ReLU())
-        ...
-        ('classifier.0', nn.BatchNorm2D())
-        ('classifier.1', nn.Linear())
-    """
-
-    return [(keychain, sub_mod) for keychain, sub_mod in list(module.named_modules()) if not next(sub_mod.children(), None)]
-
-@contextlib.contextmanager
-def temp_forward_hooks(modules, pre_fwd_hook_fn=None, post_fwd_hook_fn=None):
-    handles = []
-    if pre_fwd_hook_fn:
-        handles.extend([mod.register_forward_pre_hook(pre_fwd_hook_fn) for mod in modules])
-    if post_fwd_hook_fn:
-        handles.extend([mod.register_forward_hook(post_fwd_hook_fn) for mod in modules])
-
-    yield
-    for hand in handles:
-        hand.remove()
-
-def debug_forward_pass(module, inpt, STEP_MODE=False):
-    named_leaves = get_named_layers_leaves(module)
-    leave_mod_dict = {mod:keychain for keychain, mod in named_leaves}
-
-    def get_shape_str(interface_var):
-        if isinstance(interface_var, tuple):
-            shps = [str(elem.shape) if isinstance(elem, torch.Tensor) else type(elem) for elem in interface_var]
-            return ', '.join(shps)
-        elif isinstance(interface_var, torch.Tensor):
-            return interface_var.shape
-        return type(interface_var)
-
-    def print_pre_info(module, inpt):
-        inpt_shapes = get_shape_str(inpt)
-        print(f"in:  {inpt_shapes}")
-        print(f"key: {leave_mod_dict[module]}")
-        print(f"mod: {module}")
-        if STEP_MODE:
-            input("To continue forward pass press [ENTER]")
-
-    def print_post_info(module, inpt, output):
-        output_shapes = get_shape_str(output)
-        print(f"out: {output_shapes}\n")
-
-    with temp_forward_hooks(leave_mod_dict.keys(), print_pre_info, print_post_info):
-        return module(inpt)
-
 
 # %%
 class BlendowskiAE(torch.nn.Module):
@@ -443,12 +392,30 @@ class BlendowskiVAE(BlendowskiAE):
 #             raise RuntimeError(f"Found NAN in output {i} at indices: ", nan_mask.nonzero(), "where:", out[nan_mask.nonzero()[:, 0].unique(sorted=True)])
 
 def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, device='cpu', load_model_only=False):
-    _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
+    if not _path is None:
+        _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
     if config.model_type == 'vae':
         model = BlendowskiVAE(in_channels=num_classes, out_channels=num_classes)
     elif config.model_type == 'ae':
-            model = BlendowskiAE(in_channels=num_classes, out_channels=num_classes)
+        model = BlendowskiAE(in_channels=num_classes, out_channels=num_classes)
+    elif config.model_type == 'unet':
+        init_dict_path = Path(THIS_SCRIPT_DIR, "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
+        with open(init_dict_path, 'rb') as f:
+            init_dict = dill.load(f)
+        init_dict['num_classes'] = 6
+        nnunet_model = Generic_UNet(**init_dict, use_skip_connections=False, use_onehot_input=True)
+
+        class InterfaceModel(torch.nn.Module):
+            def __init__(self, nnunet_model):
+                super().__init__()
+                self.nnunet_model = nnunet_model
+
+            def forward(self, x):
+                return self.nnunet_model(x)[0], None
+
+        model = InterfaceModel(nnunet_model)
+
     else:
         raise ValueError
 
@@ -462,7 +429,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     else:
         print(f"Generating fresh '{type(model).__name__}' model.")
         epx = 0
-        
+
     decoder_modules = filter(lambda elem: 'decoder' in elem[0], model.named_modules())
     for nmod in decoder_modules:
         for param in nmod[1].parameters():
@@ -493,11 +460,11 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
 # %%
 def get_model_input(batch, config, num_classes):
-    W_TARGET_LEN = 256
+    W_TARGET_LEN = 128
     b_hla_slc_seg = batch['hla_label_slc']
     b_sa_slc_seg = batch['sa_label_slc']
     b_input = torch.cat([b_hla_slc_seg.unsqueeze(1), b_sa_slc_seg.unsqueeze(1)], dim=1)
-    b_input = b_input.repeat_interleave(int(W_TARGET_LEN/b_input.shape[1]), dim=1)
+    b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[1]), dim=1) # Stack data hla/sa next to each other
 
     b_seg = batch['label']
 
@@ -581,7 +548,7 @@ def model_step(config, model, b_input, b_target, label_tags, class_weights, io_n
 
         if config.model_type == 'vae':
             y_hat, (z, mean, std) = model(b_input)
-        elif config.model_type == 'ae':
+        elif config.model_type in ['ae', 'unet']:
             y_hat, _ = model(b_input)
         else:
             raise ValueError
@@ -643,26 +610,15 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
         RZS = batch['sa_affine'][0][:3,:3].numpy()
         nifti_zooms = np.sqrt(np.sum(RZS * RZS, axis=0))
 
-        # Calculate scores
-        if epx % 20 == 0 and epx > 0:
-            # Get extensive score every 10-th epoch
-            selected_metrics=('dice', 'jaccard', 'hd', 'hd95')
-            label_scores_epoch = get_seg_metrics_per_label(
-                label_scores_epoch,
-                torch.nn.functional.one_hot(pred_seg, len(dataset.label_tags)),
-                eo.rearrange(b_seg, 'b oh d h w -> b d h w oh'),
-                dataset.label_tags, nifti_zooms, selected_metrics=selected_metrics, exclude_bg=True
-            )
-        else:
-            # Calculate fast dice score
-            b_dice = dice3d(
-                eo.rearrange(torch.nn.functional.one_hot(pred_seg, len(training_dataset.label_tags)), 'b d h w oh -> b oh d h w'),
-                b_seg,
-                one_hot_torch_style=False
-            )
+        # Calculate fast dice score
+        b_dice = dice3d(
+            eo.rearrange(torch.nn.functional.one_hot(pred_seg, len(training_dataset.label_tags)), 'b d h w oh -> b oh d h w'),
+            b_seg,
+            one_hot_torch_style=False
+        )
 
-            label_scores_epoch = get_batch_dice_per_label(label_scores_epoch,
-                b_dice, training_dataset.label_tags, exclude_bg=True)
+        label_scores_epoch = get_batch_dice_per_label(label_scores_epoch,
+            b_dice, training_dataset.label_tags, exclude_bg=True)
 
         if config.debug: break
 
@@ -746,7 +702,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
         )
 
         # Load from checkpoint, if any
-        chk_path = config.checkpoint_path if config.checkpoint_path else None
+        chk_path = config.checkpoint_path if 'checkpoint_path' in config else None
 
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
         (model, optimizer, scheduler, scaler), epx_start = get_model(config, len(training_dataset), len(training_dataset.label_tags),

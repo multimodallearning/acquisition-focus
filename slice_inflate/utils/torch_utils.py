@@ -3,11 +3,11 @@ from contextlib import contextmanager
 import random
 import numpy as np
 import torch
-import seg_metrics.seg_metrics as sg
 import torch.nn.functional as F
 from pathlib import Path
 import functools
 import copy
+import contextlib
 
 MOD_GET_FN = lambda self, key: self[int(key)] if isinstance(self, nn.Sequential) \
                                               else getattr(self, key)
@@ -273,6 +273,7 @@ def get_seg_metrics_per_label(label_scores_epoch, b_input, b_target, label_tags,
     start_lbl_idx = 1 if exclude_bg else 1
 
     for b_idx in range(B):
+        raise NotImplementedError()
         md = sg.get_metrics_dict_all_labels(range(start_lbl_idx, len(label_tags)), b_input[b_idx], b_target[b_idx],
             spacing=spacing, metrics_names=selected_metrics
         )
@@ -473,3 +474,60 @@ def get_rotation_matrix_3d_from_angles(deg_angles, device='cpu'):
 def get_bincounts(label, num_classes):
     bn_counts = torch.bincount(label.reshape(-1).long(), minlength=num_classes)
     return bn_counts
+
+
+
+def get_named_layers_leaves(module):
+    """ Returns all leaf layers of a pytorch module and a keychain as identifier.
+        e.g.
+        ...
+        ('features.0.5', nn.ReLU())
+        ...
+        ('classifier.0', nn.BatchNorm2D())
+        ('classifier.1', nn.Linear())
+    """
+
+    return [(keychain, sub_mod) for keychain, sub_mod in list(module.named_modules()) if not next(sub_mod.children(), None)]
+
+
+
+@contextlib.contextmanager
+def temp_forward_hooks(modules, pre_fwd_hook_fn=None, post_fwd_hook_fn=None):
+    handles = []
+    if pre_fwd_hook_fn:
+        handles.extend([mod.register_forward_pre_hook(pre_fwd_hook_fn) for mod in modules])
+    if post_fwd_hook_fn:
+        handles.extend([mod.register_forward_hook(post_fwd_hook_fn) for mod in modules])
+
+    yield
+    for hand in handles:
+        hand.remove()
+
+
+
+def debug_forward_pass(module, inpt, STEP_MODE=False):
+    named_leaves = get_named_layers_leaves(module)
+    leave_mod_dict = {mod:keychain for keychain, mod in named_leaves}
+
+    def get_shape_str(interface_var):
+        if isinstance(interface_var, tuple):
+            shps = [str(elem.shape) if isinstance(elem, torch.Tensor) else type(elem) for elem in interface_var]
+            return ', '.join(shps)
+        elif isinstance(interface_var, torch.Tensor):
+            return interface_var.shape
+        return type(interface_var)
+
+    def print_pre_info(module, inpt):
+        inpt_shapes = get_shape_str(inpt)
+        print(f"in:  {inpt_shapes}")
+        print(f"key: {leave_mod_dict[module]}")
+        print(f"mod: {module}")
+        if STEP_MODE:
+            input("To continue forward pass press [ENTER]")
+
+    def print_post_info(module, inpt, output):
+        output_shapes = get_shape_str(output)
+        print(f"out: {output_shapes}\n")
+
+    with temp_forward_hooks(leave_mod_dict.keys(), print_pre_info, print_post_info):
+        return module(inpt)
