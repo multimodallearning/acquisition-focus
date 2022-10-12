@@ -327,23 +327,27 @@ def reduce_label_scores_epoch(label_scores_epoch):
     return nanmean_per_label, std_per_label, nanmean_over_all, std_over_all
 
 
-def get_batch_dice_per_label(label_scores_epoch, b_dice, label_tags, exclude_bg=True) -> dict:
+def get_batch_score_per_label(label_scores_epoch, metric_name, b_score, label_tags, exclude_bg=True) -> dict:
+    """
+        Converts metric tensors of shape (B,C) to a dictionary.
+        Scores are appended to label_scores_epoch.
+    """
     assert 'background' in label_tags, "Always provide 'background' tag name. Omit it with 'exclude_bg=True'"
 
     for tag_idx, tag in enumerate(label_tags):
         if exclude_bg and tag_idx == 0:
             continue
-        for dice_value in b_dice[:,tag_idx]:
-            if torch.isnan(dice_value).item():
-                dice_value = float('nan')
+        for val in b_score[:,tag_idx]:
+            if torch.isnan(val).item():
+                val = float('nan')
             else:
-                dice_value = dice_value.item()
+                val = val.item()
 
-            dice_dict = label_scores_epoch.get('dice', {})
-            values = dice_dict.get(tag, [])
-            values += [dice_value]
-            dice_dict[tag] = values
-            label_scores_epoch['dice'] = dice_dict
+            score_dict = label_scores_epoch.get(metric_name, {})
+            values = score_dict.get(tag, [])
+            values += [val]
+            score_dict[tag] = values
+            label_scores_epoch[metric_name] = score_dict
     return label_scores_epoch
 
 
@@ -531,3 +535,17 @@ def debug_forward_pass(module, inpt, STEP_MODE=False):
 
     with temp_forward_hooks(leave_mod_dict.keys(), print_pre_info, print_post_info):
         return module(inpt)
+
+
+
+def get_test_func_all_parameters_updated():
+    was_checked = False
+
+    def test_all_parameters_updated(model):
+        if was_checked: return
+        for param_name, param in model.named_parameters():
+            if param.requires_grad:
+                assert param.grad is not None
+                assert not torch.equal(torch.sum(param.grad ** 2), torch.tensor(0.).to(param.device))
+
+    return test_all_parameters_updated

@@ -34,7 +34,9 @@ import nibabel as nib
 
 from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset, load_data, extract_2d_data
 from slice_inflate.utils.common_utils import DotDict, get_script_dir, in_notebook
-from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, get_batch_dice_over_all, get_batch_dice_per_label, save_model, reduce_label_scores_epoch
+from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
+    get_batch_dice_over_all, get_batch_score_per_label, save_model, \
+    reduce_label_scores_epoch, get_test_func_all_parameters_updated
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
 from slice_inflate.datasets.align_mmwhs import cut_slice
@@ -42,7 +44,7 @@ from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, log
 from sklearn.model_selection import KFold
 from torch.utils.data import DataLoader
 
-from mdl_seg_class.metrics import dice3d
+from mdl_seg_class.metrics import dice3d, hausdorff3d
 import numpy as np
 
 from slice_inflate.models.generic_UNet_opt_skip_connections import Generic_UNet
@@ -55,6 +57,7 @@ THIS_SCRIPT_DIR = get_script_dir()
 PROJECT_NAME = "slice_inflate"
 
 training_dataset, test_dataset = None, None
+test_all_parameters_updated = get_test_func_all_parameters_updated()
 # %%
 config_dict = DotDict(dict(
     num_folds=0,
@@ -63,7 +66,7 @@ config_dict = DotDict(dict(
                    # If true use MIND features (https://pubmed.ncbi.nlm.nih.gov/22722056/)
     epochs=500,
 
-    batch_size=2,
+    batch_size=4,
     val_batch_size=1,
     modality='all',
     use_2d_normal_to=None,               # Can be None or 'D', 'H', 'W'. If not None 2D slices will be selected for training
@@ -77,15 +80,16 @@ config_dict = DotDict(dict(
     crop_2d_slices_gt_num_threshold=0,   # Drop 2D slices if less than threshold pixels are positive
     crop_around_2d_label_center= (128,128),
 
-    lr=1e-3,
+    lr=1e-2,
     use_scheduling=True,
-    model_type='unet',
+    model_type='ae',
+    encoder_training_only=False,
 
     save_every='best',
     mdl_save_prefix='data/models',
 
-    debug=False,
-    wandb_mode='online',                         # e.g. online, disabled. Use weights and biases online logging
+    debug=True,
+    wandb_mode='disabled',                         # e.g. online, disabled. Use weights and biases online logging
     do_sweep=False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
@@ -391,7 +395,7 @@ class BlendowskiVAE(BlendowskiAE):
 #             print("In", self.__class__.__name__)
 #             raise RuntimeError(f"Found NAN in output {i} at indices: ", nan_mask.nonzero(), "where:", out[nan_mask.nonzero()[:, 0].unique(sorted=True)])
 
-def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, device='cpu', load_model_only=False):
+def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, device='cpu', load_model_only=False, encoder_training_only=False):
     if not _path is None:
         _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
@@ -404,15 +408,24 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         with open(init_dict_path, 'rb') as f:
             init_dict = dill.load(f)
         init_dict['num_classes'] = 6
+        init_dict['deep_supervision'] = False
         nnunet_model = Generic_UNet(**init_dict, use_skip_connections=False, use_onehot_input=True)
 
+        seg_outputs = list(filter(lambda elem: 'seg_outputs' in elem[0], nnunet_model.named_parameters()))
+        # Disable gradients of non-used deep supervision
+        for so_idx in range(len(seg_outputs)-1):
+            seg_outputs[so_idx][1].requires_grad = False
         class InterfaceModel(torch.nn.Module):
             def __init__(self, nnunet_model):
                 super().__init__()
                 self.nnunet_model = nnunet_model
 
             def forward(self, x):
-                return self.nnunet_model(x)[0], None
+                y_hat = self.nnunet_model(x)
+                if isinstance(y_hat, tuple):
+                    return y_hat[0], None
+                else:
+                    return y_hat, None
 
         model = InterfaceModel(nnunet_model)
 
@@ -430,10 +443,11 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         print(f"Generating fresh '{type(model).__name__}' model.")
         epx = 0
 
-    decoder_modules = filter(lambda elem: 'decoder' in elem[0], model.named_modules())
-    for nmod in decoder_modules:
-        for param in nmod[1].parameters():
-            param.requires_grad = False
+    if encoder_training_only:
+        decoder_modules = filter(lambda elem: 'decoder' in elem[0], model.named_modules())
+        for nmod in decoder_modules:
+            for param in nmod[1].parameters():
+                param.requires_grad = False
 
     print(f"Trainable param count model: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
     print(f"Non-trainable param count model: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}")
@@ -595,6 +609,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
             optimizer.zero_grad()
             y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
             scaler.scale(loss).backward()
+            test_all_parameters_updated(model)
             scaler.step(optimizer)
             scaler.update()
 
@@ -616,9 +631,16 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
             b_seg,
             one_hot_torch_style=False
         )
-
-        label_scores_epoch = get_batch_dice_per_label(label_scores_epoch,
+        label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'dice',
             b_dice, training_dataset.label_tags, exclude_bg=True)
+
+        b_hd = hausdorff3d(b_input, b_seg, spacing_mm=tuple(nifti_zooms), percent=100)
+        label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd',
+            b_hd, training_dataset.label_tags, exclude_bg=True)
+
+        b_hd95 = hausdorff3d(b_input, b_seg, spacing_mm=tuple(nifti_zooms), percent=95)
+        label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd95',
+            b_hd95, training_dataset.label_tags, exclude_bg=True)
 
         if config.debug: break
 
@@ -638,16 +660,16 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
     print(f'losses/{phase}_loss{fold_postfix}', log_val)
 
     log_label_metrics(f"scores/{phase}_mean", fold_postfix, seg_metrics_nanmean, global_idx,
-        logger_selected_metrics=('dice', 'jaccard', 'hd', 'hd95'), print_selected_metrics=('dice'))
+        logger_selected_metrics=('dice', 'hd', 'hd95'), print_selected_metrics=('dice'))
 
     log_label_metrics(f"scores/{phase}_std", fold_postfix, seg_metrics_std, global_idx,
-        logger_selected_metrics=('dice', 'jaccard', 'hd', 'hd95'), print_selected_metrics=())
+        logger_selected_metrics=('dice', 'hd', 'hd95'), print_selected_metrics=())
 
     log_oa_metrics(f"scores/{phase}_mean_oa_exclude_bg", fold_postfix, seg_metrics_nanmean_oa, global_idx,
-        logger_selected_metrics=('dice', 'jaccard', 'hd', 'hd95'), print_selected_metrics=('dice', 'hd', 'hd95'))
+        logger_selected_metrics=('dice', 'hd', 'hd95'), print_selected_metrics=('dice', 'hd', 'hd95'))
 
     log_oa_metrics(f"scores/{phase}_std_oa_exclude_bg", fold_postfix, seg_metrics_std_oa, global_idx,
-        logger_selected_metrics=('dice', 'jaccard', 'hd', 'hd95'), print_selected_metrics=())
+        logger_selected_metrics=('dice', 'hd', 'hd95'), print_selected_metrics=())
     print()
     print()
 
@@ -706,7 +728,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
         (model, optimizer, scheduler, scaler), epx_start = get_model(config, len(training_dataset), len(training_dataset.label_tags),
-            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=chk_path, device=config.device, load_model_only=True)
+            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=chk_path, device=config.device, load_model_only=False, encoder_training_only=config.encoder_training_only)
 
         all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
 
