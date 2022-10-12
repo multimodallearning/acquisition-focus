@@ -62,8 +62,7 @@ test_all_parameters_updated = get_test_func_all_parameters_updated()
 config_dict = DotDict(dict(
     num_folds=0,
     state='train', #
-    # 'fold_override': 0,
-                   # If true use MIND features (https://pubmed.ncbi.nlm.nih.gov/22722056/)
+    fold_override=None, # 0,1,2 ..., None
     epochs=500,
 
     batch_size=4,
@@ -73,7 +72,6 @@ config_dict = DotDict(dict(
 
     dataset='mmwhs',                 # The dataset prepared with our preprocessing scripts
     data_base_path=str(Path(THIS_SCRIPT_DIR, "data/MMWHS")),
-    reg_state=None, # Registered (noisy) labels used in training. See prepare_data() for valid reg_states
     train_set_max_len=None,              # Length to cut of dataloader sample count
     crop_around_3d_label_center=None,#(128,128,128), #(128,128,128),
     crop_3d_region=None, #((0,128), (0,128), (0,128)), # dimension range in which 3D samples are cropped
@@ -96,11 +94,8 @@ config_dict = DotDict(dict(
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
     # checkpoint_path="/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/still-plasma-93_best",                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
-    fold_override=None,                            # Training fold, e.g. 0
 
     do_plot=False,                                 # Generate plots (debugging purpose)
-    save_dp_figures=False,                         # Plot data parameter value distribution
-    save_labels=True,                              # Store training labels alongside data parameter values inside the training snapshot
 
     device='cuda'
 ))
@@ -635,13 +630,14 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
         label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'dice',
             b_dice, training_dataset.label_tags, exclude_bg=True)
 
-        b_hd = hausdorff3d(b_input, b_seg, spacing_mm=tuple(nifti_zooms), percent=100)
-        label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd',
-            b_hd, training_dataset.label_tags, exclude_bg=True)
+        if epx % 20 == 0 and epx > 0:
+            b_hd = hausdorff3d(b_input, b_seg, spacing_mm=tuple(nifti_zooms), percent=100)
+            label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd',
+                b_hd, training_dataset.label_tags, exclude_bg=True)
 
-        b_hd95 = hausdorff3d(b_input, b_seg, spacing_mm=tuple(nifti_zooms), percent=95)
-        label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd95',
-            b_hd95, training_dataset.label_tags, exclude_bg=True)
+            b_hd95 = hausdorff3d(b_input, b_seg, spacing_mm=tuple(nifti_zooms), percent=95)
+            label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd95',
+                b_hd95, training_dataset.label_tags, exclude_bg=True)
 
         if config.debug: break
 
