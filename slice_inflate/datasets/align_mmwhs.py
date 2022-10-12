@@ -161,15 +161,14 @@ def cut_slice(volume):
 
 
 
-def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, is_label):
-    FOV_MM = torch.tensor([300.,300.,300.])
-    FOV_VOX = torch.tensor([196,196,196])
+def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, fov_mm, fov_vox, is_label):
+    fov_mm, fov_vox = torch.tensor(fov_mm), torch.tensor(fov_vox)
 
     # Only grid sample the center slice
-    FOV_MM_SLICE = FOV_MM.clone()
-    FOV_MM_SLICE[-1] /= FOV_VOX[-1]
-    FOV_VOX_SLICE = FOV_VOX.clone()
-    FOV_VOX_SLICE[-1] = 1
+    fov_mm_slice = fov_mm.clone()
+    fov_mm_slice[-1] /= fov_vox[-1]
+    fov_vox_slice = fov_vox.clone()
+    fov_vox_slice[-1] = 1
 
     base_dir = Path(base_dir)
     hla_affine_path = Path(base_dir.parent.parent, "slice_inflate/preprocessing", "mmwhs_1002_HLA_red_slice_to_ras.mat")
@@ -178,13 +177,13 @@ def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, 
     hla_affine = align_affine @ torch.from_numpy(np.loadtxt(hla_affine_path))
     sa_affine =  align_affine @ torch.from_numpy(np.loadtxt(sa_affine_path))
 
-    aligned_sa_volume, aligned_sa_affine = nifti_transform(volume, initial_affine, sa_affine, fov_mm=FOV_MM, fov_vox=FOV_VOX,
+    aligned_sa_volume, aligned_sa_affine = nifti_transform(volume, initial_affine, sa_affine, fov_mm=fov_mm, fov_vox=fov_vox,
         is_label=is_label)
 
     # # Do only retrieve the center slice for HLA view: Be careful. Output volume is ok, but not hla_affine for 1-vox slice
-    # aligned_hla_volume, aligned_hla_affine = nifti_transform(volume, initial_affine, hla_affine, fov_mm=FOV_MM_SLICE, fov_vox=FOV_VOX_SLICE,
+    # aligned_hla_volume, aligned_hla_affine = nifti_transform(volume, initial_affine, hla_affine, fov_mm=fov_mm_slice, fov_vox=fov_vox_slice,
     #     is_label=is_label)
-    aligned_hla_volume, aligned_hla_affine = nifti_transform(volume, initial_affine, hla_affine, fov_mm=FOV_MM, fov_vox=FOV_VOX,
+    aligned_hla_volume, aligned_hla_affine = nifti_transform(volume, initial_affine, hla_affine, fov_mm=fov_mm, fov_vox=fov_vox,
         is_label=is_label)
 
     return dict(

@@ -75,12 +75,14 @@ config_dict = DotDict(dict(
     data_base_path=str(Path(THIS_SCRIPT_DIR, "data/MMWHS")),
     reg_state=None, # Registered (noisy) labels used in training. See prepare_data() for valid reg_states
     train_set_max_len=None,              # Length to cut of dataloader sample count
-    crop_around_3d_label_center= (128,128,128), #(128,128,128),
+    crop_around_3d_label_center=None,#(128,128,128), #(128,128,128),
     crop_3d_region=None, #((0,128), (0,128), (0,128)), # dimension range in which 3D samples are cropped
     crop_2d_slices_gt_num_threshold=0,   # Drop 2D slices if less than threshold pixels are positive
-    crop_around_2d_label_center= (128,128),
+    crop_around_2d_label_center=None,#(128,128),
+    align_fov_mm=(300.,300.,300.),
+    align_fov_vox=(128,128,128),
 
-    lr=1e-2,
+    lr=1e-3,
     use_scheduling=True,
     model_type='ae',
     encoder_training_only=False,
@@ -88,8 +90,8 @@ config_dict = DotDict(dict(
     save_every='best',
     mdl_save_prefix='data/models',
 
-    debug=True,
-    wandb_mode='disabled',                         # e.g. online, disabled. Use weights and biases online logging
+    debug=False,
+    wandb_mode='online',                         # e.g. online, disabled. Use weights and biases online logging
     do_sweep=False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
@@ -113,6 +115,8 @@ def prepare_data(config):
         do_align_global=True,
         do_resample=False, # Prior to cropping, resample image?
         crop_3d_region=None, # Crop or pad the images to these dimensions
+        align_fov_mm=config.align_fov_mm,
+        align_fov_vox=config.align_fov_vox,
         crop_around_3d_label_center=config.crop_around_3d_label_center,
         pre_interpolation_factor=1., # When getting the data, resize the data by this factor
         ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
@@ -270,26 +274,23 @@ class BlendowskiAE(torch.nn.Module):
         self.second_layer_decoder = self.ConvBlock(20, out_channels_list=[8], strides_list=[1])
 
         self.third_layer_encoder = self.ConvBlock(20, out_channels_list=[40,40,40], strides_list=[2,1,1])
-        self.third_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[20], strides_list=[1])
+        self.third_layer_decoder = self.ConvBlock(40, out_channels_list=[20], strides_list=[1])
 
-        # self.fourth_layer_encoder = self.ConvBlock(40, out_channels_list=[60,60,60], strides_list=[2,1,1])
-        # self.fourth_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[40], strides_list=[1])
+        self.fourth_layer_encoder = self.ConvBlock(40, out_channels_list=[60,60,60], strides_list=[2,1,1])
+        self.fourth_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[40], strides_list=[1])
 
-        self.deepest_layer = torch.nn.Sequential(
-            self.ConvBlock(40, out_channels_list=[40,30,20], strides_list=[2,1,1]),
-            torch.nn.Conv3d(20, 2, kernel_size=1, stride=1, padding=0)
-        )
+        self.deepest_layer = self.ConvBlock(60, out_channels_list=[60,20,2], strides_list=[2,1,1])
 
         self.encoder = torch.nn.Sequential(
             self.first_layer_encoder,
             self.second_layer_encoder,
             self.third_layer_encoder,
-            # self.fourth_layer_encoder,
+            self.fourth_layer_encoder,
         )
 
         self.decoder = torch.nn.Sequential(
-            # torch.nn.Upsample(scale_factor=2),
-            # self.fourth_layer_decoder,
+            torch.nn.Upsample(scale_factor=2),
+            self.fourth_layer_decoder,
             torch.nn.Upsample(scale_factor=2),
             self.third_layer_decoder,
             torch.nn.Upsample(scale_factor=2),
