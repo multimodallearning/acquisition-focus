@@ -6,6 +6,8 @@ wandb/**
 data/models
 data/MMWHS/*
 !data/MMWHS/mmwhs_io_normalisation_values.pth
+*.nii.gz
+*.pth
 
 **/.ipynb_checkpoints/**
 **/.DS_Store
