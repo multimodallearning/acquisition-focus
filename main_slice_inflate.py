@@ -83,7 +83,7 @@ config_dict = DotDict(dict(
 
     lr=1e-3,
     use_scheduling=True,
-    model_type='ae', # unet, unet-wo-skip, ae, vae
+    model_type='unet', # unet, unet-wo-skip, ae, vae
     encoder_training_only=False,
 
     save_every='best',
@@ -404,7 +404,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         init_dict_path = Path(THIS_SCRIPT_DIR, "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
         with open(init_dict_path, 'rb') as f:
             init_dict = dill.load(f)
-        init_dict['num_classes'] = 6
+        init_dict['num_classes'] = num_classes
         init_dict['deep_supervision'] = False
         init_dict['final_nonlin'] = torch.nn.Identity()
         use_skip_connections = True if not 'wo-skip' in config.model_type else False
