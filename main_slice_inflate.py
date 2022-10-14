@@ -81,7 +81,7 @@ config_dict = DotDict(dict(
     align_fov_mm=(300.,300.,300.),
     align_fov_vox=(128,128,128),
 
-    lr=1e-2,
+    lr=1e-3,
     use_scheduling=True,
     model_type='ae', # unet, unet-wo-skip, ae, vae
     encoder_training_only=False,
