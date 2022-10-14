@@ -82,7 +82,7 @@ config_dict = DotDict(dict(
 
     lr=1e-3,
     use_scheduling=True,
-    model_type='ae',
+    model_type='unet-wo-skip', # unet, unet-wo-skip, ae, vae
     encoder_training_only=False,
 
     save_every='best',
@@ -399,13 +399,14 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         model = BlendowskiVAE(in_channels=num_classes, out_channels=num_classes)
     elif config.model_type == 'ae':
         model = BlendowskiAE(in_channels=num_classes, out_channels=num_classes)
-    elif config.model_type == 'unet':
+    elif 'unet' in config.model_type:
         init_dict_path = Path(THIS_SCRIPT_DIR, "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
         with open(init_dict_path, 'rb') as f:
             init_dict = dill.load(f)
         init_dict['num_classes'] = 6
         init_dict['deep_supervision'] = False
-        nnunet_model = Generic_UNet(**init_dict, use_skip_connections=False, use_onehot_input=True)
+        use_skip_connections = True if not 'wo-skip' in config.model_type else False
+        nnunet_model = Generic_UNet(**init_dict, use_skip_connections=use_skip_connections, use_onehot_input=True)
 
         seg_outputs = list(filter(lambda elem: 'seg_outputs' in elem[0], nnunet_model.named_parameters()))
         # Disable gradients of non-used deep supervision
@@ -558,7 +559,7 @@ def model_step(config, model, b_input, b_target, label_tags, class_weights, io_n
 
         if config.model_type == 'vae':
             y_hat, (z, mean, std) = model(b_input)
-        elif config.model_type in ['ae', 'unet']:
+        elif config.model_type in ['ae', 'unet', 'unet-wo-skip']:
             y_hat, _ = model(b_input)
         else:
             raise ValueError
