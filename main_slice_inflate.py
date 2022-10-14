@@ -82,7 +82,7 @@ config_dict = DotDict(dict(
 
     lr=1e-3,
     use_scheduling=True,
-    model_type='unet-wo-skip', # unet, unet-wo-skip, ae, vae
+    model_type='unet', # unet, unet-wo-skip, ae, vae
     encoder_training_only=False,
 
     save_every='best',
@@ -549,8 +549,8 @@ def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
     return elbo
 
 def model_step(config, model, b_input, b_target, label_tags, class_weights, io_normalisation_values, autocast_enabled=False):
-    b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
-    b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
+    # b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
+    # b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
 
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
@@ -564,8 +564,8 @@ def model_step(config, model, b_input, b_target, label_tags, class_weights, io_n
         else:
             raise ValueError
         # Reverse normalisation to outputs
-        y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
-        y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
+        # y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
+        # y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
 
         ### Calculate loss ###
         assert y_hat.dim() == 5, \
@@ -606,7 +606,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
             optimizer.zero_grad()
             y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
             scaler.scale(loss).backward()
-            test_all_parameters_updated(model)
+            # test_all_parameters_updated(model)
             scaler.step(optimizer)
             scaler.update()
 
@@ -758,7 +758,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 
             ###  Scheduler management ###
             if config.use_scheduling:
-                scheduler.step(val_loss)
+                scheduler.step(quality_metric)
 
             wandb.log({f'training/scheduler_lr': scheduler.optimizer.param_groups[0]['lr']}, step=global_idx)
             print()
