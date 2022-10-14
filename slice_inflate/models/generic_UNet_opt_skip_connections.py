@@ -21,6 +21,7 @@ import numpy as np
 from nnunet.network_architecture.initialization import InitWeights_He
 from nnunet.network_architecture.neural_network import SegmentationNetwork
 import torch.nn.functional
+from torch.utils.checkpoint import checkpoint_sequential, checkpoint
 
 
 class ConvDropoutNormNonlin(nn.Module):
@@ -139,7 +140,7 @@ class StackedConvLayers(nn.Module):
                            self.nonlin, self.nonlin_kwargs) for _ in range(num_convs - 1)]))
 
     def forward(self, x):
-        return self.blocks(x)
+        return checkpoint(self.blocks, x)
 
 
 def print_module_training_status(module):
