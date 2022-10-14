@@ -21,7 +21,7 @@ from pathlib import Path
 os.environ['MMWHS_CACHE_PATH'] = str(Path('.', '.cache'))
 
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
-os.environ.update(get_vars("*"))
+os.environ.update(get_vars('select_interactively'))
 
 import torch
 import torch.nn as nn
@@ -83,7 +83,7 @@ config_dict = DotDict(dict(
 
     lr=1e-2,
     use_scheduling=True,
-    model_type='unet', # unet, unet-wo-skip, ae, vae
+    model_type='ae', # unet, unet-wo-skip, ae, vae
     encoder_training_only=False,
 
     save_every='best',
@@ -534,8 +534,6 @@ def kl_divergence(z, mean, std):
 
 def get_ae_loss_value(y_hat, y_target, class_weights):
     B, *_ = y_target.shape
-    # y_target = (y_target/y_target.std((-1,-2,-3)).view(B,6,1,1,1))
-    # y_target = (y_target-y_target.mean((-1,-2,-3)).view(B,6,1,1,1))
     return DC_and_CE_loss({}, {})(y_hat, y_target.argmax(1, keepdim=True))
     # return nn.CrossEntropyLoss(class_weights)(y_hat, y_target)
 
