@@ -485,10 +485,11 @@ def get_model_input(batch, config, num_classes):
     b_input = b_input.to(device=config.device)
     b_seg = b_seg.to(device=config.device)
 
+    b_input[b_input > 0] = 1 # Train binary
+    b_seg[b_seg > 0] = 1 # Train binary
     b_input = eo.rearrange(F.one_hot(b_input, num_classes), 'b d h w oh -> b oh d h w')
     b_input = b_input.float()
     b_seg = eo.rearrange(F.one_hot(b_seg, num_classes), 'b d h w oh -> b oh d h w')
-
     return b_input, b_seg
 
 def inference_wrap(model, seg):
@@ -732,13 +733,14 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 
         all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
 
-        for bn_counts in training_dataset.bincounts_3d.values():
-            all_bn_counts += bn_counts
+        # for bn_counts in training_dataset.bincounts_3d.values():
+        #     all_bn_counts += bn_counts
 
-        class_weights = 1 / (all_bn_counts).float().pow(.35)
-        class_weights /= class_weights.mean()
+        # class_weights = 1 / (all_bn_counts).float().pow(.35)
+        # class_weights /= class_weights.mean()
 
-        class_weights = class_weights.to(device=config.device)
+        # class_weights = class_weights.to(device=config.device)
+        class_weights = None
 
         autocast_enabled = 'cuda' in config.device
 
@@ -820,7 +822,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 # print(target_mean.shape, target_std.shape)
 
 # torch.save(dict(input_mean=input_mean, input_std=input_std, target_mean=target_mean, target_std=target_std), "io_normalisation_values.pth")
-
+# sys.exit(0)
 # %%
 # Config overrides
 # config_dict['wandb_mode'] = 'disabled'

@@ -22,17 +22,13 @@ class MMWHSDataset(HybridIdDataset):
     def __init__(self, *args, state='train',
         label_tags=(
             "background",
-            "left_myocardium",
-            "left_atrium",
-            "left_ventricle",
-            "right_atrium",
-            "right_ventricle",
+            "foreground",
             # "ascending_aorta", # This label is currently purged from the data
             # "pulmonary_artery" # This label is currently purged from the data
         ),
         **kwargs):
         self.state = state
-        self.io_normalisation_values = torch.load(Path(args[0], "mmwhs_io_normalisation_values.pth"))
+        self.io_normalisation_values = torch.load(Path(args[0], "mmwhs_io_normalisation_values_binary.pth"))
 
         if kwargs['use_2d_normal_to'] is not None:
             warnings.warn("Static 2D data extraction for this dataset is skipped.")
