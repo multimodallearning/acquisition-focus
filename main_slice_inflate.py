@@ -82,14 +82,14 @@ config_dict = DotDict(dict(
 
     lr=1e-2,
     use_scheduling=True,
-    model_type='ae', # unet, unet-wo-skip, ae, vae
+    model_type='unet', # unet, unet-wo-skip, ae, vae
     encoder_training_only=False,
 
     save_every='best',
     mdl_save_prefix='data/models',
 
-    debug=False,
-    wandb_mode='online',                         # e.g. online, disabled. Use weights and biases online logging
+    debug=True,
+    wandb_mode='disabled',                         # e.g. online, disabled. Use weights and biases online logging
     do_sweep=False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
@@ -405,6 +405,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
             init_dict = dill.load(f)
         init_dict['num_classes'] = 6
         init_dict['deep_supervision'] = False
+        init_dict['final_nonlin'] = torch.nn.Identity()
         use_skip_connections = True if not 'wo-skip' in config.model_type else False
         nnunet_model = Generic_UNet(**init_dict, use_skip_connections=use_skip_connections, use_onehot_input=True)
 
@@ -452,7 +453,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
     scaler = amp.GradScaler()
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=20, verbose=True)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', patience=10, threshold=0.01, threshold_mode='rel')
 
     if _path and _path.is_dir() and not load_model_only:
         print(f"Loading optimizer, scheduler, scaler from {_path}")
@@ -533,7 +535,8 @@ def get_ae_loss_value(y_hat, y_target, class_weights):
     B, *_ = y_target.shape
     # y_target = (y_target/y_target.std((-1,-2,-3)).view(B,6,1,1,1))
     # y_target = (y_target-y_target.mean((-1,-2,-3)).view(B,6,1,1,1))
-    return nn.CrossEntropyLoss(class_weights)(y_hat, y_target)
+    return DC_and_CE_loss({}, {})(y_hat, y_target.argmax(1, keepdim=True))
+    # return nn.CrossEntropyLoss(class_weights)(y_hat, y_target)
 
 
 def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
@@ -549,8 +552,8 @@ def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
     return elbo
 
 def model_step(config, model, b_input, b_target, label_tags, class_weights, io_normalisation_values, autocast_enabled=False):
-    # b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
-    # b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
+    b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
+    b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
 
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
@@ -564,8 +567,8 @@ def model_step(config, model, b_input, b_target, label_tags, class_weights, io_n
         else:
             raise ValueError
         # Reverse normalisation to outputs
-        # y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
-        # y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
+        y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
+        y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
 
         ### Calculate loss ###
         assert y_hat.dim() == 5, \
