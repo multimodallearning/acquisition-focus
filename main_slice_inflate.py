@@ -65,6 +65,7 @@ config_dict = DotDict(dict(
     state='train', #
     fold_override=None, # 0,1,2 ..., None
     epochs=500,
+    test_only_and_output_to="/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/output/worthy-resonance-122_best",
 
     batch_size=4,
     val_batch_size=1,
@@ -83,21 +84,19 @@ config_dict = DotDict(dict(
 
     lr=1e-3,
     use_scheduling=True,
-    model_type='ae', # unet, unet-wo-skip, ae, vae
+    model_type='unet', # unet, unet-wo-skip, ae, vae
     encoder_training_only=False,
 
     save_every='best',
     mdl_save_prefix='data/models',
 
     debug=False,
-    wandb_mode='online',                         # e.g. online, disabled. Use weights and biases online logging
+    wandb_mode='disabled',                         # e.g. online, disabled. Use weights and biases online logging
     do_sweep=False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
-    # checkpoint_path="/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/still-plasma-93_best",                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
-
+    checkpoint_path="/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/worthy-resonance-122_best",                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
     do_plot=False,                                 # Generate plots (debugging purpose)
-
     device='cuda'
 ))
 
@@ -404,7 +403,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         init_dict_path = Path(THIS_SCRIPT_DIR, "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
         with open(init_dict_path, 'rb') as f:
             init_dict = dill.load(f)
-        init_dict['num_classes'] = 6
+        init_dict['num_classes'] = num_classes
         init_dict['deep_supervision'] = False
         init_dict['final_nonlin'] = torch.nn.Identity()
         use_skip_connections = True if not 'wo-skip' in config.model_type else False
@@ -584,7 +583,8 @@ def model_step(config, model, b_input, b_target, label_tags, class_weights, io_n
 
 
 
-def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weights, fold_postfix, phase='train', autocast_enabled=False, optimizer=None, scaler=None):
+def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weights, fold_postfix, phase='train',
+    autocast_enabled=False, optimizer=None, scaler=None, store_net_output_to=None):
     PHASES = ['train', 'val', 'test']
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
 
@@ -642,6 +642,9 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
             label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd95',
                 b_hd95, training_dataset.label_tags, exclude_bg=True)
 
+        if store_net_output_to not in ["", None]:
+            torch.save(y_hat, Path(store_net_output_to, f"output_batch{batch_idx}.pth"))
+
         if config.debug: break
 
     (seg_metrics_nanmean,
@@ -697,6 +700,8 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 
     fold_means_no_bg = []
 
+    run_test_once_only = (config.test_only_and_output_to in ["", None])
+
     for fold_idx, (train_idxs, val_idxs) in fold_iter:
         fold_postfix = f'_fold{fold_idx}' if fold_idx != -1 else ""
 
@@ -732,13 +737,14 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 
         all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
 
-        for bn_counts in training_dataset.bincounts_3d.values():
-            all_bn_counts += bn_counts
+        # for bn_counts in training_dataset.bincounts_3d.values():
+        #     all_bn_counts += bn_counts
 
-        class_weights = 1 / (all_bn_counts).float().pow(.35)
-        class_weights /= class_weights.mean()
+        # class_weights = 1 / (all_bn_counts).float().pow(.35)
+        # class_weights /= class_weights.mean()
 
-        class_weights = class_weights.to(device=config.device)
+        # class_weights = class_weights.to(device=config.device)
+        class_weights = None
 
         autocast_enabled = 'cuda' in config.device
 
@@ -749,14 +755,18 @@ def run_dl(run_name, config, training_dataset, test_dataset):
             print(f"### Log epoch {epx}")
             wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
-            train_loss = epoch_iter(epx, global_idx, config, model, training_dataset, train_dataloader, class_weights, fold_postfix,
-                phase='train', autocast_enabled=autocast_enabled, optimizer=optimizer, scaler=scaler)
+            if not run_test_once_only:
+                train_loss = epoch_iter(epx, global_idx, config, model, training_dataset, train_dataloader, class_weights, fold_postfix,
+                    phase='train', autocast_enabled=autocast_enabled, optimizer=optimizer, scaler=scaler, store_net_output=None)
 
-            val_loss = epoch_iter(epx, global_idx, config, model, training_dataset, val_dataloader, class_weights, fold_postfix,
-                phase='val', autocast_enabled=autocast_enabled, optimizer=None, scaler=None)
+                val_loss = epoch_iter(epx, global_idx, config, model, training_dataset, val_dataloader, class_weights, fold_postfix,
+                    phase='val', autocast_enabled=autocast_enabled, optimizer=None, scaler=None, store_net_output=None)
 
             quality_metric = test_loss = epoch_iter(epx, global_idx, config, model, test_dataset, test_dataloader, class_weights, fold_postfix,
-                phase='test', autocast_enabled=autocast_enabled, optimizer=None, scaler=None)
+                phase='test', autocast_enabled=autocast_enabled, optimizer=None, scaler=None, store_net_output_to=config.test_only_and_output_to)
+
+            if run_test_once_only:
+                break
 
             ###  Scheduler management ###
             if config.use_scheduling:
@@ -800,11 +810,12 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 
             # End of epoch loop
 
-            if config.debug:
+            if config.debug or run_test_once_only:
                 break
 
         # End of fold loop
-
+        if config.debug or run_test_once_only:
+            break
 
 # %%
 # training_dataset.eval()
@@ -820,7 +831,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 # print(target_mean.shape, target_std.shape)
 
 # torch.save(dict(input_mean=input_mean, input_std=input_std, target_mean=target_mean, target_std=target_std), "io_normalisation_values.pth")
-
+# sys.exit(0)
 # %%
 # Config overrides
 # config_dict['wandb_mode'] = 'disabled'
