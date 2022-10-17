@@ -115,9 +115,12 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
             volume.to(dtype=dtype), grid.to(dtype=dtype), align_corners=False, mode='nearest'
         )
     else:
+        min_value = volume.min()
+        volume = volume - min_value
         transformed = torch.nn.functional.grid_sample(
-            volume.to(dtype=dtype), grid.to(dtype=dtype), align_corners=False,
+            volume.to(dtype=dtype), grid.to(dtype=dtype), align_corners=False, padding_mode='zeros'
         )
+        transformed = transformed + min_value
 
     transformed = transformed.view(fov_vox.tolist())
 

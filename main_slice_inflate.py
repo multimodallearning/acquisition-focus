@@ -74,17 +74,17 @@ config_dict = DotDict(dict(
 
     dataset='mmwhs',                 # The dataset prepared with our preprocessing scripts
     data_base_path=str(Path(THIS_SCRIPT_DIR, "data/MMWHS")),
-    train_set_max_len=None,              # Length to cut of dataloader sample count
     crop_around_3d_label_center=None,#(128,128,128), #(128,128,128),
     crop_3d_region=None, #((0,128), (0,128), (0,128)), # dimension range in which 3D samples are cropped
     crop_2d_slices_gt_num_threshold=0,   # Drop 2D slices if less than threshold pixels are positive
     crop_around_2d_label_center=None,#(128,128),
     align_fov_mm=(300.,300.,300.),
     align_fov_vox=(128,128,128),
+    max_load_3d_num=None,
 
     lr=1e-3,
     use_scheduling=True,
-    model_type='unet', # unet, unet-wo-skip, ae, vae
+    model_type='ae', # unet, unet-wo-skip, ae, vae
     encoder_training_only=False,
 
     save_every='best',
@@ -117,6 +117,7 @@ def prepare_data(config):
         ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
         use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
         crop_around_2d_label_center=config.crop_around_2d_label_center,
+        max_load_3d_num=config.max_load_3d_num,
 
         augment_angle_std=5,
 
@@ -128,13 +129,19 @@ def prepare_data(config):
 
 
 # %%
+
+run_test_once_only = not (config_dict.test_only_and_output_to in ["", None])
+
 if training_dataset is None:
-    training_dataset = prepare_data(config_dict)
+    train_config = DotDict(config_dict.copy())
+    if run_test_once_only:
+        train_config['state'] = 'empty'
+    training_dataset = prepare_data(train_config)
 
 if test_dataset is None:
-    test_config = config_dict.copy()
+    test_config = DotDict(config_dict.copy())
     test_config['state'] = 'test'
-    test_dataset = prepare_data(DotDict(test_config))
+    test_dataset = prepare_data(test_config)
 
 # %%
 if False:
@@ -435,8 +442,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     if _path and _path.is_dir():
         model_dict = torch.load(_path.joinpath('model.pth'), map_location=device)
         epx = model_dict.get('metadata', {}).get('epx', 0)
-        model.load_state_dict(model_dict)
         print(f"Loading model from {_path}")
+        print(model.load_state_dict(model_dict, strict=False))
     else:
         print(f"Generating fresh '{type(model).__name__}' model.")
         epx = 0
@@ -643,7 +650,9 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
                 b_hd95, training_dataset.label_tags, exclude_bg=True)
 
         if store_net_output_to not in ["", None]:
-            torch.save(y_hat, Path(store_net_output_to, f"output_batch{batch_idx}.pth"))
+            store_path = Path(store_net_output_to, f"output_batch{batch_idx}.pth")
+            store_path.parent.mkdir(exist_ok=True, parents=True)
+            torch.save(dict(batch=batch, input=b_input, output=y_hat, target=b_seg), store_path)
 
         if config.debug: break
 
@@ -700,8 +709,6 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 
     fold_means_no_bg = []
 
-    run_test_once_only = (config.test_only_and_output_to in ["", None])
-
     for fold_idx, (train_idxs, val_idxs) in fold_iter:
         fold_postfix = f'_fold{fold_idx}' if fold_idx != -1 else ""
 
@@ -717,13 +724,15 @@ def run_dl(run_name, config, training_dataset, test_dataset):
         val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
         test_subsampler = torch.utils.data.SubsetRandomSampler(range(len(test_dataset)))
 
-        train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
-            sampler=train_subsampler, pin_memory=False, drop_last=False
-            # collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
-        )
-        val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
-            sampler=val_subsampler, pin_memory=False, drop_last=False
-        )
+        if not run_test_once_only:
+            train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
+                sampler=train_subsampler, pin_memory=False, drop_last=False
+                # collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
+            )
+            val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
+                sampler=val_subsampler, pin_memory=False, drop_last=False
+            )
+
         test_dataloader = DataLoader(test_dataset, batch_size=config.val_batch_size,
             sampler=test_subsampler, pin_memory=False, drop_last=False
         )

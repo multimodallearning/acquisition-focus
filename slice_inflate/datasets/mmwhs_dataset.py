@@ -114,7 +114,7 @@ class MMWHSDataset(HybridIdDataset):
             is_label=True, augment_affine=augment_affine
         )
 
-        if False:
+        if True:
             align_image_dict = retrieve_augmented_hybrid_aligned(self.base_dir, image, additional_data,
                 self.self_attributes['align_fov_mm'], self.self_attributes['align_fov_vox'],
                 is_label=False, augment_affine=augment_affine
@@ -312,6 +312,8 @@ def load_data(self_attributes: dict):
         elif self.state.lower() == "test":
             data_directory = f"{mod}_test_selection"
 
+        elif self.state.lower() == "empty":
+            data_directory = "nonexisting_dir_4t6yh"
         else:
             raise Exception("Unknown data state. Choose either 'train or 'test'")
 
