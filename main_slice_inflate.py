@@ -65,7 +65,7 @@ config_dict = DotDict(dict(
     state='train', #
     fold_override=None, # 0,1,2 ..., None
     epochs=500,
-    test_only_and_output_to="/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/output/worthy-resonance-122_best",
+    test_only_and_output_to=None, #"/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/output/worthy-resonance-122_best",
 
     batch_size=4,
     val_batch_size=1,
@@ -74,12 +74,12 @@ config_dict = DotDict(dict(
 
     dataset='mmwhs',                 # The dataset prepared with our preprocessing scripts
     data_base_path=str(Path(THIS_SCRIPT_DIR, "data/MMWHS")),
-    crop_around_3d_label_center=None,#(128,128,128), #(128,128,128),
     crop_3d_region=None, #((0,128), (0,128), (0,128)), # dimension range in which 3D samples are cropped
     crop_2d_slices_gt_num_threshold=0,   # Drop 2D slices if less than threshold pixels are positive
-    crop_around_2d_label_center=None,#(128,128),
+    crop_around_3d_label_center=(128,128,128), #(128,128,128),
+    crop_around_2d_label_center=(128,128),
     align_fov_mm=(300.,300.,300.),
-    align_fov_vox=(128,128,128),
+    align_fov_vox=(196,196,196),
     max_load_3d_num=None,
 
     lr=1e-3,
@@ -91,11 +91,11 @@ config_dict = DotDict(dict(
     mdl_save_prefix='data/models',
 
     debug=False,
-    wandb_mode='disabled',                         # e.g. online, disabled. Use weights and biases online logging
+    wandb_mode='online',                         # e.g. online, disabled. Use weights and biases online logging
     do_sweep=False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
-    checkpoint_path="/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/worthy-resonance-122_best",                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
+    checkpoint_path=None, #"/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/worthy-resonance-122_best",                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
     do_plot=False,                                 # Generate plots (debugging purpose)
     device='cuda'
 ))
@@ -766,13 +766,14 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 
             if not run_test_once_only:
                 train_loss = epoch_iter(epx, global_idx, config, model, training_dataset, train_dataloader, class_weights, fold_postfix,
-                    phase='train', autocast_enabled=autocast_enabled, optimizer=optimizer, scaler=scaler, store_net_output=None)
+                    phase='train', autocast_enabled=autocast_enabled, optimizer=optimizer, scaler=scaler, store_net_output_to=None)
 
                 val_loss = epoch_iter(epx, global_idx, config, model, training_dataset, val_dataloader, class_weights, fold_postfix,
-                    phase='val', autocast_enabled=autocast_enabled, optimizer=None, scaler=None, store_net_output=None)
+                    phase='val', autocast_enabled=autocast_enabled, optimizer=None, scaler=None, store_net_output_to=None)
 
             quality_metric = test_loss = epoch_iter(epx, global_idx, config, model, test_dataset, test_dataloader, class_weights, fold_postfix,
                 phase='test', autocast_enabled=autocast_enabled, optimizer=None, scaler=None, store_net_output_to=config.test_only_and_output_to)
+
 
             if run_test_once_only:
                 break
