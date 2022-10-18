@@ -350,8 +350,8 @@ class BlendowskiVAE(BlendowskiAE):
 
     def forward(self, x):
         mean, log_var = self.encode(x)
-        std = torch.exp(log_var/2) + 1e-10
-
+        std = torch.exp(log_var/2)
+        std = std.clamp(min=1e-10, max=0.1)
         z = self.sample_z(mean=mean, std=std)
         return self.decode(z), (z, mean, std)
 
