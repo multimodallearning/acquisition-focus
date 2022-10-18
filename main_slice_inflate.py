@@ -523,7 +523,7 @@ def gaussian_likelihood(y_hat, log_var_scale, y_target):
 
 def kl_divergence(z, mean, std):
     # See https://towardsdatascience.com/variational-autoencoder-demystified-with-pytorch-implementation-3a06bee395ed
-    B,C, *_ = z.shape
+    B,*_ = z.shape
     p = torch.distributions.Normal(torch.zeros_like(mean), torch.ones_like(std))
     q = torch.distributions.Normal(mean, std)
 
@@ -534,8 +534,7 @@ def kl_divergence(z, mean, std):
     kl = (log_qzx - log_pz)
 
     # Reduce spatial dimensions
-    kl = kl.view(-1).mean(-1)
-    return kl
+    return kl.reshape(B,-1)
 
 
 
@@ -546,14 +545,12 @@ def get_ae_loss_value(y_hat, y_target, class_weights):
 
 
 def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
-    # Reconstruction loss
-    # recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, y_target.float()) # TODO Does not work
-    recon_loss = get_ae_loss_value(y_hat, y_target, class_weights)
-    # kl
+    recon_loss = get_ae_loss_value(y_hat, y_target, class_weights)#torch.nn.MSELoss()(y_hat, y_target)#gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
+    # recon_loss = eo.reduce(recon_loss, 'B C spatial -> B ()', 'mean')
+
     kl = kl_divergence(z, mean, std)
 
-    # elbo
-    elbo = kl.mean() + recon_loss
+    elbo = (0.5*kl + recon_loss).mean()
 
     return elbo
 
@@ -583,8 +580,7 @@ def model_step(config, model, b_input, b_target, label_tags, class_weights, io_n
             f"Target shape for loss must be {5}D: BxNUM_CLASSESxSPATIAL but is {b_target.shape}"
 
         if "vae" in type(model).__name__.lower():
-            # loss = get_vae_loss_value(y_hat, b_target.float(), z, mean, std, class_weights, model)
-            loss = get_ae_loss_value(y_hat, b_target.float(), class_weights) # remove that
+            loss = get_vae_loss_value(y_hat, b_target.float(), z, mean, std, class_weights, model)
         else:
             loss = get_ae_loss_value(y_hat, b_target.float(), class_weights)
 
