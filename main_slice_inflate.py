@@ -84,7 +84,7 @@ config_dict = DotDict(dict(
 
     lr=1e-3,
     use_scheduling=True,
-    model_type='ae', # unet, unet-wo-skip, ae, vae
+    model_type='vae', # unet, unet-wo-skip, ae, vae
     encoder_training_only=False,
 
     save_every='best',
@@ -329,38 +329,31 @@ class BlendowskiVAE(BlendowskiAE):
         kwargs['decoder_in_channels'] = 1
         super().__init__(*args, **kwargs)
 
-        self.deepest_layer = nn.ModuleList([
-            torch.nn.Sequential(
-                self.ConvBlock(60, out_channels_list=[60,40,20], strides_list=[2,1,1]),
-                torch.nn.Conv3d(20, 1, kernel_size=1, stride=1, padding=0)
-            ),
-            torch.nn.Sequential(
-                self.ConvBlock(60, out_channels_list=[60,40,20], strides_list=[2,1,1]),
-                torch.nn.Conv3d(20, 1, kernel_size=1, stride=1, padding=0)
-            )
+        self.deepest_layer_upstream = self.ConvBlock(60, out_channels_list=[60,40,20], strides_list=[2,1,1])
+        self.deepest_layer_downstream = nn.ModuleList([
+            torch.nn.Conv3d(20, 1, kernel_size=1, stride=1, padding=0),
+            torch.nn.Conv3d(20, 1, kernel_size=1, stride=1, padding=0)
         ])
 
         self.log_var_scale = nn.Parameter(torch.Tensor([0.0]))
 
     def sample_z(self, mean, std):
-        return torch.normal(mean=mean, std=std)
+        q = torch.distributions.Normal(mean, std)
+        return mean #q.rsample() # Caution, dont use torch.normal(mean=mean, std=std). Gradients are not backpropagated
 
     def encode(self, x):
         h = self.encoder(x)
-        mean = self.deepest_layer[0](h)
-        log_var = self.deepest_layer[1](h)
+        h = self.deepest_layer_upstream(h)
+        mean = self.deepest_layer_downstream[0](h)
+        log_var = self.deepest_layer_downstream[1](h)
         return mean, log_var
 
     def forward(self, x):
         mean, log_var = self.encode(x)
-
-        if self.training:
-            std = torch.exp(log_var/2) + 1e-6
-        else:
-            std = 1e-6 * torch.ones_like(log_var)
+        std = torch.exp(log_var/2) + 1e-10
 
         z = self.sample_z(mean=mean, std=std)
-
+        z = mean # TODO remove
         return self.decode(z), (z, mean, std)
 
 
@@ -470,7 +463,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     scaler = amp.GradScaler()
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', patience=10, threshold=0.01, threshold_mode='rel')
+        optimizer, mode='min', patience=20, threshold=0.01, threshold_mode='rel')
 
     if _path and _path.is_dir() and not load_model_only:
         print(f"Loading optimizer, scheduler, scaler from {_path}")
@@ -591,7 +584,8 @@ def model_step(config, model, b_input, b_target, label_tags, class_weights, io_n
             f"Target shape for loss must be {5}D: BxNUM_CLASSESxSPATIAL but is {b_target.shape}"
 
         if "vae" in type(model).__name__.lower():
-            loss = get_vae_loss_value(y_hat, b_target.float(), z, mean, std, class_weights, model)
+            # loss = get_vae_loss_value(y_hat, b_target.float(), z, mean, std, class_weights, model)
+            loss = get_ae_loss_value(y_hat, b_target.float(), class_weights) # remove that
         else:
             loss = get_ae_loss_value(y_hat, b_target.float(), class_weights)
 
