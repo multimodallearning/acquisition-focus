@@ -281,7 +281,10 @@ class BlendowskiAE(torch.nn.Module):
         self.fourth_layer_encoder = self.ConvBlock(40, out_channels_list=[60,60,60], strides_list=[2,1,1])
         self.fourth_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[40], strides_list=[1])
 
-        self.deepest_layer = self.ConvBlock(60, out_channels_list=[60,20,2], strides_list=[2,1,1])
+        self.deepest_layer = torch.nn.Sequential(
+            self.ConvBlock(60, out_channels_list=[60,40,20], strides_list=[2,1,1]),
+            torch.nn.Conv3d(20, 2, kernel_size=1, stride=1, padding=0)
+        )
 
         self.encoder = torch.nn.Sequential(
             self.first_layer_encoder,
@@ -327,8 +330,14 @@ class BlendowskiVAE(BlendowskiAE):
         super().__init__(*args, **kwargs)
 
         self.deepest_layer = nn.ModuleList([
-            self.ConvBlock(60, out_channels_list=[60,20,20,1], strides_list=[2,1,1,1], kernels_list=[3,3,3,1], paddings_list=[1,1,1,0]),
-            self.ConvBlock(60, out_channels_list=[60,20,20,1], strides_list=[2,1,1,1], kernels_list=[3,3,3,1], paddings_list=[1,1,1,0]),
+            torch.nn.Sequential(
+                self.ConvBlock(60, out_channels_list=[60,40,20], strides_list=[2,1,1]),
+                torch.nn.Conv3d(20, 1, kernel_size=1, stride=1, padding=0)
+            ),
+            torch.nn.Sequential(
+                self.ConvBlock(60, out_channels_list=[60,40,20], strides_list=[2,1,1]),
+                torch.nn.Conv3d(20, 1, kernel_size=1, stride=1, padding=0)
+            )
         ])
 
         self.log_var_scale = nn.Parameter(torch.Tensor([0.0]))
