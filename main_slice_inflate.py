@@ -65,7 +65,7 @@ config_dict = DotDict(dict(
     state='train', #
     fold_override=None, # 0,1,2 ..., None
     epochs=500,
-    test_only_and_output_to="/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/output/worthy-resonance-122_best",
+    test_only_and_output_to=None, #"/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/output/worthy-resonance-122_best",
 
     batch_size=4,
     val_batch_size=1,
@@ -84,18 +84,18 @@ config_dict = DotDict(dict(
 
     lr=1e-3,
     use_scheduling=True,
-    model_type='ae', # unet, unet-wo-skip, ae, vae
+    model_type='vae', # unet, unet-wo-skip, ae, vae
     encoder_training_only=False,
 
     save_every='best',
     mdl_save_prefix='data/models',
 
     debug=False,
-    wandb_mode='disabled',                         # e.g. online, disabled. Use weights and biases online logging
+    wandb_mode='online',                         # e.g. online, disabled. Use weights and biases online logging
     do_sweep=False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
-    checkpoint_path="/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/worthy-resonance-122_best",                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
+    checkpoint_path=None, #"/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/worthy-resonance-122_best",                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
     do_plot=False,                                 # Generate plots (debugging purpose)
     device='cuda'
 ))
@@ -334,7 +334,8 @@ class BlendowskiVAE(BlendowskiAE):
         self.log_var_scale = nn.Parameter(torch.Tensor([0.0]))
 
     def sample_z(self, mean, std):
-        return torch.normal(mean=mean, std=std)
+        q = torch.distributions.Normal(mean, std)
+        return q.rsample() # Caution, dont use torch.normal(mean=mean, std=std). Gradients are not backpropagated
 
     def encode(self, x):
         h = self.encoder(x)
@@ -344,11 +345,7 @@ class BlendowskiVAE(BlendowskiAE):
 
     def forward(self, x):
         mean, log_var = self.encode(x)
-
-        if self.training:
-            std = torch.exp(log_var/2) + 1e-6
-        else:
-            std = 1e-6 * torch.ones_like(log_var)
+        std = torch.exp(log_var/2) + 1e-10
 
         z = self.sample_z(mean=mean, std=std)
 
@@ -507,22 +504,21 @@ def inference_wrap(model, seg):
 
 
 def gaussian_likelihood(y_hat, log_var_scale, y_target):
-    B, C, *_ = y_hat.shape
-    mean = y_hat
+    B,C,*_ = y_hat.shape
     scale = torch.exp(log_var_scale/2)
-    dist = torch.distributions.Normal(mean, scale)
+    dist = torch.distributions.Normal(y_hat, scale)
 
     # measure prob of seeing image under p(x|z)
     log_pxz = dist.log_prob(y_target)
 
     # GLH
-    return log_pxz.reshape(B, C, -1).mean(-1)
+    return log_pxz.reshape(B,C,-1)
 
 
 
 def kl_divergence(z, mean, std):
     # See https://towardsdatascience.com/variational-autoencoder-demystified-with-pytorch-implementation-3a06bee395ed
-    B,C, *_ = z.shape
+    B,*_ = z.shape
     p = torch.distributions.Normal(torch.zeros_like(mean), torch.ones_like(std))
     q = torch.distributions.Normal(mean, std)
 
@@ -533,26 +529,22 @@ def kl_divergence(z, mean, std):
     kl = (log_qzx - log_pz)
 
     # Reduce spatial dimensions
-    kl = kl.view(-1).mean(-1)
-    return kl
+    return kl.reshape(B,-1)
 
 
 
 def get_ae_loss_value(y_hat, y_target, class_weights):
-    B, *_ = y_target.shape
     return DC_and_CE_loss({}, {})(y_hat, y_target.argmax(1, keepdim=True))
-    # return nn.CrossEntropyLoss(class_weights)(y_hat, y_target)
 
 
 def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
-    # Reconstruction loss
-    # recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, y_target.float()) # TODO Does not work
-    recon_loss = get_ae_loss_value(y_hat, y_target, class_weights)
-    # kl
-    kl = kl_divergence(z, mean, std)
+    recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
+    recon_loss = eo.reduce(recon_loss, 'B C spatial -> B ()', 'mean')
 
-    # elbo
-    elbo = kl.mean() + recon_loss
+    kl = kl_divergence(z, mean, std)
+    kl = eo.reduce(kl, 'B latent -> B ()', 'mean')
+
+    elbo = (0*kl - recon_loss).mean()
 
     return elbo
 
@@ -766,10 +758,10 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 
             if not run_test_once_only:
                 train_loss = epoch_iter(epx, global_idx, config, model, training_dataset, train_dataloader, class_weights, fold_postfix,
-                    phase='train', autocast_enabled=autocast_enabled, optimizer=optimizer, scaler=scaler, store_net_output=None)
+                    phase='train', autocast_enabled=autocast_enabled, optimizer=optimizer, scaler=scaler, store_net_output_to=None)
 
                 val_loss = epoch_iter(epx, global_idx, config, model, training_dataset, val_dataloader, class_weights, fold_postfix,
-                    phase='val', autocast_enabled=autocast_enabled, optimizer=None, scaler=None, store_net_output=None)
+                    phase='val', autocast_enabled=autocast_enabled, optimizer=None, scaler=None, store_net_output_to=None)
 
             quality_metric = test_loss = epoch_iter(epx, global_idx, config, model, test_dataset, test_dataloader, class_weights, fold_postfix,
                 phase='test', autocast_enabled=autocast_enabled, optimizer=None, scaler=None, store_net_output_to=config.test_only_and_output_to)
