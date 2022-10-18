@@ -550,7 +550,7 @@ def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
 
     kl = kl_divergence(z, mean, std)
 
-    elbo = (0.5*kl + recon_loss).mean()
+    elbo = (0.1*kl + recon_loss).mean()
 
     return elbo
 
