@@ -336,11 +336,10 @@ class BlendowskiVAE(BlendowskiAE):
         ])
 
         self.log_var_scale = nn.Parameter(torch.Tensor([0.0]))
-        self.final_nonlin = torch.nn.Softmax(dim=1)
 
     def sample_z(self, mean, std):
         q = torch.distributions.Normal(mean, std)
-        return mean #q.rsample() # Caution, dont use torch.normal(mean=mean, std=std). Gradients are not backpropagated
+        return q.rsample() # Caution, dont use torch.normal(mean=mean, std=std). Gradients are not backpropagated
 
     def encode(self, x):
         h = self.encoder(x)
@@ -354,8 +353,7 @@ class BlendowskiVAE(BlendowskiAE):
         std = torch.exp(log_var/2) + 1e-10
 
         z = self.sample_z(mean=mean, std=std)
-        z = mean # TODO remove
-        return self.final_nonlin(self.decode(z))*1.0-0.0, (z, mean, std)
+        return self.decode(z), (z, mean, std)
 
 
 
