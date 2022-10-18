@@ -6,8 +6,7 @@ from pathlib import Path
 
 
 def switch_rows(affine_mat):
-    affine_mat = affine_mat.clone()
-    affine_mat[:3] = affine_mat.detach()[:3].flip(0)
+    affine_mat[:3] = affine_mat[:3].flip(0)
     return affine_mat
 
 
@@ -97,14 +96,14 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
     is_label=False, dtype=torch.float32):
 
     # Prepare volume
-    volume_shape = torch.as_tensor(volume.shape)
+    B,C,D,H,W = volume.shape
+    volume_shape = torch.tensor([D,H,W])
     initial_dtype = volume.dtype
-    volume = volume.view([1,1]+volume_shape.tolist())
 
     # Get the affine for torch grid resampling from RAS space
     grid_affine = get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape, fov_mm)
 
-    target_shape = torch.Size([1, 1] + fov_vox.tolist())
+    target_shape = torch.Size([B,C] + fov_vox.tolist())
 
     grid = torch.nn.functional.affine_grid(
         grid_affine[:3,:].view(1,3,4), target_shape, align_corners=False
@@ -122,36 +121,36 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
         )
         transformed = transformed + min_value
 
-    transformed = transformed.view(fov_vox.tolist())
+    transformed = transformed.view(target_shape)
 
     # Rebuild affine
     transformed_affine = get_transformed_affine_from_grid_affine(grid_affine,
         volume_affine, ras_affine_mat, volume_shape, fov_mm, fov_vox)
 
-    return transformed.to(dtype=initial_dtype), transformed_affine
+    return transformed, transformed_affine
 
 
 
 def crop_around_label_center(image, label, vox_size):
-    n_dims = label.dim()
+    spatial_dims = label.dim()-2
     vox_size = vox_size.to(device=label.device)
     sp_label = label.long().to_sparse()
-    sp_idxs = sp_label._indices()
+    sp_idxs = sp_label._indices()[-spatial_dims:]
     lbl_shape = torch.as_tensor(label.shape)
     label_center = sp_idxs.float().mean(dim=1).int()
     bbox_max = label_center+(vox_size/2).int()
     bbox_min = label_center-((vox_size+1)/2).int()
 
-    crop_slcs = []
-    for dim_idx in range(n_dims):
-        # Check bounds of crop and correct
+    crop_slcs = [slice(None), slice(None)] # Select all for B,C dimension
+    for dim_idx in range(spatial_dims):
+        # Check bounds of crop and correct for every spatial dim (not B,C)
         if bbox_min[dim_idx] < 0:
             bbox_min[dim_idx] = 0
             bbox_max[dim_idx] = 0 + vox_size[dim_idx]
 
-        elif bbox_max[dim_idx] > lbl_shape[dim_idx]:
-            bbox_min[dim_idx] = lbl_shape[dim_idx] - vox_size[dim_idx]
-            bbox_max[dim_idx] = lbl_shape[dim_idx]
+        elif bbox_max[dim_idx] > lbl_shape[2+dim_idx]:
+            bbox_min[dim_idx] = lbl_shape[2+dim_idx] - vox_size[dim_idx]
+            bbox_max[dim_idx] = lbl_shape[2+dim_idx]
 
         crop_slcs.append(slice(bbox_min[dim_idx], bbox_max[dim_idx]))
 
@@ -164,7 +163,7 @@ def cut_slice(volume):
 
 
 
-def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, fov_mm, fov_vox, is_label):
+def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, sa_align_affine, hla_align_affine, fov_mm, fov_vox, is_label):
     fov_mm, fov_vox = torch.tensor(fov_mm), torch.tensor(fov_vox)
 
     # Only grid sample the center slice
@@ -177,8 +176,8 @@ def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, 
     hla_affine_path = Path(base_dir.parent.parent, "slice_inflate/preprocessing", "mmwhs_1002_HLA_red_slice_to_ras.mat")
     sa_affine_path =  Path(base_dir.parent.parent, "slice_inflate/preprocessing", "mmwhs_1002_SA_yellow_slice_to_ras.mat")
 
-    hla_affine = align_affine @ torch.from_numpy(np.loadtxt(hla_affine_path))
-    sa_affine =  align_affine @ torch.from_numpy(np.loadtxt(sa_affine_path))
+    hla_affine = hla_align_affine @ torch.from_numpy(np.loadtxt(hla_affine_path))
+    sa_affine =  sa_align_affine @ torch.from_numpy(np.loadtxt(sa_affine_path))
 
     aligned_sa_volume, aligned_sa_affine = nifti_transform(volume, initial_affine, sa_affine, fov_mm=fov_mm, fov_vox=fov_vox,
         is_label=is_label)

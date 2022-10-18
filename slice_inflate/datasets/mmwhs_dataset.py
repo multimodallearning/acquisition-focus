@@ -10,6 +10,7 @@ from tqdm import tqdm
 from pathlib import Path
 from joblib import Memory
 import numpy as np
+import einops as eo
 
 from slice_inflate.utils.common_utils import DotDict
 from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, get_rotation_matrix_3d_from_angles
@@ -37,6 +38,23 @@ class MMWHSDataset(HybridIdDataset):
         if kwargs['use_2d_normal_to'] is not None:
             warnings.warn("Static 2D data extraction for this dataset is skipped.")
             kwargs['use_2d_normal_to'] = None
+
+        class AffineTransformModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+
+                self.theta = torch.nn.Parameter(torch.eye(4).view(1,4,4))
+
+            def get_batch_affine(self, batch_size):
+                return self.theta.repeat(batch_size,1,1)
+
+            def forward(self, x):
+                B = x.shape[0]
+                grid = torch.nn.functional.affine_grid(self.get_batch_affine(B)[:,:3,:], x.shape, align_corners=False)
+                return torch.nn.functional.grid_sample(x, grid, align_corners=False)
+
+        self.sa_atm = AffineTransformModule().to(kwargs['device'])
+        self.hla_atm = AffineTransformModule().to(kwargs['device'])
 
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
 
@@ -84,7 +102,7 @@ class MMWHSDataset(HybridIdDataset):
             image_path = self.img_paths[_id]
             label_path = self.label_paths.get(_id, [])
 
-            additional_data = self.additional_data_3d.get(_id, [])
+            additional_data = [self.additional_data_3d.get(_id, [])]
 
         if self.use_modified:
             if use_2d:
@@ -102,22 +120,59 @@ class MMWHSDataset(HybridIdDataset):
 
         augment_affine = None
 
-        if self.do_augment and not self.augment_at_collate:
-            augment_angle_std = self.self_attributes['augment_angle_std']
-            deg_angles = torch.normal(mean=0, std=augment_angle_std*torch.ones(3))
-            augment_affine = torch.eye(4)
-            augment_affine[:3,:3] = get_rotation_matrix_3d_from_angles(deg_angles)
+        if self.augment_at_collate:
+            ((sa_image, sa_label),
+             (sa_image_slc, sa_label_slc),
+             (hla_image_slc, hla_label_slc)) = (image, label), (torch.tensor([]), torch.tensor([])), (torch.tensor([]), torch.tensor([]))
+            sa_affine = torch.tensor([])
+            hla_affine = torch.tensor([])
 
+        else:
+            if self.do_augment:
+                augment_angle_std = self.self_attributes['augment_angle_std']
+                deg_angles = torch.normal(mean=0, std=augment_angle_std*torch.ones(3))
+                augment_affine = torch.eye(4)
+                augment_affine[:3,:3] = get_rotation_matrix_3d_from_angles(deg_angles)
+            else:
+                augment_affine = None
 
-        align_label_dict = retrieve_augmented_hybrid_aligned(self.base_dir, label, additional_data,
-            self.self_attributes['align_fov_mm'], self.self_attributes['align_fov_vox'],
-            is_label=True, augment_affine=augment_affine
+            ((sa_image, sa_label),
+             (sa_image_slc, sa_label_slc),
+             (hla_image_slc, hla_label_slc),
+             (sa_affine, hla_affine)) = self.get_transformed(image.unsqueeze(0).unsqueeze(0), label.unsqueeze(0), additional_data, augment_affine, augment_affine,
+                do_transform_images=False)
+
+        return dict(
+            dataset_idx=dataset_idx,
+            id=_id,
+            image_path=image_path,
+            label_path=label_path,
+
+            image=sa_image.cpu(),
+            sa_image_slc=sa_image_slc.cpu(),
+            hla_image_slc=hla_image_slc.cpu(),
+
+            label=sa_label.cpu(),
+            sa_label_slc=sa_label_slc.cpu(),
+            hla_label_slc=hla_label_slc.cpu(),
+
+            sa_affine=sa_affine,
+            hla_affine=hla_affine,
+
+            additional_data=additional_data
         )
 
-        if True:
+    def get_transformed(self, image, label, additional_data, sa_augment_affine, hla_augment_affine, do_transform_images=False):
+        label = eo.rearrange(F.one_hot(label, len(self.label_tags)), 'b d h w oh -> b oh d h w')
+        align_label_dict = retrieve_augmented_hybrid_aligned(self.base_dir, label, additional_data,
+            self.self_attributes['align_fov_mm'], self.self_attributes['align_fov_vox'],
+            is_label=True, sa_augment_affine=sa_augment_affine, hla_augment_affine=hla_augment_affine
+        )
+
+        if do_transform_images:
             align_image_dict = retrieve_augmented_hybrid_aligned(self.base_dir, image, additional_data,
                 self.self_attributes['align_fov_mm'], self.self_attributes['align_fov_vox'],
-                is_label=False, augment_affine=augment_affine
+                is_label=False, sa_augment_affine=sa_augment_affine, hla_augment_affine=hla_augment_affine
             )
         else:
             align_image_dict = dict(
@@ -141,36 +196,82 @@ class MMWHSDataset(HybridIdDataset):
             sa_image_slc, sa_label_slc = crop_around_label_center(sa_image_slc, sa_label_slc, _2d_vox_size)
             hla_image_slc, hla_label_slc = crop_around_label_center(hla_image_slc, hla_label_slc, _2d_vox_size)
 
-        return dict(
-            dataset_idx=dataset_idx,
-            id=_id,
-            image_path=image_path,
-            label_path=label_path,
+        return (sa_image, sa_label), (sa_image_slc, sa_label_slc), (hla_image_slc, hla_label_slc), (align_label_dict['aligned_sa_affine'], align_label_dict['aligned_hla_affine'])
 
-            image=sa_image.cpu(),
-            sa_image_slc=sa_image_slc.cpu(),
-            hla_image_slc=hla_image_slc.cpu(),
+    def get_efficient_augmentation_collate_fn(self):
 
-            label=sa_label.cpu(),
-            sa_label_slc=sa_label_slc.cpu(),
-            hla_label_slc=hla_label_slc.cpu(),
+        def collate_closure(batch):
+            batch = torch.utils.data._utils.collate.default_collate(batch)
+            if self.augment_at_collate:
+                B = batch['dataset_idx'].shape[0]
+                sa_augment_affine = self.sa_atm.get_batch_affine(B)
+                hla_augment_affine = self.hla_atm.get_batch_affine(B)
 
-            sa_affine=align_label_dict['aligned_sa_affine'],
-            hla_affine=align_label_dict['aligned_hla_affine'],
+                image = batch['image']
+                label = batch['label']
+                additional_data = batch['additional_data']
 
-            additional_data=additional_data
-        )
+                all_sa_images = []
+                all_sa_labels = []
+                all_sa_image_slcs = []
+                all_sa_label_slcs = []
+                all_hla_image_slcs = []
+                all_hla_label_slcs = []
+                all_sa_affines = []
+                all_hla_affines = []
+
+                for batch_idx in range(B):
+                    ((sa_image, sa_label),
+                     (sa_image_slc, sa_label_slc),
+                     (hla_image_slc, hla_label_slc),
+                     (sa_affine, hla_affine)) = self.get_transformed(
+                        batch['image'][batch_idx].unsqueeze(0).cuda(), batch['label'][batch_idx].unsqueeze(0).cuda(), batch['additional_data'][batch_idx],
+                        sa_augment_affine.squeeze(0), hla_augment_affine.squeeze(0), do_transform_images=False)
+
+                    all_sa_images.append(sa_image)
+                    all_sa_labels.append(sa_label)
+                    all_sa_image_slcs.append(sa_image_slc)
+                    all_sa_label_slcs.append(sa_label_slc)
+                    all_hla_image_slcs.append(hla_image_slc)
+                    all_hla_label_slcs.append(hla_image_slc)
+                    all_sa_affines.append(sa_affine)
+                    all_hla_affines.append(hla_affine)
+
+                batch.update(dict(
+                    image=torch.cat(all_sa_images, dim=0),
+                    label=torch.cat(all_sa_labels, dim=0),
+
+                    sa_image_slc=torch.cat(all_sa_image_slcs, dim=0),
+                    sa_label_slc=torch.cat(all_sa_label_slcs, dim=0),
+
+                    hla_image_slc=torch.cat(all_hla_image_slcs, dim=0),
+                    hla_label_slc=torch.cat(all_hla_label_slcs, dim=0),
+
+                    sa_affine=torch.stack(all_sa_affines),
+                    hla_affine=torch.stack(all_hla_affines)
+                ))
+
+            return batch
+
+        return collate_closure
 
 
+def retrieve_augmented_hybrid_aligned(base_dir, volume, additional_data, align_fov_mm, align_fov_vox, is_label, sa_augment_affine=None, hla_augment_affine=None, device='cpu'):
+    additional_data = additional_data[0] if isinstance(additional_data, list) else additional_data
+    initial_affine = additional_data['initial_affine'].squeeze().to(device=device)
+    align_affine = additional_data['align_affine'].squeeze().to(dtype=initial_affine.dtype, device=device)
 
-def retrieve_augmented_hybrid_aligned(base_dir, volume, additional_data, align_fov_mm, align_fov_vox, is_label, augment_affine=None):
-    initial_affine = additional_data['initial_affine']
-    align_affine = additional_data['align_affine'].to(dtype=initial_affine.dtype)
+    if sa_augment_affine is not None:
+        sa_align_affine = align_affine @ sa_augment_affine.to(dtype=initial_affine.dtype, device=device)
+    else:
+        sa_align_affine = align_affine
 
-    if augment_affine is not None:
-        align_affine = align_affine @ augment_affine.to(dtype=initial_affine.dtype)
+    if hla_augment_affine is not None:
+        hla_align_affine = align_affine @ hla_augment_affine.to(dtype=initial_affine.dtype, device=device)
+    else:
+        hla_align_affine = align_affine
 
-    align_dict = align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine,
+    align_dict = align_to_sa_hla_from_volume(base_dir, volume, initial_affine, sa_align_affine, hla_align_affine,
         align_fov_mm, align_fov_vox, is_label)
     aligned_sa_volume, aligned_hla_volume = align_dict['aligned_sa_volume'], align_dict['aligned_hla_volume']
 

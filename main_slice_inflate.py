@@ -84,7 +84,7 @@ config_dict = DotDict(dict(
 
     lr=1e-3,
     use_scheduling=True,
-    model_type='ae', # unet, unet-wo-skip, ae, vae
+    model_type='vae', # unet, unet-wo-skip, ae, vae
     encoder_training_only=False,
 
     save_every='best',
@@ -457,7 +457,9 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     print(f"Trainable param count model: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
     print(f"Non-trainable param count model: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}")
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+    optimizer = torch.optim.AdamW(
+        list(model.parameters()) + list(training_dataset.sa_atm.parameters()) + list(training_dataset.hla_atm.parameters()),
+        lr=config.lr)
     scaler = amp.GradScaler()
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -483,17 +485,13 @@ def get_model_input(batch, config, num_classes):
     W_TARGET_LEN = 128
     b_hla_slc_seg = batch['hla_label_slc']
     b_sa_slc_seg = batch['sa_label_slc']
-    b_input = torch.cat([b_hla_slc_seg.unsqueeze(1), b_sa_slc_seg.unsqueeze(1)], dim=1)
-    b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[1]), dim=1) # Stack data hla/sa next to each other
+    b_input = torch.stack([b_hla_slc_seg, b_sa_slc_seg], dim=2)
+    b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[2]), dim=2) # Stack data hla/sa next to each other
 
     b_seg = batch['label']
 
     b_input = b_input.to(device=config.device)
     b_seg = b_seg.to(device=config.device)
-
-    b_input = eo.rearrange(F.one_hot(b_input, num_classes), 'b d h w oh -> b oh d h w')
-    b_input = b_input.float()
-    b_seg = eo.rearrange(F.one_hot(b_seg, num_classes), 'b d h w oh -> b oh d h w')
 
     return b_input, b_seg
 
@@ -546,8 +544,8 @@ def get_ae_loss_value(y_hat, y_target, class_weights):
 
 def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
     # Reconstruction loss
-    # recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, y_target.float()) # TODO Does not work
-    recon_loss = get_ae_loss_value(y_hat, y_target, class_weights)
+    recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
+    # recon_loss = get_ae_loss_value(y_hat, y_target, class_weights)
     # kl
     kl = kl_divergence(z, mean, std)
 
@@ -628,7 +626,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
         pred_seg = y_hat.argmax(1)
 
         # Taken from nibabel nifti1.py
-        RZS = batch['sa_affine'][0][:3,:3].numpy()
+        RZS = batch['sa_affine'][0][:3,:3].detach().numpy()
         nifti_zooms = np.sqrt(np.sum(RZS * RZS, axis=0))
 
         # Calculate fast dice score
@@ -726,9 +724,11 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 
         if not run_test_once_only:
             train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
-                sampler=train_subsampler, pin_memory=False, drop_last=False
-                # collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
+                sampler=train_subsampler, pin_memory=False, drop_last=False,
+                collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
             )
+            training_dataset.set_augment_at_collate(True)
+
             val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
                 sampler=val_subsampler, pin_memory=False, drop_last=False
             )
