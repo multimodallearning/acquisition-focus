@@ -336,6 +336,7 @@ class BlendowskiVAE(BlendowskiAE):
         ])
 
         self.log_var_scale = nn.Parameter(torch.Tensor([0.0]))
+        self.std_max = 0.1
 
     def sample_z(self, mean, std):
         q = torch.distributions.Normal(mean, std)
@@ -351,7 +352,7 @@ class BlendowskiVAE(BlendowskiAE):
     def forward(self, x):
         mean, log_var = self.encode(x)
         std = torch.exp(log_var/2)
-        std = std.clamp(min=1e-10, max=0.1)
+        std = std.clamp(min=1e-10, max=self.std_max)
         z = self.sample_z(mean=mean, std=std)
         return self.decode(z), (z, mean, std)
 
@@ -517,7 +518,7 @@ def gaussian_likelihood(y_hat, log_var_scale, y_target):
     log_pxz = dist.log_prob(y_target)
 
     # GLH
-    return log_pxz.reshape(B, C, -1).mean(-1)
+    return log_pxz
 
 
 
@@ -534,7 +535,7 @@ def kl_divergence(z, mean, std):
     kl = (log_qzx - log_pz)
 
     # Reduce spatial dimensions
-    return kl.reshape(B,-1)
+    return kl.view(B,-1)
 
 
 
@@ -545,12 +546,15 @@ def get_ae_loss_value(y_hat, y_target, class_weights):
 
 
 def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
-    recon_loss = get_ae_loss_value(y_hat, y_target, class_weights)#torch.nn.MSELoss()(y_hat, y_target)#gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
-    # recon_loss = eo.reduce(recon_loss, 'B C spatial -> B ()', 'mean')
+    # recon_loss = get_ae_loss_value(y_hat, y_target, class_weights)
+    # recon_loss = torch.nn.MSELoss()(y_hat, y_target)
+    recon_loss = -gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
+    recon_loss = eo.reduce(recon_loss, 'B C D H W -> ()', 'mean')
 
     kl = kl_divergence(z, mean, std)
+    kl = eo.reduce(kl, 'B latent -> ()', 'mean')
 
-    elbo = (0.1*kl + recon_loss).mean()
+    elbo = 0.1*kl + recon_loss
 
     return elbo
 
