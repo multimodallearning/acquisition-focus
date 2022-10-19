@@ -559,8 +559,8 @@ def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
     return elbo
 
 def model_step(config, model, b_input, b_target, label_tags, class_weights, io_normalisation_values, autocast_enabled=False):
-    # b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
-    # b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
+    b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
+    b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
 
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
@@ -574,8 +574,8 @@ def model_step(config, model, b_input, b_target, label_tags, class_weights, io_n
         else:
             raise ValueError
         # Reverse normalisation to outputs
-        # y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
-        # y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
+        y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
+        y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
 
         ### Calculate loss ###
         assert y_hat.dim() == 5, \
