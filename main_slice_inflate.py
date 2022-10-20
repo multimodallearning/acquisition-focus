@@ -325,7 +325,7 @@ class BlendowskiAE(torch.nn.Module):
 
 
 class BlendowskiVAE(BlendowskiAE):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, std_max=10.0, epoch=0, epoch_reach_std_max=250, *args, **kwargs):
         kwargs['decoder_in_channels'] = 1
         super().__init__(*args, **kwargs)
 
@@ -336,7 +336,18 @@ class BlendowskiVAE(BlendowskiAE):
         ])
 
         self.log_var_scale = nn.Parameter(torch.Tensor([0.0]))
-        self.std_max = 0.1
+        self.epoch = epoch
+        self.epoch_reach_std_max = epoch_reach_std_max
+        self.std_max = std_max
+
+    def set_epoch(self, epoch):
+        self.epoch = epoch
+
+    def get_std_max(self):
+        SIGMOID_XMIN, SIGMOID_XMAX = -8.0, 8.0
+        s_x = (SIGMOID_XMAX-SIGMOID_XMIN) / (self.epoch_reach_std_max - 0) * self.epoch + SIGMOID_XMIN
+        std_max = torch.sigmoid(torch.tensor(s_x)) * self.std_max
+        return std_max
 
     def sample_z(self, mean, std):
         q = torch.distributions.Normal(mean, std)
@@ -352,7 +363,7 @@ class BlendowskiVAE(BlendowskiAE):
     def forward(self, x):
         mean, log_var = self.encode(x)
         std = torch.exp(log_var/2)
-        std = std.clamp(min=1e-10, max=self.std_max)
+        std = std.clamp(min=1e-10, max=self.get_std_max())
         z = self.sample_z(mean=mean, std=std)
         return self.decode(z), (z, mean, std)
 
@@ -405,7 +416,9 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
     if config.model_type == 'vae':
-        model = BlendowskiVAE(in_channels=num_classes, out_channels=num_classes)
+        model = BlendowskiVAE(std_max=10.0, epoch=0, epoch_reach_std_max=250,
+            in_channels=num_classes, out_channels=num_classes)
+
     elif config.model_type == 'ae':
         model = BlendowskiAE(in_channels=num_classes, out_channels=num_classes)
     elif 'unet' in config.model_type:
@@ -607,6 +620,9 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
     else:
         model.eval()
         dataset.eval()
+
+    if isinstance(model, BlendowskiVAE):
+        model.set_epoch(epx)
 
     for batch_idx, batch in tqdm(enumerate(dataloader), desc=phase, total=len(dataloader)):
         b_input, b_seg = get_model_input(batch, config, len(dataset.label_tags))
