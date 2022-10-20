@@ -74,12 +74,12 @@ config_dict = DotDict(dict(
 
     dataset='mmwhs',                 # The dataset prepared with our preprocessing scripts
     data_base_path=str(Path(THIS_SCRIPT_DIR, "data/MMWHS")),
-    crop_around_3d_label_center=None,#(128,128,128), #(128,128,128),
     crop_3d_region=None, #((0,128), (0,128), (0,128)), # dimension range in which 3D samples are cropped
     crop_2d_slices_gt_num_threshold=0,   # Drop 2D slices if less than threshold pixels are positive
-    crop_around_2d_label_center=None,#(128,128),
+    crop_around_3d_label_center=(128,128,128), #(128,128,128),
+    crop_around_2d_label_center=(128,128),
     align_fov_mm=(300.,300.,300.),
-    align_fov_vox=(128,128,128),
+    align_fov_vox=(196,196,196),
     max_load_3d_num=None,
 
     lr=1e-3,
@@ -281,7 +281,10 @@ class BlendowskiAE(torch.nn.Module):
         self.fourth_layer_encoder = self.ConvBlock(40, out_channels_list=[60,60,60], strides_list=[2,1,1])
         self.fourth_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[40], strides_list=[1])
 
-        self.deepest_layer = self.ConvBlock(60, out_channels_list=[60,20,2], strides_list=[2,1,1])
+        self.deepest_layer = torch.nn.Sequential(
+            self.ConvBlock(60, out_channels_list=[60,40,20], strides_list=[2,1,1]),
+            torch.nn.Conv3d(20, 2, kernel_size=1, stride=1, padding=0)
+        )
 
         self.encoder = torch.nn.Sequential(
             self.first_layer_encoder,
@@ -326,12 +329,14 @@ class BlendowskiVAE(BlendowskiAE):
         kwargs['decoder_in_channels'] = 1
         super().__init__(*args, **kwargs)
 
-        self.deepest_layer = nn.ModuleList([
-            self.ConvBlock(60, out_channels_list=[60,20,20,1], strides_list=[2,1,1,1], kernels_list=[3,3,3,1], paddings_list=[1,1,1,0]),
-            self.ConvBlock(60, out_channels_list=[60,20,20,1], strides_list=[2,1,1,1], kernels_list=[3,3,3,1], paddings_list=[1,1,1,0]),
+        self.deepest_layer_upstream = self.ConvBlock(60, out_channels_list=[60,40,20], strides_list=[2,1,1])
+        self.deepest_layer_downstream = nn.ModuleList([
+            torch.nn.Conv3d(20, 1, kernel_size=1, stride=1, padding=0),
+            torch.nn.Conv3d(20, 1, kernel_size=1, stride=1, padding=0)
         ])
 
         self.log_var_scale = nn.Parameter(torch.Tensor([0.0]))
+        self.std_max = 0.1
 
     def sample_z(self, mean, std):
         q = torch.distributions.Normal(mean, std)
@@ -339,16 +344,16 @@ class BlendowskiVAE(BlendowskiAE):
 
     def encode(self, x):
         h = self.encoder(x)
-        mean = self.deepest_layer[0](h)
-        log_var = self.deepest_layer[1](h)
+        h = self.deepest_layer_upstream(h)
+        mean = self.deepest_layer_downstream[0](h)
+        log_var = self.deepest_layer_downstream[1](h)
         return mean, log_var
 
     def forward(self, x):
         mean, log_var = self.encode(x)
-        std = torch.exp(log_var/2) + 1e-10
-
+        std = torch.exp(log_var/2)
+        std = std.clamp(min=1e-10, max=self.std_max)
         z = self.sample_z(mean=mean, std=std)
-
         return self.decode(z), (z, mean, std)
 
 
@@ -458,7 +463,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     scaler = amp.GradScaler()
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', patience=10, threshold=0.01, threshold_mode='rel')
+        optimizer, mode='min', patience=20, threshold=0.01, threshold_mode='rel')
 
     if _path and _path.is_dir() and not load_model_only:
         print(f"Loading optimizer, scheduler, scaler from {_path}")
@@ -512,7 +517,7 @@ def gaussian_likelihood(y_hat, log_var_scale, y_target):
     log_pxz = dist.log_prob(y_target)
 
     # GLH
-    return log_pxz.reshape(B,C,-1)
+    return log_pxz
 
 
 
@@ -538,13 +543,15 @@ def get_ae_loss_value(y_hat, y_target, class_weights):
 
 
 def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
-    recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
-    recon_loss = eo.reduce(recon_loss, 'B C spatial -> B ()', 'mean')
+    # recon_loss = get_ae_loss_value(y_hat, y_target, class_weights)
+    # recon_loss = torch.nn.MSELoss()(y_hat, y_target)
+    recon_loss = -gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
+    recon_loss = eo.reduce(recon_loss, 'B C D H W -> ()', 'mean')
 
     kl = kl_divergence(z, mean, std)
-    kl = eo.reduce(kl, 'B latent -> B ()', 'mean')
+    kl = eo.reduce(kl, 'B latent -> ()', 'mean')
 
-    elbo = (0*kl - recon_loss).mean()
+    elbo = 0.0*kl + recon_loss
 
     return elbo
 
@@ -765,6 +772,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 
             quality_metric = test_loss = epoch_iter(epx, global_idx, config, model, test_dataset, test_dataloader, class_weights, fold_postfix,
                 phase='test', autocast_enabled=autocast_enabled, optimizer=None, scaler=None, store_net_output_to=config.test_only_and_output_to)
+
 
             if run_test_once_only:
                 break
