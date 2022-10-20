@@ -556,21 +556,17 @@ def get_ae_loss_value(y_hat, y_target, class_weights):
 
 
 def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
-    # recon_loss = get_ae_loss_value(y_hat, y_target, class_weights)
-    # recon_loss = torch.nn.MSELoss()(y_hat, y_target)
-    recon_loss = -gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
-    recon_loss = eo.reduce(recon_loss, 'B C D H W -> ()', 'mean')
-
+    recon_loss = get_ae_loss_value(y_hat, y_target, class_weights)#torch.nn.MSELoss()(y_hat, y_target)#gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
+    # recon_loss = eo.reduce(recon_loss, 'B C spatial -> B ()', 'mean')
     kl = kl_divergence(z, mean, std)
-    kl = eo.reduce(kl, 'B latent -> ()', 'mean')
 
-    elbo = 0.0*kl + recon_loss
+    elbo = (0.1*kl + recon_loss).mean()
 
     return elbo
 
 def model_step(config, model, b_input, b_target, label_tags, class_weights, io_normalisation_values, autocast_enabled=False):
-    b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
-    b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
+    # b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
+    # b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
 
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
@@ -584,8 +580,8 @@ def model_step(config, model, b_input, b_target, label_tags, class_weights, io_n
         else:
             raise ValueError
         # Reverse normalisation to outputs
-        y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
-        y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
+        # y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
+        # y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
 
         ### Calculate loss ###
         assert y_hat.dim() == 5, \
