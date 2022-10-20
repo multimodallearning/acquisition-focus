@@ -3,7 +3,7 @@
     "state": "train",
     "fold_override": null,
     "epochs": 500,
-    "test_only_and_output_to": "/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/worthy-resonance-122_best",
+    "test_only_and_output_to": "./dummyoutput",
     "batch_size": 4,
     "val_batch_size": 1,
     "modality": "all",
@@ -21,12 +21,12 @@
         128,
         128
     ],
-    "align_fov_mm": [
+    "fov_mm": [
         300.0,
         300.0,
         300.0
     ],
-    "align_fov_vox": [
+    "fov_vox": [
         196,
         196,
         196
@@ -39,9 +39,9 @@
     "save_every": "best",
     "mdl_save_prefix": "data/models",
     "debug": true,
-    "wandb_mode": "online",
+    "wandb_mode": "disabled",
     "do_sweep": false,
-    "checkpoint_path": "/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/worthy-resonance-122_best",
+    "checkpoint_path": "/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/glorious-eon-142_best",
     "do_plot": false,
     "device": "cuda"
 }

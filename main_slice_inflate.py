@@ -74,8 +74,8 @@ def prepare_data(config):
         do_align_global=True,
         do_resample=False, # Prior to cropping, resample image?
         crop_3d_region=None, # Crop or pad the images to these dimensions
-        align_fov_mm=config.align_fov_mm,
-        align_fov_vox=config.align_fov_vox,
+        fov_mm=config.fov_mm,
+        fov_vox=config.fov_vox,
         crop_around_3d_label_center=config.crop_around_3d_label_center,
         pre_interpolation_factor=1., # When getting the data, resize the data by this factor
         ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
