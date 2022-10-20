@@ -65,7 +65,7 @@ config_dict = DotDict(dict(
     state='train', #
     fold_override=None, # 0,1,2 ..., None
     epochs=500,
-    test_only_and_output_to=None, #"/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/output/worthy-resonance-122_best",
+    test_only_and_output_to=None, #"/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/output/glorious-eon-142_best",
 
     batch_size=4,
     val_batch_size=1,
@@ -90,12 +90,12 @@ config_dict = DotDict(dict(
     save_every='best',
     mdl_save_prefix='data/models',
 
-    debug=False,
-    wandb_mode='online',                         # e.g. online, disabled. Use weights and biases online logging
+    debug=True,
+    wandb_mode='disabled',                         # e.g. online, disabled. Use weights and biases online logging
     do_sweep=False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
-    checkpoint_path=None, #"/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/worthy-resonance-122_best",                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
+    checkpoint_path="/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/glorious-eon-142_best",                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
     do_plot=False,                                 # Generate plots (debugging purpose)
     device='cuda'
 ))
@@ -473,7 +473,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     print(f"Non-trainable param count model: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}")
 
     optimizer = torch.optim.AdamW(
-        list(model.parameters()) + list(training_dataset.sa_atm.parameters()) + list(training_dataset.hla_atm.parameters()),
+        model.parameters(),
         lr=config.lr)
     scaler = amp.GradScaler()
 
@@ -488,6 +488,9 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
     else:
         print(f"Generating fresh optimizer, scheduler, scaler.")
+
+    optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters()))
+    optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters()))
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)
