@@ -281,7 +281,10 @@ class BlendowskiAE(torch.nn.Module):
         self.fourth_layer_encoder = self.ConvBlock(40, out_channels_list=[60,60,60], strides_list=[2,1,1])
         self.fourth_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[40], strides_list=[1])
 
-        self.deepest_layer = self.ConvBlock(60, out_channels_list=[60,20,2], strides_list=[2,1,1])
+        self.deepest_layer = torch.nn.Sequential(
+            self.ConvBlock(60, out_channels_list=[60,40,20], strides_list=[2,1,1]),
+            torch.nn.Conv3d(20, 2, kernel_size=1, stride=1, padding=0)
+        )
 
         self.encoder = torch.nn.Sequential(
             self.first_layer_encoder,
@@ -322,36 +325,46 @@ class BlendowskiAE(torch.nn.Module):
 
 
 class BlendowskiVAE(BlendowskiAE):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, std_max=10.0, epoch=0, epoch_reach_std_max=250, *args, **kwargs):
         kwargs['decoder_in_channels'] = 1
         super().__init__(*args, **kwargs)
 
-        self.deepest_layer = nn.ModuleList([
-            self.ConvBlock(60, out_channels_list=[60,20,20,1], strides_list=[2,1,1,1], kernels_list=[3,3,3,1], paddings_list=[1,1,1,0]),
-            self.ConvBlock(60, out_channels_list=[60,20,20,1], strides_list=[2,1,1,1], kernels_list=[3,3,3,1], paddings_list=[1,1,1,0]),
+        self.deepest_layer_upstream = self.ConvBlock(60, out_channels_list=[60,40,20], strides_list=[2,1,1])
+        self.deepest_layer_downstream = nn.ModuleList([
+            torch.nn.Conv3d(20, 1, kernel_size=1, stride=1, padding=0),
+            torch.nn.Conv3d(20, 1, kernel_size=1, stride=1, padding=0)
         ])
 
         self.log_var_scale = nn.Parameter(torch.Tensor([0.0]))
+        self.epoch = epoch
+        self.epoch_reach_std_max = epoch_reach_std_max
+        self.std_max = std_max
+
+    def set_epoch(self, epoch):
+        self.epoch = epoch
+
+    def get_std_max(self):
+        SIGMOID_XMIN, SIGMOID_XMAX = -8.0, 8.0
+        s_x = (SIGMOID_XMAX-SIGMOID_XMIN) / (self.epoch_reach_std_max - 0) * self.epoch + SIGMOID_XMIN
+        std_max = torch.sigmoid(torch.tensor(s_x)) * self.std_max
+        return std_max
 
     def sample_z(self, mean, std):
-        return torch.normal(mean=mean, std=std)
+        q = torch.distributions.Normal(mean, std)
+        return q.rsample() # Caution, dont use torch.normal(mean=mean, std=std). Gradients are not backpropagated
 
     def encode(self, x):
         h = self.encoder(x)
-        mean = self.deepest_layer[0](h)
-        log_var = self.deepest_layer[1](h)
+        h = self.deepest_layer_upstream(h)
+        mean = self.deepest_layer_downstream[0](h)
+        log_var = self.deepest_layer_downstream[1](h)
         return mean, log_var
 
     def forward(self, x):
         mean, log_var = self.encode(x)
-
-        if self.training:
-            std = torch.exp(log_var/2) + 1e-6
-        else:
-            std = 1e-6 * torch.ones_like(log_var)
-
+        std = torch.exp(log_var/2)
+        std = std.clamp(min=1e-10, max=self.get_std_max())
         z = self.sample_z(mean=mean, std=std)
-
         return self.decode(z), (z, mean, std)
 
 
@@ -403,7 +416,9 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
     if config.model_type == 'vae':
-        model = BlendowskiVAE(in_channels=num_classes, out_channels=num_classes)
+        model = BlendowskiVAE(std_max=10.0, epoch=0, epoch_reach_std_max=250,
+            in_channels=num_classes, out_channels=num_classes)
+
     elif config.model_type == 'ae':
         model = BlendowskiAE(in_channels=num_classes, out_channels=num_classes)
     elif 'unet' in config.model_type:
@@ -463,7 +478,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     scaler = amp.GradScaler()
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', patience=10, threshold=0.01, threshold_mode='rel')
+        optimizer, mode='min', patience=20, threshold=0.01, threshold_mode='rel')
 
     if _path and _path.is_dir() and not load_model_only:
         print(f"Loading optimizer, scheduler, scaler from {_path}")
@@ -505,22 +520,21 @@ def inference_wrap(model, seg):
 
 
 def gaussian_likelihood(y_hat, log_var_scale, y_target):
-    B, C, *_ = y_hat.shape
-    mean = y_hat
+    B,C,*_ = y_hat.shape
     scale = torch.exp(log_var_scale/2)
-    dist = torch.distributions.Normal(mean, scale)
+    dist = torch.distributions.Normal(y_hat, scale)
 
     # measure prob of seeing image under p(x|z)
     log_pxz = dist.log_prob(y_target)
 
     # GLH
-    return log_pxz.reshape(B, C, -1).mean(-1)
+    return log_pxz
 
 
 
 def kl_divergence(z, mean, std):
     # See https://towardsdatascience.com/variational-autoencoder-demystified-with-pytorch-implementation-3a06bee395ed
-    B,C, *_ = z.shape
+    B,*_ = z.shape
     p = torch.distributions.Normal(torch.zeros_like(mean), torch.ones_like(std))
     q = torch.distributions.Normal(mean, std)
 
@@ -531,26 +545,24 @@ def kl_divergence(z, mean, std):
     kl = (log_qzx - log_pz)
 
     # Reduce spatial dimensions
-    kl = kl.view(-1).mean(-1)
-    return kl
+    return kl.reshape(B,-1)
 
 
 
 def get_ae_loss_value(y_hat, y_target, class_weights):
-    B, *_ = y_target.shape
     return DC_and_CE_loss({}, {})(y_hat, y_target.argmax(1, keepdim=True))
-    # return nn.CrossEntropyLoss(class_weights)(y_hat, y_target)
 
 
 def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
-    # Reconstruction loss
-    recon_loss = gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
     # recon_loss = get_ae_loss_value(y_hat, y_target, class_weights)
-    # kl
-    kl = kl_divergence(z, mean, std)
+    # recon_loss = torch.nn.MSELoss()(y_hat, y_target)
+    recon_loss = -gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
+    recon_loss = eo.reduce(recon_loss, 'B C D H W -> ()', 'mean')
 
-    # elbo
-    elbo = kl.mean() + recon_loss
+    kl = kl_divergence(z, mean, std)
+    kl = eo.reduce(kl, 'B latent -> ()', 'mean')
+
+    elbo = 0.0*kl + recon_loss
 
     return elbo
 
@@ -606,6 +618,9 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
     else:
         model.eval()
         dataset.eval()
+
+    if isinstance(model, BlendowskiVAE):
+        model.set_epoch(epx)
 
     for batch_idx, batch in tqdm(enumerate(dataloader), desc=phase, total=len(dataloader)):
         b_input, b_seg = get_model_input(batch, config, len(dataset.label_tags))
