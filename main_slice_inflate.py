@@ -17,7 +17,7 @@
 import os
 import sys
 from pathlib import Path
-
+import json
 os.environ['MMWHS_CACHE_PATH'] = str(Path('.', '.cache'))
 
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
@@ -60,45 +60,9 @@ PROJECT_NAME = "slice_inflate"
 training_dataset, test_dataset = None, None
 test_all_parameters_updated = get_test_func_all_parameters_updated()
 # %%
-config_dict = DotDict(dict(
-    num_folds=0,
-    state='train', #
-    fold_override=None, # 0,1,2 ..., None
-    epochs=500,
-    test_only_and_output_to=None, #"/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/output/worthy-resonance-122_best",
 
-    batch_size=4,
-    val_batch_size=1,
-    modality='all',
-    use_2d_normal_to=None,               # Can be None or 'D', 'H', 'W'. If not None 2D slices will be selected for training
-
-    dataset='mmwhs',                 # The dataset prepared with our preprocessing scripts
-    data_base_path=str(Path(THIS_SCRIPT_DIR, "data/MMWHS")),
-    crop_3d_region=None, #((0,128), (0,128), (0,128)), # dimension range in which 3D samples are cropped
-    crop_2d_slices_gt_num_threshold=0,   # Drop 2D slices if less than threshold pixels are positive
-    crop_around_3d_label_center=(128,128,128), #(128,128,128),
-    crop_around_2d_label_center=(128,128),
-    align_fov_mm=(300.,300.,300.),
-    align_fov_vox=(196,196,196),
-    max_load_3d_num=None,
-
-    lr=1e-3,
-    use_scheduling=True,
-    model_type='vae', # unet, unet-wo-skip, ae, vae
-    encoder_training_only=False,
-
-    save_every='best',
-    mdl_save_prefix='data/models',
-
-    debug=False,
-    wandb_mode='online',                         # e.g. online, disabled. Use weights and biases online logging
-    do_sweep=False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
-
-    # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
-    checkpoint_path=None, #"/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/models/worthy-resonance-122_best",                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
-    do_plot=False,                                 # Generate plots (debugging purpose)
-    device='cuda'
-))
+with open(Path(THIS_SCRIPT_DIR, 'config_dict.json'), 'r') as f:
+    config_dict = DotDict(json.load(f))
 
 def prepare_data(config):
     training_dataset = MMWHSDataset(
