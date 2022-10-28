@@ -2,12 +2,12 @@ import numpy as np
 import torch
 import nibabel as nib
 from pathlib import Path
+from torch.utils.checkpoint import checkpoint
 
-
+import einops as eo
 
 def switch_rows(affine_mat):
-    affine_mat = affine_mat.clone()
-    affine_mat[:3] = affine_mat.detach()[:3].flip(0)
+    affine_mat[:3] = affine_mat[:3].flip(0)
     return affine_mat
 
 
@@ -97,40 +97,46 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
     is_label=False, dtype=torch.float32):
 
     # Prepare volume
-    volume_shape = torch.as_tensor(volume.shape)
+    B,C,D,H,W = volume.shape
+    volume_shape = torch.tensor([D,H,W])
     initial_dtype = volume.dtype
-    volume = volume.view([1,1]+volume_shape.tolist())
 
     # Get the affine for torch grid resampling from RAS space
     grid_affine = get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape, fov_mm)
 
-    target_shape = torch.Size([1, 1] + fov_vox.tolist())
+    target_shape = torch.Size([B,C] + fov_vox.tolist())
 
     grid = torch.nn.functional.affine_grid(
         grid_affine[:3,:].view(1,3,4), target_shape, align_corners=False
     ).to(device=volume.device)
 
     if is_label:
-        transformed = torch.nn.functional.grid_sample(
-            volume.to(dtype=dtype), grid.to(dtype=dtype), align_corners=False, mode='nearest'
+        transformed = checkpoint(
+            torch.nn.functional.grid_sample,
+            volume.to(dtype=dtype), grid.to(dtype=dtype), 'nearest', 'zeros', False
         )
     else:
         min_value = volume.min()
         volume = volume - min_value
-        transformed = torch.nn.functional.grid_sample(
-            volume.to(dtype=dtype), grid.to(dtype=dtype), align_corners=False, padding_mode='zeros'
+        transformed = checkpoint(torch.nn.functional.grid_sample,
+            volume.to(dtype=dtype), grid.to(dtype=dtype), 'bilinear', 'zeros', False
         )
         transformed = transformed + min_value
 
-    transformed = transformed.view(fov_vox.tolist())
+    transformed = transformed.view(target_shape)
 
     # Rebuild affine
     transformed_affine = get_transformed_affine_from_grid_affine(grid_affine,
         volume_affine, ras_affine_mat, volume_shape, fov_mm, fov_vox)
 
-    return transformed.to(dtype=initial_dtype), transformed_affine
+    return transformed, transformed_affine
 
 
+
+def crop_around_label_center(b_image, b_label, vox_size):
+    assert b_label.dim() == 5
+    if not b_image is None:
+        assert b_image.dim() == 5
 
 def get_crop_affine(affine, vox_offset):
     mm_offset = affine[:3,:3] @ vox_offset.to(affine)
@@ -235,18 +241,10 @@ def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, 
     hla_affine = align_affine @ torch.from_numpy(np.loadtxt(hla_affine_path))
     sa_affine =  align_affine @ torch.from_numpy(np.loadtxt(sa_affine_path))
 
-    aligned_sa_volume, aligned_sa_affine = nifti_transform(volume, initial_affine, sa_affine, fov_mm=fov_mm, fov_vox=fov_vox,
-        is_label=is_label)
 
-    # # Do only retrieve the center slice for HLA view: Be careful. Output volume is ok, but not hla_affine for 1-vox slice
-    # aligned_hla_volume, aligned_hla_affine = nifti_transform(volume, initial_affine, hla_affine, fov_mm=fov_mm_slice, fov_vox=fov_vox_slice,
-    #     is_label=is_label)
-    aligned_hla_volume, aligned_hla_affine = nifti_transform(volume, initial_affine, hla_affine, fov_mm=fov_mm, fov_vox=fov_vox,
-        is_label=is_label)
 
-    return dict(
-        aligned_sa_volume=aligned_sa_volume,
-        aligned_sa_affine=aligned_sa_affine,
-        aligned_hla_volume=aligned_hla_volume,
-        aligned_hla_affine=aligned_hla_affine
-    )
+def cut_slice(b_volume):
+    b_volume = eo.rearrange(b_volume, 'B C D H W -> W B C D H')
+    center_idx = b_volume.shape[0]//2
+    b_volume = b_volume[center_idx:center_idx+1]
+    return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
