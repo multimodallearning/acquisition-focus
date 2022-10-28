@@ -14,7 +14,7 @@ import numpy as np
 from slice_inflate.utils.common_utils import DotDict
 from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, get_rotation_matrix_3d_from_angles
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
-from slice_inflate.datasets.align_mmwhs import align_to_sa_hla_from_volume, crop_around_label_center, cut_slice
+from slice_inflate.datasets.align_mmwhs import align_to_sa_hla_from_volume, crop_around_label_center, cut_slice, nifti_transform
 
 cache = Memory(location=os.environ['MMWHS_CACHE_PATH'])
 
@@ -110,13 +110,13 @@ class MMWHSDataset(HybridIdDataset):
 
 
         align_label_dict = retrieve_augmented_hybrid_aligned(self.base_dir, label, additional_data,
-            self.self_attributes['align_fov_mm'], self.self_attributes['align_fov_vox'],
+            self.self_attributes['fov_mm'], self.self_attributes['fov_vox'],
             is_label=True, augment_affine=augment_affine
         )
 
         if True:
             align_image_dict = retrieve_augmented_hybrid_aligned(self.base_dir, image, additional_data,
-                self.self_attributes['align_fov_mm'], self.self_attributes['align_fov_vox'],
+                self.self_attributes['fov_mm'], self.self_attributes['fov_vox'],
                 is_label=False, augment_affine=augment_affine
             )
         else:
@@ -163,7 +163,7 @@ class MMWHSDataset(HybridIdDataset):
 
 
 
-def retrieve_augmented_hybrid_aligned(base_dir, volume, additional_data, align_fov_mm, align_fov_vox, is_label, augment_affine=None):
+def retrieve_augmented_hybrid_aligned(base_dir, volume, additional_data, fov_mm, fov_vox, is_label, augment_affine=None):
     initial_affine = additional_data['initial_affine']
     align_affine = additional_data['align_affine'].to(dtype=initial_affine.dtype)
 
@@ -171,7 +171,7 @@ def retrieve_augmented_hybrid_aligned(base_dir, volume, additional_data, align_f
         align_affine = align_affine @ augment_affine.to(dtype=initial_affine.dtype)
 
     align_dict = align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine,
-        align_fov_mm, align_fov_vox, is_label)
+        fov_mm, fov_vox, is_label)
     aligned_sa_volume, aligned_hla_volume = align_dict['aligned_sa_volume'], align_dict['aligned_hla_volume']
 
     return dict(
@@ -210,7 +210,7 @@ def extract_2d_data(self_attributes: dict):
             initial_affine = self.additional_data_3d[_3d_id]['initial_affine']
             align_affine = self.additional_data_3d[_3d_id]['align_affine']
             align_dict = align_to_sa_hla_from_volume(self.base_dir, image, initial_affine, align_affine,
-                config.align_fov_mm, config.align_fov_vox, False)
+                config.fov_mm, config.fov_vox, False)
             hla_volume, sa_volume = align_dict['aligned_hla_volume'], align_dict['aligned_sa_volume']
 
             img_data_2d[f"{_3d_id}:HLA"] = cut_slice(hla_volume)
@@ -220,7 +220,7 @@ def extract_2d_data(self_attributes: dict):
             initial_affine = self.additional_data_3d[_3d_id]['initial_affine']
             align_affine = self.additional_data_3d[_3d_id]['align_affine']
             align_dict = align_to_sa_hla_from_volume(self.base_dir, image, initial_affine, align_affine,
-            config.align_fov_mm, config.align_fov_vox, is_label=False)
+            config.fov_mm, config.fov_vox, is_label=False)
             hla_volume, sa_volume = align_dict['aligned_hla_volume'], align_dict['aligned_sa_volume']
             label_data_2d[f"{_3d_id}:HLA"] = cut_slice(hla_volume)
             label_data_2d[f"{_3d_id}:SA"] = cut_slice(sa_volume)
@@ -367,14 +367,16 @@ def load_data(self_attributes: dict):
         trailing_name = str(_file).split("/")[-1]
         is_label = not IMAGE_ID in trailing_name
         nib_tmp = nib.load(_file)
+        tmp = torch.from_numpy(nib_tmp.get_fdata()).squeeze()
 
         align_affine_path = str(Path(self.base_dir, "preprocessed", f"f1002mr_m{_3d_id.split('-')[0]}{_3d_id.split('-')[1]}.mat"))
-        additional_data_3d[_3d_id] = dict(
-            initial_affine=torch.from_numpy(nib_tmp.affine),
-            align_affine=torch.from_numpy(np.loadtxt(align_affine_path))
-        )
+        align_affine = torch.from_numpy(np.loadtxt(align_affine_path))
+        affine = torch.as_tensor(nib_tmp.affine)
 
-        tmp = torch.from_numpy(nib_tmp.get_fdata()).squeeze()
+        tmp, new_affine = nifti_transform(tmp, affine, align_affine,
+            fov_mm=torch.as_tensor(self.fov_mm), fov_vox=torch.as_tensor(self.fov_vox), is_label=is_label)
+
+        additional_data_3d[_3d_id] = dict(affine=new_affine)
 
         if is_label:
             resample_mode = 'nearest'
