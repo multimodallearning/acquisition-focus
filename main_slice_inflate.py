@@ -21,7 +21,7 @@ import json
 os.environ['MMWHS_CACHE_PATH'] = str(Path('.', '.cache'))
 
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
-os.environ.update(get_vars('select_interactively'))
+os.environ.update(get_vars('*'))
 
 import torch
 import torch.nn as nn
@@ -467,15 +467,15 @@ def get_model_input(batch, config, num_classes):
     W_TARGET_LEN = 128
     b_hla_slc_seg = batch['hla_label_slc']
     b_sa_slc_seg = batch['sa_label_slc']
-    b_input = torch.stack([b_hla_slc_seg, b_sa_slc_seg], dim=2)
-    b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[2]), dim=2) # Stack data hla/sa next to each other
+    b_input = torch.cat([b_hla_slc_seg, b_sa_slc_seg], dim=-1)
+    b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
 
     b_seg = batch['label']
 
     b_input = b_input.to(device=config.device)
     b_seg = b_seg.to(device=config.device)
 
-    return b_input, b_seg
+    return b_input.float(), b_seg
 
 def inference_wrap(model, seg):
     with torch.inference_mode():
@@ -604,7 +604,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
         pred_seg = y_hat.argmax(1)
 
         # Taken from nibabel nifti1.py
-        RZS = batch['sa_affine'][0][:3,:3].detach().numpy()
+        RZS = batch['sa_affine'][0][:3,:3].detach().cpu().numpy()
         nifti_zooms = np.sqrt(np.sum(RZS * RZS, axis=0))
 
         # Calculate fast dice score

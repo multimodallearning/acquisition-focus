@@ -16,11 +16,10 @@ from torch.utils.checkpoint import checkpoint
 from slice_inflate.utils.common_utils import DotDict, get_script_dir
 from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, get_rotation_matrix_3d_from_angles
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
-from slice_inflate.datasets.align_mmwhs import align_to_sa_hla_from_volume, crop_around_label_center, cut_slice, nifti_transform
+from slice_inflate.datasets.align_mmwhs import crop_around_label_center, cut_slice, nifti_transform
 
 cache = Memory(location=os.environ['MMWHS_CACHE_PATH'])
-
-
+THIS_SCRIPT_DIR = get_script_dir()
 
 class AffineTransformModule(torch.nn.Module):
     def __init__(self, fov_mm, fov_vox, view_affine, do_transform_images=False, do_transform_labels=False):
@@ -39,13 +38,17 @@ class AffineTransformModule(torch.nn.Module):
         return self.theta.view(1,4,4).repeat(batch_size,1,1)
 
     def forward(self, x_image, x_label, nifti_affine, align_affine):
-        y_image, y_label, affine = None, None, None
+        y_image, y_label, affine = x_image, x_label, None
         # Compose the complete alignment from:
         # 1) view (sa, hla)
         # 2) learnt affine
         # 3) and align affine (global alignment @ augment, if any)
 
-        final_align_affine = self.view_affine @ self.theta @ align_affine
+        final_align_affine = (
+            self.view_affine.to(x_label.device)
+            @ self.theta.to(x_label.device)
+            @ align_affine.to(x_label.device)
+        )
 
         if self.do_transform_images:
             y_image, affine = nifti_transform(x_image, nifti_affine, final_align_affine,
@@ -173,16 +176,6 @@ class MMWHSDataset(HybridIdDataset):
             hla_image_slc, hla_label_slc = torch.tensor([]), torch.tensor([])
             sa_affine, hla_affine = torch.tensor([]), torch.tensor([])
 
-        align_label_dict = retrieve_augmented_hybrid_aligned(self.base_dir, label, additional_data,
-            self.self_attributes['fov_mm'], self.self_attributes['fov_vox'],
-            is_label=True, augment_affine=augment_affine
-        )
-
-        if True:
-            align_image_dict = retrieve_augmented_hybrid_aligned(self.base_dir, image, additional_data,
-                self.self_attributes['fov_mm'], self.self_attributes['fov_vox'],
-                is_label=False, augment_affine=augment_affine
-            )
         else:
             augment_affine = torch.eye(4)
 
@@ -191,17 +184,17 @@ class MMWHSDataset(HybridIdDataset):
                 deg_angles = torch.normal(mean=0, std=augment_angle_std*torch.ones(3))
                 augment_affine[:3,:3] = get_rotation_matrix_3d_from_angles(deg_angles)
 
-            nifti_affine = additional_data[0]['nifti_affine']
-            align_affine = additional_data[0]['align_affine']
-
-            # This affine aligns the data to global space (align affine from registration)
-            # and augments
-            align_affine = augment_affine @ align_affine
+            nifti_affine = additional_data['nifti_affine']
 
             sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
-                self.get_transformed(image, label, nifti_affine, align_affine, 'sa')
+                self.get_transformed(label, nifti_affine, augment_affine, 'sa', image=None)
             hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
-                self.get_transformed(image, label, nifti_affine, align_affine, 'hla')
+                self.get_transformed(label, nifti_affine, augment_affine, 'hla', image=None)
+
+            sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
+                sa_image.squeeze(0), sa_label.squeeze(0), sa_image_slc.squeeze(0), sa_label_slc.squeeze(0), sa_affine.squeeze(0)
+            hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
+                hla_image.squeeze(0), hla_label.squeeze(0), hla_image_slc.squeeze(0), hla_label_slc.squeeze(0), hla_affine.squeeze(0)
 
         return dict(
             dataset_idx=dataset_idx,
@@ -213,9 +206,9 @@ class MMWHSDataset(HybridIdDataset):
             sa_image_slc=sa_image_slc.cpu(),
             hla_image_slc=hla_image_slc.cpu(),
 
-            label=sa_label.cpu(),
-            sa_label_slc=sa_label_slc.cpu(),
-            hla_label_slc=hla_label_slc.cpu(),
+            label=sa_label.long().cpu(),
+            sa_label_slc=sa_label_slc.long().cpu(),
+            hla_label_slc=hla_label_slc.long().cpu(),
 
             sa_affine=sa_affine,
             hla_affine=hla_affine,
@@ -223,38 +216,39 @@ class MMWHSDataset(HybridIdDataset):
             additional_data=additional_data
         )
 
-    def get_transformed(self, image, label, nifti_affine, align_affine, atm_name):
+    def get_transformed(self, label, nifti_affine, align_affine, atm_name, image=None):
 
         assert atm_name in ['sa', 'hla']
-        D,H,W = image.shape
-        C = len(self.label_tags)
-        label = eo.rearrange(F.one_hot(label, C), 'd h w oh -> oh d h w')
+        img_is_invalid = image is None or image.dim() == 0
+        if img_is_invalid:
+            image = torch.zeros_like(label)
+
+        B,C,D,H,W = label.shape
+        CLASS_NUM = len(self.self_attributes['label_tags'])
+        label = eo.rearrange(F.one_hot(label, CLASS_NUM), 'b c d h w oh -> b (c oh) d h w')
 
         if atm_name == 'sa':
             atm = self.sa_atm
         elif atm_name == 'hla':
             atm = self.hla_atm
 
-        image, label, affine = atm(image.view(1,1,D,H,W), label.view(1,C,D,H,W), nifti_affine, align_affine)
-        img_is_none = image is None
-        if img_is_none:
-            image = torch.zeros_like(label)
+        image, label, affine = atm(image.view(B,C,D,H,W), label.view(B,CLASS_NUM,D,H,W), nifti_affine, align_affine)
 
         if self.self_attributes['crop_around_3d_label_center'] is not None:
             _3d_vox_size = torch.as_tensor(self.self_attributes['crop_around_3d_label_center'])
-            sa_image, sa_label = crop_around_label_center(image, label, _3d_vox_size)
+            label, image, _ = crop_around_label_center(label, _3d_vox_size, image)
 
-        image_slc = cut_slice(image)
         label_slc = cut_slice(label)
+        image_slc = cut_slice(image)
 
         if self.self_attributes['crop_around_2d_label_center'] is not None:
             _2d_vox_size = torch.as_tensor(self.self_attributes['crop_around_2d_label_center']+[1])
-            image_slc, label_slc = crop_around_label_center(image_slc, label_slc, _2d_vox_size)
+            label_slc, image_slc, _ = crop_around_label_center(label_slc, _2d_vox_size, image_slc)
 
-        if img_is_none:
+        if img_is_invalid:
             image = torch.empty([])
             image_slc = torch.empty([])
-            # Do not set label_slc to .int() here, since we need the gradients
+            # Do not set label_slc to .int() here, since we (may) need the gradients
         return image, label.int(), image_slc, label_slc, affine.float()
 
     def get_efficient_augmentation_collate_fn(self):
@@ -280,16 +274,16 @@ class MMWHSDataset(HybridIdDataset):
                 all_hla_affines = []
 
                 for batch_idx in range(B):
-                    image = batch['image'][batch_idx].unsqueeze(0).cuda()
-                    label = batch['label'][batch_idx].unsqueeze(0).cuda()
+                    image = batch['image'][batch_idx].cuda()
+                    label = batch['label'][batch_idx].cuda()
 
-                    nifti_affine = additional_data['nifti_affine']
-                    align_affine = additional_data['align_affine']
+                    nifti_affine = additional_data['nifti_affine'].to(device=label.device).view(4,4)
+                    align_affine = torch.eye(4).to(device=label.device)
 
                     sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
-                        self.get_transformed(image, label, nifti_affine, align_affine, 'sa')
+                        self.get_transformed(label, nifti_affine, align_affine, 'sa', image)
                     hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
-                        self.get_transformed(image, label, nifti_affine, align_affine, 'hla')
+                        self.get_transformed(label, nifti_affine, align_affine, 'hla', image)
 
                     all_sa_images.append(sa_image)
                     all_sa_labels.append(sa_label)
@@ -491,11 +485,11 @@ def load_data(self_attributes: dict):
         align_affine_path = str(Path(self.base_dir, "preprocessed", f"f1002mr_m{_3d_id.split('-')[0]}{_3d_id.split('-')[1]}.mat"))
         align_affine = torch.from_numpy(np.loadtxt(align_affine_path))
         affine = torch.as_tensor(nib_tmp.affine)
-
-        tmp, new_affine = nifti_transform(tmp, affine, align_affine,
+        D,H,W = tmp.shape
+        tmp, new_affine = nifti_transform(tmp.view(1,1,D,H,W), affine, align_affine,
             fov_mm=torch.as_tensor(self.fov_mm), fov_vox=torch.as_tensor(self.fov_vox), is_label=is_label)
 
-        additional_data_3d[_3d_id] = dict(affine=new_affine)
+        additional_data_3d[_3d_id] = dict(nifti_affine=new_affine)
 
         if is_label:
             resample_mode = 'nearest'
