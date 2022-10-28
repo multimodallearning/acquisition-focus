@@ -8,6 +8,7 @@ from pathlib import Path
 import functools
 import copy
 import contextlib
+from scipy.ndimage import distance_transform_edt as distance
 
 MOD_GET_FN = lambda self, key: self[int(key)] if isinstance(self, nn.Sequential) \
                                               else getattr(self, key)
@@ -36,8 +37,12 @@ def restore_sparsity(label, was_sparse):
 
 
 
-def dilate_label_class(b_label, class_max_idx, class_dilate_idx,
-                       use_2d, kernel_sz=3):
+def dilate_label_class(b_label, class_max_idx, class_dilate_idx, kernel_sz=2):
+    dims = b_label.dim()
+    assert (dims in [4,5])
+
+    B,C, *_ = b_label.shape
+
     if kernel_sz < 2:
         return b_label
 
@@ -46,21 +51,24 @@ def dilate_label_class(b_label, class_max_idx, class_dilate_idx,
     b_onehot = torch.nn.functional.one_hot(b_label.long(), class_max_idx+1)
     class_slice = b_onehot[...,class_dilate_idx]
 
-    if use_2d:
-        B, H, W = class_slice.shape
+    if dims == 4:
+        *_, H, W = class_slice.shape
         kernel = torch.ones([kernel_sz,kernel_sz]).long()
         kernel = kernel.view(1,1,kernel_sz,kernel_sz)
         class_slice = torch.nn.functional.conv2d(
             class_slice.view(B,1,H,W), kernel, padding='same')
 
-    else:
-        B, D, H, W = class_slice.shape
+    elif dims == 5:
+        *_, D, H, W = class_slice.shape
         kernel = torch.ones([kernel_sz,kernel_sz,kernel_sz])
         kernel = kernel.long().view(1,1,kernel_sz,kernel_sz,kernel_sz)
         class_slice = torch.nn.functional.conv3d(
             class_slice.view(B,1,D,H,W), kernel, padding='same')
 
-    dilated_class_slice = torch.clamp(class_slice.squeeze(0), 0, 1)
+    else:
+        raise ValueError()
+
+    dilated_class_slice = torch.clamp(class_slice, 0, 1)
     b_dilated_label[dilated_class_slice.bool()] = class_dilate_idx
 
     return b_dilated_label
@@ -549,3 +557,28 @@ def get_test_func_all_parameters_updated():
                 assert not torch.equal(torch.sum(param.grad ** 2), torch.tensor(0.).to(param.device))
 
     return test_all_parameters_updated
+
+
+
+def calc_dist_map(binary_seg):
+    assert binary_seg.dtype == torch.bool
+    # see https://github.com/LIVIAETS/boundary-loss
+    res = torch.zeros_like(binary_seg)
+    posmask = binary_seg.numpy()
+
+    if posmask.any():
+        negmask = ~posmask
+        res = torch.as_tensor(distance(negmask) * negmask - (distance(posmask) - 1) * posmask)
+
+    return res
+
+
+def get_seg_boundary(binary_seg):
+    assert binary_seg.dtype == torch.bool
+    fg_dil = dilate_label_class(binary_seg.float(),1,1, kernel_sz=3)
+    bg_dil = dilate_label_class(binary_seg.float(),1,0, kernel_sz=3)
+
+    fg_cont = torch.logical_xor(fg_dil.bool(), binary_seg)
+    bg_cont = torch.logical_xor(bg_dil.bool(), binary_seg)
+
+    return torch.logical_or(fg_cont, bg_cont)
