@@ -98,7 +98,7 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
     fov_mm = fov_mm.to(device)
     fov_vox = fov_vox.to(device)
     volume_affine = volume_affine.to(device)
-    ras_affine_mat = volume_affine.to(volume_affine)
+    ras_affine_mat = ras_affine_mat.to(volume_affine)
 
     # Prepare volume
     B,C,D,H,W = volume.shape
