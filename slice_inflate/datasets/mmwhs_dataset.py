@@ -420,10 +420,10 @@ def load_data(self_attributes: dict):
 
     for mod in modalities:
         if self.state.lower() == "train":
-            data_directory = f"{mod}_train"
+            data_directory = f"{mod}_registered_train"
 
         elif self.state.lower() == "test":
-            data_directory = f"{mod}_test_selection"
+            data_directory = f"{mod}_registered_test_selection"
 
         elif self.state.lower() == "empty":
             data_directory = "nonexisting_dir_4t6yh"
@@ -448,7 +448,6 @@ def load_data(self_attributes: dict):
 
     for _path in files:
         trailing_name = str(_path).split("/")[-1]
-        # Extract ids from sth. like P001-1-ED-label.nii.gz
         modality, patient_id = re.findall(r'(ct|mr)_train_(\d{4})_.*?.nii.gz', trailing_name)[0]
         patient_id = int(patient_id)
 
@@ -485,11 +484,8 @@ def load_data(self_attributes: dict):
         align_affine_path = str(Path(self.base_dir, "preprocessed", f"f1002mr_m{_3d_id.split('-')[0]}{_3d_id.split('-')[1]}.mat"))
         align_affine = torch.from_numpy(np.loadtxt(align_affine_path))
         affine = torch.as_tensor(nib_tmp.affine)
-        D,H,W = tmp.shape
-        tmp, new_affine = nifti_transform(tmp.view(1,1,D,H,W), affine, align_affine,
-            fov_mm=torch.as_tensor(self.fov_mm), fov_vox=torch.as_tensor(self.fov_vox), is_label=is_label)
 
-        additional_data_3d[_3d_id] = dict(nifti_affine=new_affine)
+        additional_data_3d[_3d_id] = dict(nifti_affine=affine)
 
         if is_label:
             resample_mode = 'nearest'
