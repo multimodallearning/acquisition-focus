@@ -12,25 +12,19 @@
     "data_base_path": "/share/data_supergrover1/weihsbach/shared_data/tmp/slice_inflate/data/MMWHS",
     "crop_3d_region": null,
     "crop_2d_slices_gt_num_threshold": 0,
-    "crop_around_3d_label_center": [
-        128,
-        128,
-        128
-    ],
-    "crop_around_2d_label_center": [
-        128,
-        128
-    ],
+    "crop_around_3d_label_center": null,
+    "crop_around_2d_label_center": null,
     "fov_mm": [
-        300.0,
-        300.0,
-        300.0
+        224.0,
+        224.0,
+        224.0
     ],
     "fov_vox": [
         128,
         128,
         128
     ],
+
     "max_load_3d_num": null,
     "lr": 0.001,
     "use_scheduling": true,
@@ -38,7 +32,7 @@
     "encoder_training_only": false,
     "save_every": "best",
     "mdl_save_prefix": "data/models",
-    "debug": true,
+    "debug": false,
     "wandb_mode": "disabled",
     "do_sweep": false,
     "checkpoint_path": null,

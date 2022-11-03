@@ -178,8 +178,8 @@ def crop_around_label_center(label: torch.Tensor, vox_size: torch.Tensor, image:
     label_center = sp_idxs.float().mean(dim=1).int()[-n_dims:]
 
     # This is the true bounding box in label space when cropping to the demanded size
-    in_bbox_min = label_center-((vox_size+1)/2).int()
-    in_bbox_max = label_center+(vox_size/2).int()
+    in_bbox_min = (label_center-((vox_size+1)/2)+0.5).int()
+    in_bbox_max = (label_center+(vox_size/2)+0.5).int()
 
     # This is the 'bounding box' in the output data space (the region of the cropped data we fill)
     out_bbox_min = torch.zeros(n_dims, dtype=torch.int)
@@ -216,7 +216,7 @@ def crop_around_label_center(label: torch.Tensor, vox_size: torch.Tensor, image:
 
     if affine is not None:
         # If an affine was passed recalculate the new affine
-        vox_offset = torch.tensor([slc.start.item() for slc in in_crop_slcs])
+        vox_offset = torch.tensor([slc.start.item() for slc in in_crop_slcs[-n_dims:]])
         affine = get_crop_affine(affine, vox_offset)
 
     return cropped_label, cropped_image, affine

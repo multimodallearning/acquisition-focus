@@ -186,10 +186,12 @@ class MMWHSDataset(HybridIdDataset):
 
             nifti_affine = additional_data['nifti_affine']
 
+            D,H,W = label.shape
+
             sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
-                self.get_transformed(label, nifti_affine, augment_affine, 'sa', image=None)
+                self.get_transformed(label.view(1,1,D,H,W), nifti_affine, augment_affine, 'sa', image=None)
             hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
-                self.get_transformed(label, nifti_affine, augment_affine, 'hla', image=None)
+                self.get_transformed(label.view(1,1,D,H,W), nifti_affine, augment_affine, 'hla', image=None)
 
             sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
                 sa_image.squeeze(0), sa_label.squeeze(0), sa_image_slc.squeeze(0), sa_label_slc.squeeze(0), sa_affine.squeeze(0)
