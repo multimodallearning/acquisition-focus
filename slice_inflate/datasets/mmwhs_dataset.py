@@ -32,7 +32,7 @@ class AffineTransformModule(torch.nn.Module):
         self.fov_mm = fov_mm
         self.fov_vox = fov_vox
         self.view_affine = view_affine
-        self.theta = torch.nn.Parameter(torch.eye(4).view(4,4))
+        self.theta = torch.nn.Parameter(torch.eye(4))
 
     def get_batch_affine(self, batch_size):
         return self.theta.view(1,4,4).repeat(batch_size,1,1)
@@ -275,26 +275,27 @@ class MMWHSDataset(HybridIdDataset):
                 all_sa_affines = []
                 all_hla_affines = []
 
-                for batch_idx in range(B):
-                    image = batch['image'][batch_idx].cuda()
-                    label = batch['label'][batch_idx].cuda()
+                B,D,H,W = batch['label'].shape
 
-                    nifti_affine = additional_data['nifti_affine'].to(device=label.device).view(4,4)
-                    align_affine = torch.eye(4).to(device=label.device)
+                image = batch['image'].cuda()
+                label = batch['label'].view(B,1,D,H,W).cuda()
 
-                    sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
-                        self.get_transformed(label, nifti_affine, align_affine, 'sa', image)
-                    hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
-                        self.get_transformed(label, nifti_affine, align_affine, 'hla', image)
+                nifti_affine = additional_data['nifti_affine'].to(device=label.device).view(B,4,4)
+                align_affine = torch.eye(4).view(1,4,4).repeat(B,1,1).to(device=label.device)
 
-                    all_sa_images.append(sa_image)
-                    all_sa_labels.append(sa_label)
-                    all_sa_image_slcs.append(sa_image_slc)
-                    all_sa_label_slcs.append(sa_label_slc)
-                    all_hla_image_slcs.append(hla_image_slc)
-                    all_hla_label_slcs.append(hla_label_slc)
-                    all_sa_affines.append(sa_affine)
-                    all_hla_affines.append(hla_affine)
+                sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
+                    self.get_transformed(label, nifti_affine, align_affine, 'sa', image)
+                hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
+                    self.get_transformed(label, nifti_affine, align_affine, 'hla', image)
+
+                all_sa_images.append(sa_image)
+                all_sa_labels.append(sa_label)
+                all_sa_image_slcs.append(sa_image_slc)
+                all_sa_label_slcs.append(sa_label_slc)
+                all_hla_image_slcs.append(hla_image_slc)
+                all_hla_label_slcs.append(hla_label_slc)
+                all_sa_affines.append(sa_affine)
+                all_hla_affines.append(hla_affine)
 
                 batch.update(dict(
                     image=torch.cat(all_sa_images, dim=0),

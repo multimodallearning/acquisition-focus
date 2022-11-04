@@ -453,6 +453,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     else:
         print(f"Generating fresh optimizer, scheduler, scaler.")
 
+    training_dataset.sa_atm.to(device)
+    training_dataset.hla_atm.to(device)
     optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters()))
     optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters()))
 
