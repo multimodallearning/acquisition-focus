@@ -33,7 +33,7 @@
     "save_every": "best",
     "mdl_save_prefix": "data/models",
     "debug": false,
-    "wandb_mode": "disabled",
+    "wandb_mode": "online",
     "do_sweep": false,
     "checkpoint_path": null,
     "do_plot": false,

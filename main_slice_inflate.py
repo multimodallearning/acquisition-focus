@@ -108,7 +108,7 @@ if test_dataset is None:
     test_dataset = prepare_data(test_config)
 
 # %%
-if True:
+if False:
     training_dataset.train(augment=True)
     training_dataset.self_attributes['augment_angle_std'] = 1
     print("do_augment", training_dataset.do_augment)
@@ -139,7 +139,7 @@ if True:
         plt.show()
 
 # %%
-if True:
+if False:
     training_dataset.train(augment=True)
     training_dataset.self_attributes['augment_angle_std'] = 1
     print("do_augment", training_dataset.do_augment)
@@ -159,7 +159,7 @@ if True:
             [sh for sh in batch['hla_label_slc'].argmax(1).squeeze()]
         
         show_row = [sh.cpu() for sh in show_row]
-        
+
         grid = ImageGrid(fig, 111,  # similar to subplot(111)
             nrows_ncols=(1, len(show_row)),  # creates 2x2 grid of axes
             axes_pad=0.0,  # pad between axes in inch.
