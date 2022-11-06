@@ -184,7 +184,8 @@ class MMWHSDataset(HybridIdDataset):
                 deg_angles = torch.normal(mean=0, std=augment_angle_std*torch.ones(3))
                 augment_affine[:3,:3] = get_rotation_matrix_3d_from_angles(deg_angles)
 
-            nifti_affine = additional_data['nifti_affine']
+            nifti_affine = additional_data['nifti_affine'].view(1,4,4)
+            augment_affine = augment_affine.view(1,4,4)
 
             D,H,W = label.shape
 
@@ -204,13 +205,13 @@ class MMWHSDataset(HybridIdDataset):
             image_path=image_path,
             label_path=label_path,
 
-            image=sa_image.cpu(),
-            sa_image_slc=sa_image_slc.cpu(),
-            hla_image_slc=hla_image_slc.cpu(),
+            image=sa_image.to(device=self.device),
+            sa_image_slc=sa_image_slc.to(device=self.device),
+            hla_image_slc=hla_image_slc.to(device=self.device),
 
-            label=sa_label.long().cpu(),
-            sa_label_slc=sa_label_slc.long().cpu(),
-            hla_label_slc=hla_label_slc.long().cpu(),
+            label=sa_label.long().to(device=self.device),
+            sa_label_slc=sa_label_slc.long().to(device=self.device),
+            hla_label_slc=hla_label_slc.long().to(device=self.device),
 
             sa_affine=sa_affine,
             hla_affine=hla_affine,

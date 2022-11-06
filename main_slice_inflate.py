@@ -8,7 +8,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.14.1
 #   kernelspec:
-#     display_name: 'Python 3.9.12 (''.venv'': poetry)'
+#     display_name: 'Python 3.9.13 (''.venv'': poetry)'
 #     language: python
 #     name: python3
 # ---
@@ -108,32 +108,69 @@ if test_dataset is None:
     test_dataset = prepare_data(test_config)
 
 # %%
-if False:
+if True:
     training_dataset.train(augment=True)
-    training_dataset.self_attributes['augment_angle_std'] = 5
+    training_dataset.self_attributes['augment_angle_std'] = 1
     print("do_augment", training_dataset.do_augment)
     for sample in [training_dataset[idx] for idx in range(20)]:
-        fig = plt.figure(figsize=(16., 4.))
-        grid = ImageGrid(fig, 111,  # similar to subplot(111)
-            nrows_ncols=(1, 6),  # creates 2x2 grid of axes
-            axes_pad=0.0,  # pad between axes in inch.
-        )
+        fig = plt.figure(figsize=(16., 1.))
 
         show_row = [
-            cut_slice(sample['image']),
-            cut_slice(sample['label']),
+            # cut_slice(sample['image']),
+            cut_slice(sample['label'].unsqueeze(0)).argmax(1).squeeze(),
 
-            sample['sa_image_slc'],
-            sample['sa_label_slc'],
+            # sample['sa_image_slc'],
+            sample['sa_label_slc'].unsqueeze(0).argmax(1).squeeze(),
 
-            sample['hla_image_slc'],
-            sample['hla_label_slc'],
+            # sample['hla_image_slc'],
+            sample['hla_label_slc'].unsqueeze(0).argmax(1).squeeze(),
         ]
+
+        show_row = [sh.cpu() for sh in show_row]
+
+        grid = ImageGrid(fig, 111,  # similar to subplot(111)
+            nrows_ncols=(1, len(show_row)),  # creates 2x2 grid of axes
+            axes_pad=0.0,  # pad between axes in inch.
+        )
 
         for ax, im in zip(grid, show_row):
             ax.imshow(im, cmap='gray', interpolation='none')
 
         plt.show()
+
+# %%
+if True:
+    training_dataset.train(augment=True)
+    training_dataset.self_attributes['augment_angle_std'] = 1
+    print("do_augment", training_dataset.do_augment)
+
+    train_dataloader = DataLoader(training_dataset, batch_size=config_dict.batch_size,
+        pin_memory=False, drop_last=False,
+        collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
+    )
+    training_dataset.set_augment_at_collate(True)
+
+    for batch in train_dataloader:
+        fig = plt.figure(figsize=(16., 1.))
+
+        show_row = \
+            [sh for sh in cut_slice(batch['label']).argmax(1).squeeze()] + \
+            [sh for sh in batch['sa_label_slc'].argmax(1).squeeze()] + \
+            [sh for sh in batch['hla_label_slc'].argmax(1).squeeze()]
+        
+        show_row = [sh.cpu() for sh in show_row]
+        
+        grid = ImageGrid(fig, 111,  # similar to subplot(111)
+            nrows_ncols=(1, len(show_row)),  # creates 2x2 grid of axes
+            axes_pad=0.0,  # pad between axes in inch.
+        )
+
+        for ax, im in zip(grid, show_row):
+            ax.imshow(im, cmap='gray', interpolation='none')
+
+        plt.show()
+
+# %%
 
 # %%
 if False:
