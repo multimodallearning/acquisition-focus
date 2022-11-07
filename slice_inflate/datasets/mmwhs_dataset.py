@@ -45,9 +45,9 @@ class AffineTransformModule(torch.nn.Module):
         # 3) and align affine (global alignment @ augment, if any)
 
         final_align_affine = (
-            self.view_affine.to(x_label.device)
-            @ self.theta.to(x_label.device)
+            self.theta.to(x_label.device)
             @ align_affine.to(x_label.device)
+            @ self.view_affine.to(x_label.device)
         )
 
         if self.do_transform_images:
@@ -81,7 +81,6 @@ class MMWHSDataset(HybridIdDataset):
         if kwargs['use_2d_normal_to'] is not None:
             warnings.warn("Static 2D data extraction for this dataset is skipped.")
             kwargs['use_2d_normal_to'] = None
-
 
         hla_affine_path = Path(
             THIS_SCRIPT_DIR,
@@ -189,10 +188,11 @@ class MMWHSDataset(HybridIdDataset):
 
             D,H,W = label.shape
 
-            sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
-                self.get_transformed(label.view(1,1,D,H,W), nifti_affine, augment_affine, 'sa', image=None)
-            hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
-                self.get_transformed(label.view(1,1,D,H,W), nifti_affine, augment_affine, 'hla', image=None)
+            with torch.no_grad():
+                sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
+                    self.get_transformed(label.view(1,1,D,H,W), nifti_affine, augment_affine, 'sa', image=None)
+                hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
+                    self.get_transformed(label.view(1,1,D,H,W), nifti_affine, augment_affine, 'hla', image=None)
 
             sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
                 sa_image.squeeze(0), sa_label.squeeze(0), sa_image_slc.squeeze(0), sa_label_slc.squeeze(0), sa_affine.squeeze(0)
@@ -260,8 +260,6 @@ class MMWHSDataset(HybridIdDataset):
             batch = torch.utils.data._utils.collate.default_collate(batch)
             if self.augment_at_collate:
                 B = batch['dataset_idx'].shape[0]
-                sa_augment_affine = self.sa_atm.get_batch_affine(B)
-                hla_augment_affine = self.hla_atm.get_batch_affine(B)
 
                 image = batch['image']
                 label = batch['label']
@@ -282,12 +280,19 @@ class MMWHSDataset(HybridIdDataset):
                 label = batch['label'].view(B,1,D,H,W).cuda()
 
                 nifti_affine = additional_data['nifti_affine'].to(device=label.device).view(B,4,4)
-                align_affine = torch.eye(4).view(1,4,4).repeat(B,1,1).to(device=label.device)
+                augment_affine = torch.eye(4).view(1,4,4).repeat(B,1,1).to(device=label.device)
 
-                sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
-                    self.get_transformed(label, nifti_affine, align_affine, 'sa', image)
-                hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
-                    self.get_transformed(label, nifti_affine, align_affine, 'hla', image)
+                if self.do_augment:
+                    for b_idx in range(B):
+                        augment_angle_std = self.self_attributes['augment_angle_std']
+                        deg_angles = torch.normal(mean=0, std=augment_angle_std*torch.ones(3))
+                        augment_affine[b_idx,:3,:3] = get_rotation_matrix_3d_from_angles(deg_angles)
+
+                with torch.no_grad():
+                    sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
+                        self.get_transformed(label, nifti_affine, augment_affine, 'sa', image)
+                    hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
+                        self.get_transformed(label, nifti_affine, augment_affine, 'hla', image)
 
                 all_sa_images.append(sa_image)
                 all_sa_labels.append(sa_label)

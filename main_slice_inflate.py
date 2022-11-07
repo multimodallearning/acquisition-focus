@@ -148,7 +148,7 @@ if False:
         pin_memory=False, drop_last=False,
         collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
     )
-    training_dataset.set_augment_at_collate(True)
+    training_dataset.set_augment_at_collate(False)
 
     for batch in train_dataloader:
         fig = plt.figure(figsize=(16., 1.))
@@ -157,7 +157,7 @@ if False:
             [sh for sh in cut_slice(batch['label']).argmax(1).squeeze()] + \
             [sh for sh in batch['sa_label_slc'].argmax(1).squeeze()] + \
             [sh for sh in batch['hla_label_slc'].argmax(1).squeeze()]
-        
+
         show_row = [sh.cpu() for sh in show_row]
 
         grid = ImageGrid(fig, 111,  # similar to subplot(111)
@@ -492,8 +492,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
     training_dataset.sa_atm.to(device)
     training_dataset.hla_atm.to(device)
-    optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters()))
-    optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters()))
+    # optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters()))
+    # optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters()))
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)
@@ -655,7 +655,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
         label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'dice',
             b_dice, training_dataset.label_tags, exclude_bg=True)
 
-        if epx % 20 == 0 and epx > 0:
+        if epx % 20 == 0 and epx > 0 and False:
             b_hd = hausdorff3d(b_input, b_seg, spacing_mm=tuple(nifti_zooms), percent=100)
             label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd',
                 b_hd, training_dataset.label_tags, exclude_bg=True)
@@ -742,9 +742,9 @@ def run_dl(run_name, config, training_dataset, test_dataset):
         if not run_test_once_only:
             train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
                 sampler=train_subsampler, pin_memory=False, drop_last=False,
-                collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
+                #collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
             )
-            training_dataset.set_augment_at_collate(True)
+            training_dataset.set_augment_at_collate(False)
 
             val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
                 sampler=val_subsampler, pin_memory=False, drop_last=False
