@@ -742,9 +742,9 @@ def run_dl(run_name, config, training_dataset, test_dataset):
         if not run_test_once_only:
             train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
                 sampler=train_subsampler, pin_memory=False, drop_last=False,
-                #collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
+                collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
             )
-            training_dataset.set_augment_at_collate(False)
+            training_dataset.set_augment_at_collate(True)
 
             val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
                 sampler=val_subsampler, pin_memory=False, drop_last=False
