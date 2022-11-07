@@ -45,9 +45,9 @@ class AffineTransformModule(torch.nn.Module):
         # 3) and align affine (global alignment @ augment, if any)
 
         final_align_affine = (
-            self.theta.to(x_label.device)
+            self.view_affine.to(x_label.device)
+            @ self.theta.to(x_label.device)
             @ align_affine.to(x_label.device)
-            @ self.view_affine.to(x_label.device)
         )
 
         if self.do_transform_images:
