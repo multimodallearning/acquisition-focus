@@ -241,7 +241,7 @@ class MMWHSDataset(HybridIdDataset):
             _3d_vox_size = torch.as_tensor(self.self_attributes['crop_around_3d_label_center'])
             label, image, _ = crop_around_label_center(label, _3d_vox_size, image)
 
-        label_slc = soft_cut_slice(label)
+        label_slc = cut_slice(label)
         image_slc = cut_slice(image)
 
         if self.self_attributes['crop_around_2d_label_center'] is not None:
