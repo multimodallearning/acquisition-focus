@@ -16,7 +16,7 @@ from torch.utils.checkpoint import checkpoint
 from slice_inflate.utils.common_utils import DotDict, get_script_dir
 from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, get_rotation_matrix_3d_from_angles
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
-from slice_inflate.datasets.align_mmwhs import crop_around_label_center, cut_slice, nifti_transform
+from slice_inflate.datasets.align_mmwhs import crop_around_label_center, cut_slice, soft_cut_slice, nifti_transform
 
 cache = Memory(location=os.environ['MMWHS_CACHE_PATH'])
 THIS_SCRIPT_DIR = get_script_dir()
@@ -241,7 +241,7 @@ class MMWHSDataset(HybridIdDataset):
             _3d_vox_size = torch.as_tensor(self.self_attributes['crop_around_3d_label_center'])
             label, image, _ = crop_around_label_center(label, _3d_vox_size, image)
 
-        label_slc = cut_slice(label)
+        label_slc = soft_cut_slice(label)
         image_slc = cut_slice(image)
 
         if self.self_attributes['crop_around_2d_label_center'] is not None:

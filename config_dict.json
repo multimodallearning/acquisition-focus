@@ -35,7 +35,7 @@
     "debug": false,
     "wandb_mode": "online",
     "do_sweep": false,
-    "checkpoint_path": "/shared/slice_inflate/data/models/restful-frog-165_best",
+    "checkpoint_path": null,
     "do_plot": false,
     "device": "cuda"
 }

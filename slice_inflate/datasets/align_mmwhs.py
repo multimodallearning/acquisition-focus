@@ -232,10 +232,6 @@ def crop_around_label_center(label: torch.Tensor, vox_size: torch.Tensor, image:
 
 
 
-def cut_slice(volume):
-    return volume[:,:,volume.shape[-1]//2]
-
-
 
 def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, fov_mm, fov_vox, is_label):
     fov_mm, fov_vox = torch.tensor(fov_mm), torch.tensor(fov_vox)
@@ -259,4 +255,20 @@ def cut_slice(b_volume):
     b_volume = eo.rearrange(b_volume, 'B C D H W -> W B C D H')
     center_idx = b_volume.shape[0]//2
     b_volume = b_volume[center_idx:center_idx+1]
+    return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
+
+def soft_cut_slice(b_volume):
+    b_volume = eo.rearrange(b_volume, 'B C D H W -> W B C D H')
+    W = b_volume.shape[0]
+    center_idx = W//2
+
+    n_dist = torch.distributions.normal.Normal(torch.tensor(center_idx), torch.tensor(20.0))
+
+    probs = torch.arange(0, W)
+    probs = n_dist.log_prob(probs).exp()
+    probs = probs / probs.max()
+    probs = probs.to(b_volume.device)
+
+    b_volume = (b_volume * probs.view(W,1,1,1,1)).sum(0, keepdim=True)
+
     return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
