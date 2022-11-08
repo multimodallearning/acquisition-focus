@@ -44,9 +44,10 @@ class AffineTransformModule(torch.nn.Module):
         # 2) learnt affine
         # 3) and align affine (global alignment @ augment, if any)
 
+        B = y_label.shape[0]
         final_align_affine = (
             self.view_affine.to(x_label.device)
-            @ self.theta.to(x_label.device)
+            @ self.get_batch_affine(B).to(x_label.device)
             @ align_affine.to(x_label.device)
         )
 
@@ -188,11 +189,10 @@ class MMWHSDataset(HybridIdDataset):
 
             D,H,W = label.shape
 
-            with torch.no_grad():
-                sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
-                    self.get_transformed(label.view(1,1,D,H,W), nifti_affine, augment_affine, 'sa', image=None)
-                hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
-                    self.get_transformed(label.view(1,1,D,H,W), nifti_affine, augment_affine, 'hla', image=None)
+            sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
+                self.get_transformed(label.view(1,1,D,H,W), nifti_affine, augment_affine, 'sa', image=None)
+            hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
+                self.get_transformed(label.view(1,1,D,H,W), nifti_affine, augment_affine, 'hla', image=None)
 
             sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
                 sa_image.squeeze(0), sa_label.squeeze(0), sa_image_slc.squeeze(0), sa_label_slc.squeeze(0), sa_affine.squeeze(0)
@@ -288,11 +288,10 @@ class MMWHSDataset(HybridIdDataset):
                         deg_angles = torch.normal(mean=0, std=augment_angle_std*torch.ones(3))
                         augment_affine[b_idx,:3,:3] = get_rotation_matrix_3d_from_angles(deg_angles)
 
-                with torch.no_grad():
-                    sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
-                        self.get_transformed(label, nifti_affine, augment_affine, 'sa', image)
-                    hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
-                        self.get_transformed(label, nifti_affine, augment_affine, 'hla', image)
+                sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
+                    self.get_transformed(label, nifti_affine, augment_affine, 'sa', image)
+                hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
+                    self.get_transformed(label, nifti_affine, augment_affine, 'hla', image)
 
                 all_sa_images.append(sa_image)
                 all_sa_labels.append(sa_label)
