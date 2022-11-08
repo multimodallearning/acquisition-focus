@@ -473,8 +473,14 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     print(f"Trainable param count model: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
     print(f"Non-trainable param count model: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}")
 
+    params = (
+        # list(model.parameters()) +
+        list(training_dataset.sa_atm.parameters()) +
+        list(training_dataset.hla_atm.parameters())
+    )
+
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        params,
         lr=config.lr)
     scaler = amp.GradScaler()
 
@@ -492,8 +498,6 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
     training_dataset.sa_atm.to(device)
     training_dataset.hla_atm.to(device)
-    # optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters()))
-    # optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters()))
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)

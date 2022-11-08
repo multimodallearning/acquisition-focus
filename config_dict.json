@@ -33,9 +33,9 @@
     "save_every": "best",
     "mdl_save_prefix": "data/models",
     "debug": false,
-    "wandb_mode": "disabled",
+    "wandb_mode": "online",
     "do_sweep": false,
-    "checkpoint_path": null,
+    "checkpoint_path": "/shared/slice_inflate/data/models/restful-frog-165_best",
     "do_plot": false,
     "device": "cuda"
 }
