@@ -4,7 +4,7 @@
     "fold_override": null,
     "epochs": 500,
     "test_only_and_output_to": null,
-    "batch_size": 4,
+    "batch_size": 2,
     "val_batch_size": 1,
     "modality": "all",
     "use_2d_normal_to": null,
