@@ -262,7 +262,7 @@ def soft_cut_slice(b_volume):
     W = b_volume.shape[0]
     center_idx = W//2
 
-    n_dist = torch.distributions.normal.Normal(torch.tensor(center_idx), torch.tensor(20.0))
+    n_dist = torch.distributions.normal.Normal(torch.tensor(center_idx), torch.tensor(50.0))
 
     probs = torch.arange(0, W)
     probs = n_dist.log_prob(probs).exp()
