@@ -32,10 +32,14 @@ class AffineTransformModule(torch.nn.Module):
         self.fov_mm = fov_mm
         self.fov_vox = fov_vox
         self.view_affine = view_affine
-        self.theta = torch.nn.Parameter(torch.eye(4))
+        self.theta_t = torch.nn.Parameter(torch.zeros(3))
+        self.theta_m = torch.nn.Parameter(torch.eye(3))
 
     def get_batch_affine(self, batch_size):
-        return self.theta.view(1,4,4).repeat(batch_size,1,1)
+        # theta = torch.cat([self.theta_m, self.theta_t.view(3,1)], dim=1)
+        theta = torch.cat([torch.eye(3, device=self.theta_t.device), self.theta_t.view(3,1)], dim=1)
+        theta = torch.cat([theta, torch.tensor([0,0,0,1], device=theta.device).view(1,4)], dim=0)
+        return theta.view(1,4,4).repeat(batch_size,1,1)
 
     def forward(self, x_image, x_label, nifti_affine, align_affine):
         y_image, y_label, affine = x_image, x_label, None
