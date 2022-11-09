@@ -493,8 +493,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     training_dataset.sa_atm.to(device)
     training_dataset.hla_atm.to(device)
 
-    optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters(), lr=config.lr/10))
-    optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters(), lr=config.lr/10))
+    # optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters(), lr=config.lr/10))
+    # optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters(), lr=config.lr/10))
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)
