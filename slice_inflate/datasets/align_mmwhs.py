@@ -126,13 +126,13 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
     if is_label:
         transformed = checkpoint(
             torch.nn.functional.grid_sample,
-            volume.to(dtype=dtype), grid.to(dtype=dtype), 'bilinear', 'zeros', False
+            volume.to(dtype=dtype), grid.to(dtype=dtype), 'nearest', 'zeros', False
         )
     else:
         min_value = volume.min()
         volume = volume - min_value
         transformed = checkpoint(torch.nn.functional.grid_sample,
-            volume.to(dtype=dtype), grid.to(dtype=dtype), 'bilinear', 'zeros', False
+            volume.to(dtype=dtype), grid.to(dtype=dtype), 'bilinear', 'border', False
         )
         transformed = transformed + min_value
 

@@ -98,13 +98,13 @@ class MMWHSDataset(HybridIdDataset):
             torch.tensor(kwargs['fov_mm']),
             torch.tensor(kwargs['fov_vox']),
             view_affine=torch.as_tensor(np.loadtxt(sa_affine_path)).float(),
-            do_transform_images=False, do_transform_labels=True)
+            do_transform_images=True, do_transform_labels=True)
 
         self.hla_atm = AffineTransformModule(
             torch.tensor(kwargs['fov_mm']),
             torch.tensor(kwargs['fov_vox']),
             view_affine=torch.as_tensor(np.loadtxt(hla_affine_path)).float(),
-            do_transform_images=False, do_transform_labels=True)
+            do_transform_images=True, do_transform_labels=True)
 
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
 
@@ -235,13 +235,18 @@ class MMWHSDataset(HybridIdDataset):
         elif atm_name == 'hla':
             atm = self.hla_atm
 
+
+       # Transform label with 'bilinear' interpolation to have gradients
+        soft_label, _, _ = atm(label.float().view(B,CLASS_NUM,D,H,W), label.view(B,CLASS_NUM,D,H,W), nifti_affine, align_affine)
+
         image, label, affine = atm(image.view(B,C,D,H,W), label.view(B,CLASS_NUM,D,H,W), nifti_affine, align_affine)
 
         if self.self_attributes['crop_around_3d_label_center'] is not None:
             _3d_vox_size = torch.as_tensor(self.self_attributes['crop_around_3d_label_center'])
             label, image, _ = crop_around_label_center(label, _3d_vox_size, image)
+            _, soft_label, _ = crop_around_label_center(label, _3d_vox_size, soft_label)
 
-        label_slc = cut_slice(label)
+        label_slc = soft_cut_slice(soft_label)
         image_slc = cut_slice(image)
 
         if self.self_attributes['crop_around_2d_label_center'] is not None:
