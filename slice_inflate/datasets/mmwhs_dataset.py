@@ -263,7 +263,7 @@ class MMWHSDataset(HybridIdDataset):
                                nifti_affine, align_affine, with_theta=True)
 
         image, label, affine = atm(image.view(B, C, D, H, W), label.view(B, CLASS_NUM, D, H, W),
-                                   nifti_affine, align_affine, with_theta=False)
+                                   nifti_affine, align_affine, with_theta=True)
 
         if self.self_attributes['crop_around_3d_label_center'] is not None:
             _3d_vox_size = torch.as_tensor(
