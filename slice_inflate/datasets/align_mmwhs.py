@@ -257,12 +257,12 @@ def cut_slice(b_volume):
     b_volume = b_volume[center_idx:center_idx+1]
     return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
 
-def soft_cut_slice(b_volume):
+def soft_cut_slice(b_volume, std=50.0):
     b_volume = eo.rearrange(b_volume, 'B C D H W -> W B C D H')
     W = b_volume.shape[0]
     center_idx = W//2
 
-    n_dist = torch.distributions.normal.Normal(torch.tensor(center_idx), torch.tensor(50.0))
+    n_dist = torch.distributions.normal.Normal(torch.tensor(center_idx), torch.tensor(std))
 
     probs = torch.arange(0, W)
     probs = n_dist.log_prob(probs).exp()

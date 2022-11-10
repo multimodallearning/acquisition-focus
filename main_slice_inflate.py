@@ -82,7 +82,7 @@ def prepare_data(config):
         use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
         crop_around_2d_label_center=config.crop_around_2d_label_center,
         max_load_3d_num=config.max_load_3d_num,
-
+        soft_cut_std=config.soft_cut_std,
         augment_angle_std=5,
 
         device=config.device,
@@ -493,8 +493,9 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     training_dataset.sa_atm.to(device)
     training_dataset.hla_atm.to(device)
 
-    # optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters(), lr=config.lr/10))
-    # optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters(), lr=config.lr/10))
+    if config.train_affine_theta:
+        optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters(), lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters(), lr=0.01))
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)
@@ -816,6 +817,8 @@ def run_dl(run_name, config, training_dataset, test_dataset):
                         epx=epx,
                         loss=train_loss,
                         model=model,
+                        sa_atm=training_dataset.sa_atm,
+                        hla_atm=training_dataset.hla_atm,
                         optimizer=optimizer,
                         scheduler=scheduler,
                         scaler=scaler)

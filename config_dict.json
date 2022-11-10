@@ -7,6 +7,8 @@
     "batch_size": 2,
     "val_batch_size": 1,
     "modality": "all",
+    "train_affine_theta": false,
+    "soft_cut_std": 8.0,
     "use_2d_normal_to": null,
     "dataset": "mmwhs",
     "data_base_path": "./data/MMWHS",
