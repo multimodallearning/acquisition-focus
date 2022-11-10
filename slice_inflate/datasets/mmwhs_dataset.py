@@ -63,14 +63,15 @@ class AffineTransformModule(torch.nn.Module):
         else:
             theta = torch.eye(4).view(1, 4, 4).repeat(B, 1, 1)
 
-        final_align_affine = augment_affine.to(device) @ theta.to(device) @ self.view_affine.to(device)
+        optimized_view_affine = theta.to(device) @ self.view_affine.to(device)
+        final_affine = optimized_view_affine @ augment_affine.to(device)
 
         if not x_image_is_none:
-            y_image, new_affine = nifti_transform(x_image, nifti_affine, final_align_affine,
+            y_image, new_affine = nifti_transform(x_image, nifti_affine, final_affine,
                                                   fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=False)
 
         if not x_label_is_none:
-            y_label, affine = nifti_transform(x_label, nifti_affine, final_align_affine,
+            y_label, affine = nifti_transform(x_label, nifti_affine, final_affine,
                                               fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=True)
 
         return y_image, y_label, new_affine
