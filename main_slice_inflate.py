@@ -494,8 +494,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     training_dataset.hla_atm.to(device)
 
     if config.train_affine_theta:
-        optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters(), lr=0.01))
-        optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters(), lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters(), lr=0.1))
+        optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters(), lr=0.1))
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)
