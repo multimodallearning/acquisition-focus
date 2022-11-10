@@ -35,9 +35,9 @@ class AffineTransformModule(torch.nn.Module):
         self.theta_m = torch.nn.Parameter(torch.eye(3))
 
     def get_batch_affine(self, batch_size):
-        # theta = torch.cat([self.theta_m, self.theta_t.view(3,1)], dim=1)
-        theta = torch.cat(
-            [torch.eye(3, device=self.theta_t.device), self.theta_t.view(3, 1)], dim=1)
+        theta = torch.cat([self.theta_m, self.theta_t.view(3,1)], dim=1)
+        # theta = torch.cat(
+        #     [torch.eye(3, device=self.theta_t.device), self.theta_t.view(3, 1)], dim=1)
         theta = torch.cat([theta, torch.tensor(
             [0, 0, 0, 1], device=theta.device).view(1, 4)], dim=0)
         return theta.view(1, 4, 4).repeat(batch_size, 1, 1)
