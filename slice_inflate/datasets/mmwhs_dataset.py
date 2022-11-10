@@ -42,7 +42,7 @@ class AffineTransformModule(torch.nn.Module):
             [0, 0, 0, 1], device=theta.device).view(1, 4)], dim=0)
         return theta.view(1, 4, 4).repeat(batch_size, 1, 1)
 
-    def forward(self, x_image, x_label, nifti_affine, align_affine, with_theta=True):
+    def forward(self, x_image, x_label, nifti_affine, augment_affine, with_theta=True):
 
         x_image_is_none = x_image.numel() == 0 or x_image is None
         x_label_is_none = x_label.numel() == 0 or x_label is None
@@ -63,8 +63,7 @@ class AffineTransformModule(torch.nn.Module):
         else:
             theta = torch.eye(4).view(1, 4, 4).repeat(B, 1, 1)
 
-        final_align_affine = theta.to(
-            device) @ self.view_affine.to(device) @ align_affine.to(device)
+        final_align_affine = augment_affine.to(device) @ theta.to(device) @ self.view_affine.to(device)
 
         if not x_image_is_none:
             y_image, new_affine = nifti_transform(x_image, nifti_affine, final_align_affine,
@@ -241,7 +240,7 @@ class MMWHSDataset(HybridIdDataset):
             additional_data=additional_data
         )
 
-    def get_transformed(self, label, nifti_affine, align_affine, atm_name, image=None):
+    def get_transformed(self, label, nifti_affine, augment_affine, atm_name, image=None):
 
         assert atm_name in ['sa', 'hla']
         img_is_invalid = image is None or image.dim() == 0
@@ -260,10 +259,10 @@ class MMWHSDataset(HybridIdDataset):
 
        # Transform label with 'bilinear' interpolation to have gradients
         soft_label, _, _ = atm(label.float().view(B, CLASS_NUM, D, H, W), label.view(B, CLASS_NUM, D, H, W),
-                               nifti_affine, align_affine, with_theta=True)
+                               nifti_affine, augment_affine, with_theta=True)
 
         image, label, affine = atm(image.view(B, C, D, H, W), label.view(B, CLASS_NUM, D, H, W),
-                                   nifti_affine, align_affine, with_theta=True)
+                                   nifti_affine, augment_affine, with_theta=True)
 
         if self.self_attributes['crop_around_3d_label_center'] is not None:
             _3d_vox_size = torch.as_tensor(
@@ -539,7 +538,7 @@ def load_data(self_attributes: dict):
 
         align_affine_path = str(Path(self.base_dir, "preprocessed",
                                 f"f1002mr_m{_3d_id.split('-')[0]}{_3d_id.split('-')[1]}.mat"))
-        align_affine = torch.from_numpy(np.loadtxt(align_affine_path))
+        augment_affine = torch.from_numpy(np.loadtxt(align_affine_path))
         affine = torch.as_tensor(nib_tmp.affine)
 
         additional_data_3d[_3d_id] = dict(nifti_affine=affine)
