@@ -52,7 +52,7 @@ def get_transformed_affine_from_grid_affine(grid_affine, volume_affine, ras_affi
 
 
 
-def get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape, fov_mm):
+def get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape, fov_mm, pre_grid_sample_affine):
 
     # (IJK -> RAS+).inverse() @ (Slice -> RAS+) == Slice -> IJK
     affine_mat = volume_affine.inverse() @ ras_affine_mat
@@ -93,12 +93,15 @@ def get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape
     ]).to(volume_affine)
     affine_mat = affine_mat @ reflect_mat.view(1,4,4)
 
-    return affine_mat
+    if pre_grid_sample_affine is None:
+        return affine_mat
+
+    return affine_mat @ pre_grid_sample_affine
 
 
 
 def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_mat: torch.Tensor, fov_mm, fov_vox,
-    is_label=False, dtype=torch.float32):
+    is_label=False, pre_grid_sample_affine=None, dtype=torch.float32):
 
     assert volume_affine.dim() == ras_affine_mat.dim() == 3 # B,4,4
     assert volume.shape[0] == volume_affine.shape[0] == ras_affine_mat.shape[0]
@@ -109,13 +112,16 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
     volume_affine = volume_affine.to(device)
     ras_affine_mat = ras_affine_mat.to(volume_affine)
 
+    if pre_grid_sample_affine is not None:
+        pre_grid_sample_affine = pre_grid_sample_affine.to(volume_affine)
+
     # Prepare volume
     B,C,D,H,W = volume.shape
     volume_shape = torch.tensor([D,H,W], device=device)
     initial_dtype = volume.dtype
 
     # Get the affine for torch grid resampling from RAS space
-    grid_affine = get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape, fov_mm)
+    grid_affine = get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape, fov_mm, pre_grid_sample_affine)
 
     target_shape = torch.Size([B,C] + fov_vox.tolist())
 

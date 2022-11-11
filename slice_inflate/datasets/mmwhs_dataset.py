@@ -31,12 +31,13 @@ class AffineTransformModule(torch.nn.Module):
         self.fov_mm = fov_mm
         self.fov_vox = fov_vox
         self.view_affine = view_affine
-        self.theta_t = torch.nn.Parameter(torch.zeros(3))
+        self.theta_t = torch.nn.Parameter(torch.zeros(1))
         self.theta_a = torch.nn.Parameter(torch.zeros(3))
 
     def get_batch_affine(self, batch_size):
         theta_m = get_rotation_matrix_3d_from_angles(self.theta_a)
-        theta = torch.cat([theta_m, self.theta_t.view(3,1)], dim=1)
+        theta_t = torch.cat([self.theta_t, torch.tensor([0,0], device=self.theta_t.device)])
+        theta = torch.cat([theta_m, theta_t.view(3,1)], dim=1)
         theta = torch.cat([theta, torch.tensor(
             [0, 0, 0, 1], device=theta.device).view(1, 4)], dim=0)
         return theta.view(1, 4, 4).repeat(batch_size, 1, 1)
@@ -62,8 +63,7 @@ class AffineTransformModule(torch.nn.Module):
         else:
             theta = torch.eye(4).view(1, 4, 4).repeat(B, 1, 1)
 
-        optimized_view_affine = theta.to(device) @ self.view_affine.to(device)
-        final_affine = optimized_view_affine @ augment_affine.to(device)
+        final_affine = self.view_affine.to(device) @ augment_affine.to(device)
 
         # b = torch.load("/shared/slice_inflate/data/models/dulcet-salad-196_best/sa_atm.pth")
         # self.theta_t = torch.nn.Parameter(b['theta_t'])
@@ -78,11 +78,13 @@ class AffineTransformModule(torch.nn.Module):
 
         if not x_image_is_none:
             y_image, new_affine = nifti_transform(x_image, nifti_affine, final_affine,
-                                                  fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=False)
+                                                  fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=False,
+                                                  pre_grid_sample_affine=theta)
 
         if not x_label_is_none:
             y_label, affine = nifti_transform(x_label, nifti_affine, final_affine,
-                                              fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=True)
+                                              fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=True,
+                                              pre_grid_sample_affine=theta)
 
         return y_image, y_label, new_affine
 
