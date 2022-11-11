@@ -497,8 +497,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     if config.train_affine_theta:
         optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_t, lr=1))
         optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_t, lr=1))
-        optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_a, lr=0.1))
-        optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_a, lr=0.1))
+        optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_a, lr=1))
+        optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_a, lr=1))
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)
@@ -639,10 +639,19 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
             # test_all_parameters_updated(model)
             scaler.step(optimizer)
             scaler.update()
-            if epx % 10 == 0 and batch_idx == 0:
-                new_theta = training_dataset.sa_atm.get_batch_affine(1)
-                print("theta is:", new_theta)
-                nib.save(nib.Nifti1Image(b_input.int().detach().cpu().numpy()[0].argmax(0), affine=np.eye(4)), f"data/output/input_epx_{epx}.nii.gz")
+            if epx % 10 == 0 and '1010-mr' in batch['id']:
+                idx = batch['id'].index('1010-mr')
+                sa_theta = training_dataset.sa_atm.get_batch_affine(1)
+                hla_theta = training_dataset.hla_atm.get_batch_affine(1)
+                print("theta SA is:")
+                print(sa_theta)
+                print()
+                print("theta HLA is:")
+                print(hla_theta)
+                print()
+                _dir = Path(f"data/output/{wandb.run.name}")
+                _dir.mkdir(exist_ok=True)
+                nib.save(nib.Nifti1Image(b_input[idx].argmax(0).int().detach().cpu().numpy(), affine=np.eye(4)), _dir.joinpath(f"input_epx_{epx}.nii.gz"))
 
             # print((new_theta - old_theta).abs().sum())
 
