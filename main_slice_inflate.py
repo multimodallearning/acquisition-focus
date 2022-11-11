@@ -24,6 +24,7 @@ from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as 
 os.environ.update(get_vars('*'))
 
 import torch
+torch.set_printoptions(sci_mode=False)
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.cuda.amp as amp
@@ -620,7 +621,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
 
     if phase == 'train':
         model.train()
-        dataset.train(augment=False)
+        dataset.train(augment=True)
     else:
         model.eval()
         dataset.eval()
@@ -633,14 +634,17 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
         if phase == 'train':
             optimizer.zero_grad()
             y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
-            old_theta = training_dataset.sa_atm.get_batch_affine(1)
+            # old_theta = training_dataset.sa_atm.get_batch_affine(1)
             scaler.scale(loss).backward()
             # test_all_parameters_updated(model)
             scaler.step(optimizer)
             scaler.update()
-            new_theta = training_dataset.sa_atm.get_batch_affine(1)
-            torch.set_printoptions(sci_mode=False)
-            print((new_theta - old_theta).abs().sum())
+            if epx % 10 == 0 and batch_idx == 0:
+                new_theta = training_dataset.sa_atm.get_batch_affine(1)
+                print("theta is:", new_theta)
+                nib.save(nib.Nifti1Image(b_input.int().detach().cpu().numpy()[0].argmax(0), affine=np.eye(4)), f"data/output/input_epx_{epx}.nii.gz")
+
+            # print((new_theta - old_theta).abs().sum())
 
         else:
             with torch.no_grad():
