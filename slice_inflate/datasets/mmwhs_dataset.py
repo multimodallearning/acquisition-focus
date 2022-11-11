@@ -32,12 +32,11 @@ class AffineTransformModule(torch.nn.Module):
         self.fov_vox = fov_vox
         self.view_affine = view_affine
         self.theta_t = torch.nn.Parameter(torch.zeros(3))
-        self.theta_m = torch.nn.Parameter(torch.eye(3))
+        self.theta_a = torch.nn.Parameter(torch.zeros(3))
 
     def get_batch_affine(self, batch_size):
-        theta = torch.cat([self.theta_m, self.theta_t.view(3,1)], dim=1)
-        # theta = torch.cat(
-        #     [torch.eye(3, device=self.theta_t.device), self.theta_t.view(3, 1)], dim=1)
+        theta_m = get_rotation_matrix_3d_from_angles(self.theta_a)
+        theta = torch.cat([theta_m, self.theta_t.view(3,1)], dim=1)
         theta = torch.cat([theta, torch.tensor(
             [0, 0, 0, 1], device=theta.device).view(1, 4)], dim=0)
         return theta.view(1, 4, 4).repeat(batch_size, 1, 1)
@@ -65,6 +64,17 @@ class AffineTransformModule(torch.nn.Module):
 
         optimized_view_affine = theta.to(device) @ self.view_affine.to(device)
         final_affine = optimized_view_affine @ augment_affine.to(device)
+
+        # b = torch.load("/shared/slice_inflate/data/models/dulcet-salad-196_best/sa_atm.pth")
+        # self.theta_t = torch.nn.Parameter(b['theta_t'])
+        # self.theta_m = torch.nn.Parameter(b['theta_m'])
+        # theta = self.get_batch_affine(B)
+        # optimized_view_affine = theta.to(device) @ self.view_affine.to(device)
+        # final_affine = optimized_view_affine @ augment_affine.to(device)
+        # y_label, affine = nifti_transform(x_label, nifti_affine, final_affine,
+        #                                     fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=True)
+        # nib.save(nib.Nifti1Image(y_label.int().detach().cpu().numpy()[0].argmax(0), affine=affine[0].cpu().detach().numpy()), "sa_initial.nii.gz")
+        # nib.save(nib.Nifti1Image(y_label.int().detach().cpu().numpy()[0].argmax(0), affine=affine[0].cpu().detach().numpy()), "sa_learnt.nii.gz")
 
         if not x_image_is_none:
             y_image, new_affine = nifti_transform(x_image, nifti_affine, final_affine,

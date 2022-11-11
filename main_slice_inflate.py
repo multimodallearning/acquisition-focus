@@ -496,8 +496,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     if config.train_affine_theta:
         optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_t, lr=1))
         optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_t, lr=1))
-        optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_m, lr=0.01))
-        optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_m, lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_a, lr=0.1))
+        optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_a, lr=0.1))
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)
@@ -620,7 +620,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
 
     if phase == 'train':
         model.train()
-        dataset.train(use_modified=False)
+        dataset.train(augment=False)
     else:
         model.eval()
         dataset.eval()
@@ -633,10 +633,14 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
         if phase == 'train':
             optimizer.zero_grad()
             y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
+            old_theta = training_dataset.sa_atm.get_batch_affine(1)
             scaler.scale(loss).backward()
             # test_all_parameters_updated(model)
             scaler.step(optimizer)
             scaler.update()
+            new_theta = training_dataset.sa_atm.get_batch_affine(1)
+            torch.set_printoptions(sci_mode=False)
+            print((new_theta - old_theta).abs().sum())
 
         else:
             with torch.no_grad():
