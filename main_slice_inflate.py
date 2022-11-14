@@ -50,6 +50,7 @@ from mdl_seg_class.metrics import dice3d, hausdorff3d
 import numpy as np
 
 from slice_inflate.models.generic_UNet_opt_skip_connections import Generic_UNet
+from slice_inflate.models.affine_transform import AffineTransformModule
 import dill
 
 import einops as eo
@@ -491,8 +492,36 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     else:
         print(f"Generating fresh optimizer, scheduler, scaler.")
 
-    training_dataset.sa_atm.to(device)
-    training_dataset.hla_atm.to(device)
+    hla_affine_path = Path(
+        THIS_SCRIPT_DIR,
+        "slice_inflate/preprocessing",
+        "mmwhs_1002_HLA_red_slice_to_ras.mat"
+    )
+    sa_affine_path = Path(
+        THIS_SCRIPT_DIR,
+        "slice_inflate/preprocessing",
+        "mmwhs_1002_SA_yellow_slice_to_ras.mat"
+    )
+
+    sa_atm = AffineTransformModule(
+        torch.tensor(config['fov_mm']),
+        torch.tensor(config['fov_vox']),
+        view_affine=torch.as_tensor(np.loadtxt(sa_affine_path)).float())
+
+    hla_atm = AffineTransformModule(
+        torch.tensor(config['fov_mm']),
+        torch.tensor(config['fov_vox']),
+        view_affine=torch.as_tensor(np.loadtxt(hla_affine_path)).float())
+
+
+    sa_atm.to(device)
+    hla_atm.to(device)
+
+    training_dataset.sa_atm = sa_atm
+    training_dataset.hla_atm = hla_atm
+
+    test_dataset.sa_atm = sa_atm
+    test_dataset.hla_atm = hla_atm
 
     if config.train_affine_theta:
         # optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_t, lr=0.1))
