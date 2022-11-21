@@ -50,7 +50,7 @@ from mdl_seg_class.metrics import dice3d, hausdorff3d
 import numpy as np
 
 from slice_inflate.models.generic_UNet_opt_skip_connections import Generic_UNet
-from slice_inflate.models.affine_transform import AffineTransformModule
+from slice_inflate.models.affine_transform import AffineTransformModule, get_random_angles
 import dill
 
 import einops as eo
@@ -513,7 +513,6 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         torch.tensor(config['fov_vox']),
         view_affine=torch.as_tensor(np.loadtxt(hla_affine_path)).float())
 
-
     sa_atm.to(device)
     hla_atm.to(device)
 
@@ -526,8 +525,9 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     if config.train_affine_theta:
         # optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_t, lr=0.1))
         # optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_t, lr=0.1))
-        optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_a, lr=0.1))
-        optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_a, lr=0.1))
+        # optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_a, lr=0.1))
+        # optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_a, lr=0.1))
+        pass
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)

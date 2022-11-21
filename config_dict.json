@@ -35,9 +35,11 @@
     "save_every": "best",
     "mdl_save_prefix": "data/models",
     "debug": false,
-    "wandb_mode": "online",
+    "wandb_mode": "disabled",
     "do_sweep": false,
     "checkpoint_path": null,
     "do_plot": false,
-    "device": "cuda"
+    "device": "cuda",
+
+    "fixed_slice_seed": 2
 }
