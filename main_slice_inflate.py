@@ -525,8 +525,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     if config.train_affine_theta:
         # optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_t, lr=0.1))
         # optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_t, lr=0.1))
-        # optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_a, lr=0.1))
-        # optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_a, lr=0.1))
+        optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_a, lr=0.01))
+        # optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_a, lr=0.0001))
         pass
 
     # for submodule in model.modules():
@@ -657,6 +657,8 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
 
     if isinstance(model, BlendowskiVAE):
         model.set_epoch(epx)
+
+
 
     for batch_idx, batch in tqdm(enumerate(dataloader), desc=phase, total=len(dataloader)):
         b_input, b_seg = get_model_input(batch, config, len(dataset.label_tags))

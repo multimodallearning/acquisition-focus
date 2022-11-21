@@ -16,7 +16,7 @@ class AffineTransformModule(torch.nn.Module):
         self.theta_a = torch.nn.Parameter(torch.zeros(3))
 
     def get_batch_affine(self, batch_size):
-        theta_m = angle_axis_to_rotation_matrix(self.theta_a)[0,:3,:3]
+        theta_m = angle_axis_to_rotation_matrix(self.theta_a.view(1,3))[0,:3,:3]
         theta_t = torch.cat([self.theta_t, torch.tensor([0,0], device=self.theta_t.device)])
         theta = torch.cat([theta_m, theta_t.view(3,1)], dim=1)
         theta = torch.cat([theta, torch.tensor(
@@ -111,7 +111,8 @@ def angle_axis_to_rotation_matrix(angle_axis):
         # norm of the angle_axis vector is greater than zero. Otherwise
         # we get a division by zero.
         k_one = 1.0
-        theta = torch.sqrt(theta2)
+        EPS = 1e-6
+        theta = torch.sqrt(theta2+EPS)
         wxyz = angle_axis / (theta + eps)
         wx, wy, wz = torch.chunk(wxyz, 3, dim=1)
         cos_theta = torch.cos(theta)
