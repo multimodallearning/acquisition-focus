@@ -513,15 +513,22 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         torch.tensor(config['fov_vox']),
         view_affine=torch.as_tensor(np.loadtxt(hla_affine_path)).float())
 
-    soft_cut_module = SoftCutModule(n_rows=1, n_cols=1, soft_cut_softness=config['soft_cut_std'])
+    cut_rows = 1
+    cut_cols = 1
+    sa_cut_module = SoftCutModule(
+        n_rows=cut_rows, n_cols=cut_cols, soft_cut_softness=config['soft_cut_std'])
+    hla_cut_module = SoftCutModule(
+        n_rows=cut_rows, n_cols=cut_cols, soft_cut_softness=config['soft_cut_std'])
 
     sa_atm.to(device)
     hla_atm.to(device)
-    soft_cut_module.to(device)
+    sa_cut_module.to(device)
+    hla_cut_module.to(device)
 
     training_dataset.sa_atm = sa_atm
     training_dataset.hla_atm = hla_atm
-    training_dataset.cut_module = soft_cut_module
+    training_dataset.sa_cut_module = sa_cut_module
+    training_dataset.hla_cut_module = hla_cut_module
 
     test_dataset.sa_atm = sa_atm
     test_dataset.hla_atm = hla_atm
@@ -879,6 +886,8 @@ def run_dl(run_name, config, training_dataset, test_dataset):
                         model=model,
                         sa_atm=training_dataset.sa_atm,
                         hla_atm=training_dataset.hla_atm,
+                        sa_cut_module=training_dataset.sa_cut_module,
+                        hla_cut_module=training_dataset.hla_cut_module,
                         optimizer=optimizer,
                         scheduler=scheduler,
                         scaler=scaler)
@@ -887,7 +896,13 @@ def run_dl(run_name, config, training_dataset, test_dataset):
                 save_path = f"{config.mdl_save_prefix}/{wandb.run.name}{fold_postfix}_epx{epx}"
                 save_model(
                     Path(THIS_SCRIPT_DIR, save_path),
+                    epx=epx,
+                    loss=train_loss,
                     model=model,
+                    sa_atm=training_dataset.sa_atm,
+                    hla_atm=training_dataset.hla_atm,
+                    sa_cut_module=training_dataset.sa_cut_module,
+                    hla_cut_module=training_dataset.hla_cut_module,
                     optimizer=optimizer,
                     scheduler=scheduler,
                     scaler=scaler)

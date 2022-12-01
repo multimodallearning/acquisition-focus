@@ -47,7 +47,8 @@ class MMWHSDataset(HybridIdDataset):
 
         self.sa_atm = None
         self.hla_atm = None
-        self.cut_module = None
+        self.sa_cut_module = None
+        self.hla_cut_module = None
 
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
 
@@ -184,8 +185,10 @@ class MMWHSDataset(HybridIdDataset):
 
         if atm_name == 'sa':
             atm = self.sa_atm
+            cut_module = self.sa_cut_module
         elif atm_name == 'hla':
             atm = self.hla_atm
+            cut_module = self.hla_cut_module
 
        # Transform label with 'bilinear' interpolation to have gradients
         soft_label, _, _ = atm(label.float().view(B, CLASS_NUM, D, H, W), label.view(B, CLASS_NUM, D, H, W),
@@ -202,8 +205,7 @@ class MMWHSDataset(HybridIdDataset):
             _, soft_label, _ = crop_around_label_center(
                 label, _3d_vox_size, soft_label)
 
-        label_slc = self.cut_module(soft_label)
-
+        label_slc = cut_module(soft_label)
         image_slc = cut_slice(image)
 
         if self.self_attributes['crop_around_2d_label_center'] is not None:
