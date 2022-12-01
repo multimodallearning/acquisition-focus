@@ -110,6 +110,17 @@ class SoftCutModule(torch.nn.Module):
 
         return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
 
+    def get_extra_state(self):
+        state = dict(
+            n_rows=self.n_rows,
+            n_cols=self.n_cols
+        )
+        return state
+
+    def set_extra_state(self, state):
+        self.n_rows = state['n_rows']
+        self.n_cols = state['n_cols']
+
 
 
 def get_random_affine(angle_std, seed=0):

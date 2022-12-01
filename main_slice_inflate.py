@@ -532,7 +532,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
     test_dataset.sa_atm = sa_atm
     test_dataset.hla_atm = hla_atm
-    test_dataset.cut_module = soft_cut_module
+    test_dataset.sa_cut_module = sa_cut_module
+    test_dataset.hla_cut_module = hla_cut_module
 
     if config.train_affine_theta:
         # optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_t, lr=0.1))
