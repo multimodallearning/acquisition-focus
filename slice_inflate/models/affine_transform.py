@@ -72,6 +72,7 @@ class AffineTransformModule(torch.nn.Module):
 
 
 class SoftCutModule(torch.nn.Module):
+
     def __init__(self, n_rows, n_cols, soft_cut_softness:float=8.0):
         super().__init__()
 
@@ -109,6 +110,17 @@ class SoftCutModule(torch.nn.Module):
         # nib.save(nib.Nifti1Image(b_volume[0,0][1:].sum(0,keepdim=True).detach().cpu().numpy(), affine=np.eye(4)), "b_volume.nii.gz")
 
         return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
+
+    def get_extra_state(self):
+        state = dict(
+            n_rows=self.n_rows,
+            n_cols=self.n_cols
+        )
+        return state
+
+    def set_extra_state(self, state):
+        self.n_rows = state['n_rows']
+        self.n_cols = state['n_cols']
 
 
 

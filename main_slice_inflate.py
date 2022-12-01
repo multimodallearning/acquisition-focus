@@ -513,19 +513,19 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         torch.tensor(config['fov_vox']),
         view_affine=torch.as_tensor(np.loadtxt(hla_affine_path)).float())
 
-    soft_cut_module = SoftCutModule(n_rows=1, n_cols=1, soft_cut_softness=config['soft_cut_std'])
+    cut_module = SoftCutModule(n_rows=1, n_cols=1, soft_cut_softness=config['soft_cut_std'])
 
     sa_atm.to(device)
     hla_atm.to(device)
-    soft_cut_module.to(device)
+    cut_module.to(device)
 
     training_dataset.sa_atm = sa_atm
     training_dataset.hla_atm = hla_atm
-    training_dataset.cut_module = soft_cut_module
+    training_dataset.cut_module = cut_module
 
     test_dataset.sa_atm = sa_atm
     test_dataset.hla_atm = hla_atm
-    test_dataset.cut_module = soft_cut_module
+    test_dataset.cut_module = cut_module
 
     if config.train_affine_theta:
         # optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_t, lr=0.1))
@@ -879,6 +879,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
                         model=model,
                         sa_atm=training_dataset.sa_atm,
                         hla_atm=training_dataset.hla_atm,
+                        cut_module=training_dataset.cut_module,
                         optimizer=optimizer,
                         scheduler=scheduler,
                         scaler=scaler)
