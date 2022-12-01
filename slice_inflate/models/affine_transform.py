@@ -1,5 +1,6 @@
 
 import torch
+import einops as eo
 from slice_inflate.datasets.align_mmwhs import nifti_transform
 from slice_inflate.utils.torch_utils import get_rotation_matrix_3d_from_angles
 
@@ -68,6 +69,46 @@ class AffineTransformModule(torch.nn.Module):
                                               pre_grid_sample_affine=theta)
 
         return y_image, y_label, new_affine
+
+
+class SoftCutModule(torch.nn.Module):
+    def __init__(self, n_rows, n_cols, soft_cut_softness:float=8.0):
+        super().__init__()
+
+        self.n_rows = n_rows
+        self.n_cols = n_cols
+        self.soft_cut_softness = soft_cut_softness
+        self.offsets = torch.nn.Parameter(torch.zeros(n_rows, n_cols))
+
+    def forward(self, b_volume):
+        B,C,D,H,W = b_volume.shape
+        # b_volume = eo.rearrange(b_volume, 'B C D H W -> D H B C W')
+        b_volume = eo.rearrange(b_volume, 'B C D H W -> W B C D H')
+
+        centers = (W-1)/2 + self.offsets
+
+        sz_D = b_volume.shape[-2] // self.n_rows
+        sz_H = b_volume.shape[-1] // self.n_cols
+
+        n_dist = torch.distributions.normal.Normal(
+            centers,
+            torch.tensor(self.soft_cut_softness, device=centers.device))
+
+        probs = (torch.arange(0, W).view(-1,1,1).repeat(1,self.n_rows,self.n_cols)).to(centers.device)
+        probs = n_dist.log_prob(probs).exp()
+        probs = probs / probs.max()
+        probs = probs.to(b_volume.device)
+        probs = probs.repeat_interleave(sz_D, dim=1).repeat_interleave(sz_H, dim=2)
+        probs = probs.view(W,1,1,D,H)
+
+        b_volume = (b_volume * probs).sum(0, keepdim=True)
+
+        # Save b_volume as a nifti
+        # import nibabel as nib
+        # import numpy as np
+        # nib.save(nib.Nifti1Image(b_volume[0,0][1:].sum(0,keepdim=True).detach().cpu().numpy(), affine=np.eye(4)), "b_volume.nii.gz")
+
+        return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
 
 
 

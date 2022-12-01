@@ -47,6 +47,7 @@ class MMWHSDataset(HybridIdDataset):
 
         self.sa_atm = None
         self.hla_atm = None
+        self.cut_module = None
 
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
 
@@ -201,11 +202,8 @@ class MMWHSDataset(HybridIdDataset):
             _, soft_label, _ = crop_around_label_center(
                 label, _3d_vox_size, soft_label)
 
-        if self.self_attributes['soft_cut_std'] > 0.0:
-            label_slc = soft_cut_slice(soft_label, self.self_attributes['soft_cut_std'])
-        else:
-            label_slc = cut_slice(label)
-            
+        label_slc = self.cut_module(soft_label)
+
         image_slc = cut_slice(image)
 
         if self.self_attributes['crop_around_2d_label_center'] is not None:
