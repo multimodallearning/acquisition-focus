@@ -117,7 +117,7 @@ class MMWHSDataset(HybridIdDataset):
         augment_affine = None
 
         if self.augment_at_collate:
-            sa_image, sa_label = image, label
+            hla_image, hla_label = image, label
             sa_image_slc, sa_label_slc = torch.tensor([]), torch.tensor([])
             hla_image_slc, hla_label_slc = torch.tensor([]), torch.tensor([])
             sa_affine, hla_affine = torch.tensor([]), torch.tensor([])
@@ -157,11 +157,11 @@ class MMWHSDataset(HybridIdDataset):
             image_path=image_path,
             label_path=label_path,
 
-            image=sa_image.to(device=self.device),
+            image=hla_image.to(device=self.device),
             sa_image_slc=sa_image_slc.to(device=self.device),
             hla_image_slc=hla_image_slc.to(device=self.device),
 
-            label=sa_label.long().to(device=self.device),
+            label=hla_label.long().to(device=self.device),
             sa_label_slc=sa_label_slc.long().to(device=self.device),
             hla_label_slc=hla_label_slc.long().to(device=self.device),
 
@@ -231,8 +231,8 @@ class MMWHSDataset(HybridIdDataset):
                 label = batch['label']
                 additional_data = batch['additional_data']
 
-                all_sa_images = []
-                all_sa_labels = []
+                all_hla_images = []
+                all_hla_labels = []
                 all_sa_image_slcs = []
                 all_sa_label_slcs = []
                 all_hla_image_slcs = []
@@ -265,8 +265,8 @@ class MMWHSDataset(HybridIdDataset):
                     self.get_transformed(
                         label, nifti_affine, augment_affine, 'hla', image)
 
-                all_sa_images.append(sa_image)
-                all_sa_labels.append(sa_label)
+                all_hla_images.append(hla_image)
+                all_hla_labels.append(hla_label)
                 all_sa_image_slcs.append(sa_image_slc)
                 all_sa_label_slcs.append(sa_label_slc)
                 all_hla_image_slcs.append(hla_image_slc)
@@ -275,8 +275,8 @@ class MMWHSDataset(HybridIdDataset):
                 all_hla_affines.append(hla_affine)
 
                 batch.update(dict(
-                    image=torch.cat(all_sa_images, dim=0),
-                    label=torch.cat(all_sa_labels, dim=0),
+                    image=torch.cat(all_hla_images, dim=0),
+                    label=torch.cat(all_hla_labels, dim=0),
 
                     sa_image_slc=torch.cat(all_sa_image_slcs, dim=0),
                     sa_label_slc=torch.cat(all_sa_label_slcs, dim=0),

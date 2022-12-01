@@ -72,6 +72,7 @@ class AffineTransformModule(torch.nn.Module):
 
 
 class SoftCutModule(torch.nn.Module):
+
     def __init__(self, n_rows, n_cols, soft_cut_softness:float=8.0):
         super().__init__()
 
