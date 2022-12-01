@@ -85,14 +85,14 @@ class SoftCutModule(torch.nn.Module):
         # b_volume = eo.rearrange(b_volume, 'B C D H W -> D H B C W')
         b_volume = eo.rearrange(b_volume, 'B C D H W -> W B C D H')
 
-        centers = (W-1)/2 + self.offsets
+        centers = (W-1)/2 + self.offsets * W/2
 
         sz_D = b_volume.shape[-2] // self.n_rows
         sz_H = b_volume.shape[-1] // self.n_cols
 
         n_dist = torch.distributions.normal.Normal(
             centers,
-            torch.tensor(self.soft_cut_softness, device=centers.device))
+            torch.tensor(self.soft_cut_softness * W/2, device=centers.device))
 
         probs = (torch.arange(0, W).view(-1,1,1).repeat(1,self.n_rows,self.n_cols)).to(centers.device)
         probs = n_dist.log_prob(probs).exp()

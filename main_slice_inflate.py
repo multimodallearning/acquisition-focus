@@ -679,12 +679,16 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
             if epx % 10 == 0 and '1010-mr' in batch['id']:
                 idx = batch['id'].index('1010-mr')
                 sa_theta = training_dataset.sa_atm.get_batch_affine(1)
+                sa_offsets = training_dataset.cut_module.offsets
                 hla_theta = training_dataset.hla_atm.get_batch_affine(1)
                 print("theta SA is:")
                 print(sa_theta)
                 print()
                 print("theta HLA is:")
                 print(hla_theta)
+                print()
+                print("offsets SA are:")
+                print(sa_offsets)
                 print()
                 _dir = Path(f"data/output/{wandb.run.name}")
                 _dir.mkdir(exist_ok=True)
