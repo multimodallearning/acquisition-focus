@@ -539,8 +539,9 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         # optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_t, lr=0.1))
         # optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_t, lr=0.1))
         optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_a, lr=0.01))
-        optimizer.add_param_group(dict(params=training_dataset.cut_module.offsets, lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.sa_cut_module.offsets, lr=0.01))
         # optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_a, lr=0.0001))
+        # optimizer.add_param_group(dict(params=training_dataset.sa_cut_module.offsets, lr=0.01))
         pass
 
     # for submodule in model.modules():
@@ -687,7 +688,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
             if epx % 10 == 0 and '1010-mr' in batch['id']:
                 idx = batch['id'].index('1010-mr')
                 sa_theta = training_dataset.sa_atm.get_batch_affine(1)
-                sa_offsets = training_dataset.cut_module.offsets
+                sa_offsets = training_dataset.sa_cut_module.offsets
                 hla_theta = training_dataset.hla_atm.get_batch_affine(1)
                 print("theta SA is:")
                 print(sa_theta)
