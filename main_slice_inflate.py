@@ -536,12 +536,12 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     test_dataset.hla_cut_module = hla_cut_module
 
     if config.train_affine_theta:
-        # optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_t, lr=0.1))
-        # optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_t, lr=0.1))
         optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_a, lr=0.01))
-        optimizer.add_param_group(dict(params=training_dataset.sa_cut_module.offsets, lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_t, lr=0.01))
+        # optimizer.add_param_group(dict(params=training_dataset.sa_cut_module.offsets, lr=0.01))
         optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_a, lr=0.01))
-        optimizer.add_param_group(dict(params=training_dataset.hla_cut_module.offsets, lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_t, lr=0.01))
+        # optimizer.add_param_group(dict(params=training_dataset.hla_cut_module.offsets, lr=0.01))
         pass
 
     # for submodule in model.modules():
@@ -689,6 +689,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
                 idx = batch['id'].index('1010-mr')
                 sa_theta = training_dataset.sa_atm.get_batch_affine(1)
                 sa_offsets = training_dataset.sa_cut_module.offsets
+                hla_offsets = training_dataset.hla_cut_module.offsets
                 hla_theta = training_dataset.hla_atm.get_batch_affine(1)
                 print("theta SA is:")
                 print(sa_theta)
@@ -696,8 +697,11 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
                 print("theta HLA is:")
                 print(hla_theta)
                 print()
-                print("offsets SA are:")
+                print("Cut module offsets SA are:")
                 print(sa_offsets)
+                print()
+                print("Cut module offsets HLA are:")
+                print(hla_offsets)
                 print()
                 _dir = Path(f"data/output/{wandb.run.name}")
                 _dir.mkdir(exist_ok=True)

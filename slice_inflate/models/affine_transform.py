@@ -17,11 +17,11 @@ class AffineTransformModule(torch.nn.Module):
         self.theta_a = torch.nn.Parameter(torch.zeros(3))
 
     def get_batch_affine(self, batch_size):
-        theta_m = angle_axis_to_rotation_matrix(self.theta_a.view(1,3))[0,:3,:3]
-        theta_t = torch.cat([self.theta_t, torch.tensor([0,0], device=self.theta_t.device)])
-        theta = torch.cat([theta_m, theta_t.view(3,1)], dim=1)
-        theta = torch.cat([theta, torch.tensor(
-            [0, 0, 0, 1], device=theta.device).view(1, 4)], dim=0)
+        theta_m = angle_axis_to_rotation_matrix(self.theta_a.view(1,3))[0]
+        theta_t = torch.cat([self.theta_t, torch.tensor([0,0,1], device=self.theta_t.device)])
+        theta_t = torch.cat([torch.eye(4, device=self.theta_t.device)[:4,:3], theta_t.view(4,1)], dim=1)
+
+        theta = theta_m @ theta_t
         return theta.view(1, 4, 4).repeat(batch_size, 1, 1)
 
     def forward(self, x_image, x_label, nifti_affine, augment_affine, with_theta=True):
