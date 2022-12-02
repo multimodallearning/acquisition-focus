@@ -540,8 +540,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         # optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_t, lr=0.1))
         optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_a, lr=0.01))
         optimizer.add_param_group(dict(params=training_dataset.sa_cut_module.offsets, lr=0.01))
-        # optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_a, lr=0.0001))
-        # optimizer.add_param_group(dict(params=training_dataset.sa_cut_module.offsets, lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_a, lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.hla_cut_module.offsets, lr=0.01))
         pass
 
     # for submodule in model.modules():
