@@ -28,12 +28,7 @@ git-filter-repo = "^2.34.0"
 einops = "^0.5.0"
 dill = "^0.3.5.1"
 autopep8 = "^2.0.0"
-
-torch-spline-conv = { url = "https://data.pyg.org/whl/torch-1.13.0%2Bcu117/torch_spline_conv-1.2.1-cp39-cp39-linux_x86_64.whl" }
-torch-scatter = { url = "https://data.pyg.org/whl/torch-1.13.0%2Bcu117/torch_scatter-2.0.9-cp39-cp39-linux_x86_64.whl" }
-torch-cluster = { url = "https://data.pyg.org/whl/torch-1.13.0%2Bcu117/torch_cluster-1.6.0-cp39-cp39-linux_x86_64.whl" }
-torch-sparse = { url = "https://data.pyg.org/whl/torch-1.13.0%2Bcu117/torch_sparse-0.6.15-cp39-cp39-linux_x86_64.whl" }
-torch-geometric = "^2.1.0.post1"
+kornia = "^0.6.8"
 
 [build-system]
 requires = ["poetry-core"]
