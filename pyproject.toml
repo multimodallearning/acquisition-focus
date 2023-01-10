@@ -31,6 +31,7 @@ dill = "^0.3.5.1"
 autopep8 = "^2.0.0"
 kornia = "^0.6.8"
 torchvision = "^0.14.0"
+seaborn = "^0.12.2"
 
 [build-system]
 requires = ["poetry-core"]
