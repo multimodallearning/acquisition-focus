@@ -52,7 +52,7 @@ def get_transformed_affine_from_grid_affine(grid_affine, volume_affine, ras_affi
 
 
 
-def get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape, fov_mm):
+def get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape, fov_mm, pre_grid_sample_affine):
 
     # (IJK -> RAS+).inverse() @ (Slice -> RAS+) == Slice -> IJK
     affine_mat = volume_affine.inverse() @ ras_affine_mat
@@ -93,12 +93,15 @@ def get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape
     ]).to(volume_affine)
     affine_mat = affine_mat @ reflect_mat.view(1,4,4)
 
-    return affine_mat
+    if pre_grid_sample_affine is None:
+        return affine_mat
+
+    return affine_mat @ pre_grid_sample_affine
 
 
 
 def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_mat: torch.Tensor, fov_mm, fov_vox,
-    is_label=False, dtype=torch.float32):
+    is_label=False, pre_grid_sample_affine=None, dtype=torch.float32):
 
     assert volume_affine.dim() == ras_affine_mat.dim() == 3 # B,4,4
     assert volume.shape[0] == volume_affine.shape[0] == ras_affine_mat.shape[0]
@@ -109,13 +112,16 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
     volume_affine = volume_affine.to(device)
     ras_affine_mat = ras_affine_mat.to(volume_affine)
 
+    if pre_grid_sample_affine is not None:
+        pre_grid_sample_affine = pre_grid_sample_affine.to(volume_affine)
+
     # Prepare volume
     B,C,D,H,W = volume.shape
     volume_shape = torch.tensor([D,H,W], device=device)
     initial_dtype = volume.dtype
 
     # Get the affine for torch grid resampling from RAS space
-    grid_affine = get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape, fov_mm)
+    grid_affine = get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape, fov_mm, pre_grid_sample_affine)
 
     target_shape = torch.Size([B,C] + fov_vox.tolist())
 
@@ -132,7 +138,7 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
         min_value = volume.min()
         volume = volume - min_value
         transformed = checkpoint(torch.nn.functional.grid_sample,
-            volume.to(dtype=dtype), grid.to(dtype=dtype), 'bilinear', 'zeros', False
+            volume.to(dtype=dtype), grid.to(dtype=dtype), 'bilinear', 'border', False
         )
         transformed = transformed + min_value
 
@@ -232,10 +238,6 @@ def crop_around_label_center(label: torch.Tensor, vox_size: torch.Tensor, image:
 
 
 
-def cut_slice(volume):
-    return volume[:,:,volume.shape[-1]//2]
-
-
 
 def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, fov_mm, fov_vox, is_label):
     fov_mm, fov_vox = torch.tensor(fov_mm), torch.tensor(fov_vox)
@@ -259,4 +261,20 @@ def cut_slice(b_volume):
     b_volume = eo.rearrange(b_volume, 'B C D H W -> W B C D H')
     center_idx = b_volume.shape[0]//2
     b_volume = b_volume[center_idx:center_idx+1]
+    return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
+
+def soft_cut_slice(b_volume, std=50.0):
+    b_volume = eo.rearrange(b_volume, 'B C D H W -> W B C D H')
+    W = b_volume.shape[0]
+    center_idx = W//2
+
+    n_dist = torch.distributions.normal.Normal(torch.tensor(center_idx), torch.tensor(std))
+
+    probs = torch.arange(0, W)
+    probs = n_dist.log_prob(probs).exp()
+    probs = probs / probs.max()
+    probs = probs.to(b_volume.device)
+
+    b_volume = (b_volume * probs.view(W,1,1,1,1)).sum(0, keepdim=True)
+
     return eo.rearrange(b_volume, ' W B C D H -> B C D H W')

@@ -466,19 +466,26 @@ def save_model(_path, epx=None, loss=None, **statefuls):
 
 
 
-def get_rotation_matrix_3d_from_angles(deg_angles, device='cpu'):
+def get_rotation_matrix_3d_from_angles(deg_angles):
     """3D rotation matrix."""
     angles = torch.deg2rad(deg_angles)
     ax, ay, az = angles
-    Rx = torch.tensor([[1, 0, 0],
-                        [0, torch.cos(ax), -torch.sin(ax)],
-                        [0, torch.sin(ax), torch.cos(ax)]], device=device)
-    Ry = torch.tensor([[torch.cos(ay), 0, torch.sin(ay)],
-                        [0, 1, 0],
-                        [-torch.sin(ay), 0, torch.cos(ay)]], device=device)
-    Rz = torch.tensor([[torch.cos(az), -torch.sin(az), 0],
-                        [torch.sin(az),  torch.cos(az), 0],
-                        [0, 0, 1]], device=device)
+    d = deg_angles.device
+    Rx_0 = torch.tensor([1, 0, 0], device=d)
+    Rx_1 = torch.stack([torch.tensor(0, device=d), torch.cos(ax), -torch.sin(ax)])
+    Rx_2 = torch.stack([torch.tensor(0, device=d), torch.sin(ax), torch.cos(ax)])
+    Rx = torch.stack([Rx_0, Rx_1, Rx_2])
+
+    Ry_0 = torch.stack([torch.cos(ay), torch.tensor(0, device=d), torch.sin(ay)])
+    Ry_1 = torch.tensor([0, 1, 0], device=d)
+    Ry_2 = torch.stack([-torch.sin(ay), torch.tensor(0, device=d), torch.cos(ay)])
+    Ry = torch.stack([Ry_0, Ry_1, Ry_2])
+
+    Rz_0 = torch.stack([torch.cos(az), -torch.sin(az), torch.tensor(0, device=d)])
+    Rz_1 = torch.stack([torch.sin(az), torch.cos(az), torch.tensor(0, device=d)])
+    Rz_2 = torch.tensor([0, 0, 1], device=d)
+    Rz = torch.stack([Rz_0, Rz_1, Rz_2])
+
     return Rz @ Ry @ Rx
 
 

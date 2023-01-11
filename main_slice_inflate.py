@@ -24,6 +24,7 @@ from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as 
 os.environ.update(get_vars('*'))
 
 import torch
+torch.set_printoptions(sci_mode=False)
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.cuda.amp as amp
@@ -49,6 +50,7 @@ from mdl_seg_class.metrics import dice3d, hausdorff3d
 import numpy as np
 
 from slice_inflate.models.generic_UNet_opt_skip_connections import Generic_UNet
+from slice_inflate.models.affine_transform import AffineTransformModule, get_random_angles, SoftCutModule
 import dill
 
 import einops as eo
@@ -82,7 +84,7 @@ def prepare_data(config):
         use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
         crop_around_2d_label_center=config.crop_around_2d_label_center,
         max_load_3d_num=config.max_load_3d_num,
-
+        soft_cut_std=config.soft_cut_std,
         augment_angle_std=5,
 
         device=config.device,
@@ -490,10 +492,57 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     else:
         print(f"Generating fresh optimizer, scheduler, scaler.")
 
-    training_dataset.sa_atm.to(device)
-    training_dataset.hla_atm.to(device)
-    # optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters()))
-    # optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters()))
+    hla_affine_path = Path(
+        THIS_SCRIPT_DIR,
+        "slice_inflate/preprocessing",
+        "mmwhs_1002_HLA_red_slice_to_ras.mat"
+    )
+    sa_affine_path = Path(
+        THIS_SCRIPT_DIR,
+        "slice_inflate/preprocessing",
+        "mmwhs_1002_SA_yellow_slice_to_ras.mat"
+    )
+
+    sa_atm = AffineTransformModule(
+        torch.tensor(config['fov_mm']),
+        torch.tensor(config['fov_vox']),
+        view_affine=torch.as_tensor(np.loadtxt(sa_affine_path)).float())
+
+    hla_atm = AffineTransformModule(
+        torch.tensor(config['fov_mm']),
+        torch.tensor(config['fov_vox']),
+        view_affine=torch.as_tensor(np.loadtxt(hla_affine_path)).float())
+
+    cut_rows = 1
+    cut_cols = 1
+    sa_cut_module = SoftCutModule(
+        n_rows=cut_rows, n_cols=cut_cols, soft_cut_softness=config['soft_cut_std'])
+    hla_cut_module = SoftCutModule(
+        n_rows=cut_rows, n_cols=cut_cols, soft_cut_softness=config['soft_cut_std'])
+
+    sa_atm.to(device)
+    hla_atm.to(device)
+    sa_cut_module.to(device)
+    hla_cut_module.to(device)
+
+    training_dataset.sa_atm = sa_atm
+    training_dataset.hla_atm = hla_atm
+    training_dataset.sa_cut_module = sa_cut_module
+    training_dataset.hla_cut_module = hla_cut_module
+
+    test_dataset.sa_atm = sa_atm
+    test_dataset.hla_atm = hla_atm
+    test_dataset.sa_cut_module = sa_cut_module
+    test_dataset.hla_cut_module = hla_cut_module
+
+    if config.train_affine_theta:
+        optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_a, lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_t, lr=0.01))
+        # optimizer.add_param_group(dict(params=training_dataset.sa_cut_module.offsets, lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_a, lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_t, lr=0.01))
+        # optimizer.add_param_group(dict(params=training_dataset.hla_cut_module.offsets, lr=0.01))
+        pass
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)
@@ -616,7 +665,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
 
     if phase == 'train':
         model.train()
-        dataset.train(use_modified=False)
+        dataset.train(augment=True)
     else:
         model.eval()
         dataset.eval()
@@ -624,15 +673,41 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
     if isinstance(model, BlendowskiVAE):
         model.set_epoch(epx)
 
+
+
     for batch_idx, batch in tqdm(enumerate(dataloader), desc=phase, total=len(dataloader)):
         b_input, b_seg = get_model_input(batch, config, len(dataset.label_tags))
         if phase == 'train':
             optimizer.zero_grad()
             y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
+            # old_theta = training_dataset.sa_atm.get_batch_affine(1)
             scaler.scale(loss).backward()
             # test_all_parameters_updated(model)
             scaler.step(optimizer)
             scaler.update()
+            if epx % 10 == 0 and '1010-mr' in batch['id']:
+                idx = batch['id'].index('1010-mr')
+                sa_theta = training_dataset.sa_atm.get_batch_affine(1)
+                sa_offsets = training_dataset.sa_cut_module.offsets
+                hla_offsets = training_dataset.hla_cut_module.offsets
+                hla_theta = training_dataset.hla_atm.get_batch_affine(1)
+                print("theta SA is:")
+                print(sa_theta)
+                print()
+                print("theta HLA is:")
+                print(hla_theta)
+                print()
+                print("Cut module offsets SA are:")
+                print(sa_offsets)
+                print()
+                print("Cut module offsets HLA are:")
+                print(hla_offsets)
+                print()
+                _dir = Path(f"data/output/{wandb.run.name}")
+                _dir.mkdir(exist_ok=True)
+                nib.save(nib.Nifti1Image(b_input[idx].argmax(0).int().detach().cpu().numpy(), affine=np.eye(4)), _dir.joinpath(f"input_epx_{epx}.nii.gz"))
+
+            # print((new_theta - old_theta).abs().sum())
 
         else:
             with torch.no_grad():
@@ -815,6 +890,10 @@ def run_dl(run_name, config, training_dataset, test_dataset):
                         epx=epx,
                         loss=train_loss,
                         model=model,
+                        sa_atm=training_dataset.sa_atm,
+                        hla_atm=training_dataset.hla_atm,
+                        sa_cut_module=training_dataset.sa_cut_module,
+                        hla_cut_module=training_dataset.hla_cut_module,
                         optimizer=optimizer,
                         scheduler=scheduler,
                         scaler=scaler)
@@ -823,7 +902,13 @@ def run_dl(run_name, config, training_dataset, test_dataset):
                 save_path = f"{config.mdl_save_prefix}/{wandb.run.name}{fold_postfix}_epx{epx}"
                 save_model(
                     Path(THIS_SCRIPT_DIR, save_path),
+                    epx=epx,
+                    loss=train_loss,
                     model=model,
+                    sa_atm=training_dataset.sa_atm,
+                    hla_atm=training_dataset.hla_atm,
+                    sa_cut_module=training_dataset.sa_cut_module,
+                    hla_cut_module=training_dataset.hla_cut_module,
                     optimizer=optimizer,
                     scheduler=scheduler,
                     scaler=scaler)
