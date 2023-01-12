@@ -532,8 +532,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     test_dataset.hla_cut_module = hla_cut_module
 
     if config.train_affine_theta:
-        optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters(), lr=0.01))
-        optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters(), lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters(), lr=0.001))
+        optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters(), lr=0.001))
         pass
 
     # for submodule in model.modules():
