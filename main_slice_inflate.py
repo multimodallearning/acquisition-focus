@@ -677,14 +677,16 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
             # test_all_parameters_updated(model)
             scaler.step(optimizer)
             scaler.update()
-            if epx % 10 == 0 and '1010-mr' in batch['id']:
-                idx = batch['id'].index('1010-mr')
+            if epx % 1 == 0 and '1010-mr' in batch['id']:
                 print("theta SA rotations params are:")
                 print(get_theta_params(training_dataset.sa_atm.last_theta_a)[0].mean(0))
                 print()
                 print("theta HLA rotations params are:")
                 print(get_theta_params(training_dataset.hla_atm.last_theta_a)[0].mean(0))
                 print()
+                
+            if epx % 10 == 0 and '1010-mr' in batch['id']:
+                idx = batch['id'].index('1010-mr')
                 _dir = Path(f"data/output/{wandb.run.name}")
                 _dir.mkdir(exist_ok=True)
                 nib.save(nib.Nifti1Image(b_input[idx].argmax(0).int().detach().cpu().numpy(), affine=np.eye(4)), _dir.joinpath(f"input_epx_{epx}.nii.gz"))

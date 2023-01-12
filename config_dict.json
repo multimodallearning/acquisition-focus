@@ -4,7 +4,7 @@
     "fold_override": null,
     "epochs": 250,
     "test_only_and_output_to": null,
-    "batch_size": 2,
+    "batch_size": 4,
     "val_batch_size": 1,
     "modality": "all",
     "train_affine_theta": true,
