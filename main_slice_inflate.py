@@ -503,22 +503,18 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         "mmwhs_1002_SA_yellow_slice_to_ras.mat"
     )
 
-    sa_atm = AffineTransformModule(
+    sa_atm = AffineTransformModule(num_classes,
         torch.tensor(config['fov_mm']),
         torch.tensor(config['fov_vox']),
         view_affine=torch.as_tensor(np.loadtxt(sa_affine_path)).float())
 
-    hla_atm = AffineTransformModule(
+    hla_atm = AffineTransformModule(num_classes,
         torch.tensor(config['fov_mm']),
         torch.tensor(config['fov_vox']),
         view_affine=torch.as_tensor(np.loadtxt(hla_affine_path)).float())
 
-    cut_rows = 1
-    cut_cols = 1
-    sa_cut_module = SoftCutModule(
-        n_rows=cut_rows, n_cols=cut_cols, soft_cut_softness=config['soft_cut_std'])
-    hla_cut_module = SoftCutModule(
-        n_rows=cut_rows, n_cols=cut_cols, soft_cut_softness=config['soft_cut_std'])
+    sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
+    hla_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
 
     sa_atm.to(device)
     hla_atm.to(device)
@@ -536,12 +532,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     test_dataset.hla_cut_module = hla_cut_module
 
     if config.train_affine_theta:
-        optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_a, lr=0.01))
-        optimizer.add_param_group(dict(params=training_dataset.sa_atm.theta_t, lr=0.01))
-        # optimizer.add_param_group(dict(params=training_dataset.sa_cut_module.offsets, lr=0.01))
-        optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_a, lr=0.01))
-        optimizer.add_param_group(dict(params=training_dataset.hla_atm.theta_t, lr=0.01))
-        # optimizer.add_param_group(dict(params=training_dataset.hla_cut_module.offsets, lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters(), lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters(), lr=0.01))
         pass
 
     # for submodule in model.modules():
