@@ -66,7 +66,7 @@ class AffineTransformModule(torch.nn.Module):
 
         self.fov_mm = fov_mm
         self.fov_vox = fov_vox
-        self.view_affine = view_affine
+        self.view_affine = view_affine.view(1,4,4)
         self.localisation_net = LocalisationNet(input_channels)
         self.with_batch_theta = with_batch_theta
 
@@ -98,9 +98,11 @@ class AffineTransformModule(torch.nn.Module):
         batch_size = x.shape[0]
         theta_ap, theta_tp = self.localisation_net(x.float())
         device = theta_tp.device
-        theta_ap[:,1:] = 0.0 # TODO check dims here
-        theta_tp[:,0] = 0.0
-        theta_tp[:,2] = 0.0
+        theta_ap[:,0] = 0.0 # [:,0] rotates in plane -> do not predict
+        theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict
+
+        # theta_ap[...]  = 0. # TODO remove override
+        theta_tp[...]  = 0. # TODO remove override
 
         theta_a = angle_axis_to_rotation_matrix(theta_ap.view(batch_size,3))
         theta_t = torch.cat([theta_tp, torch.ones(batch_size, device=device).view(batch_size,1)], dim=1)

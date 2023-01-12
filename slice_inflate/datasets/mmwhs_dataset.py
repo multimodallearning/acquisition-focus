@@ -188,6 +188,7 @@ class MMWHSDataset(HybridIdDataset):
             cut_module = self.sa_cut_module
         elif atm_name == 'hla':
             atm = self.hla_atm
+            atm.with_batch_theta = False # TODO remove this line
             cut_module = self.hla_cut_module
 
        # Transform label with 'bilinear' interpolation to have gradients
