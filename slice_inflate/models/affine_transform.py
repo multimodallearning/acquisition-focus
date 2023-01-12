@@ -466,3 +466,24 @@ def quaternion_to_angle_axis(quaternion: torch.Tensor) -> torch.Tensor:
 
 # based on:
 # https://github.com/facebookresearch/QuaterNet/blob/master/common/quaternion.py#L138
+
+
+
+def get_theta_params(b_theta):
+    bsz = b_theta.shape[0]
+    theta_ap, theta_tp = rotation_matrix_to_angle_axis(b_theta[:,:3]), b_theta[:,:3,-1].view(bsz,3)
+    return theta_ap, theta_tp
+
+
+
+def get_mean_theta(b_theta, as_batch_size=False):
+    bsz = b_theta.shape[0]
+    theta_a, theta_t = get_theta_params(b_theta)
+    mean_theta_a, mean_theta_t = theta_a.mean(0, keepdim=True), theta_t.mean(0, keepdim=True)
+    mean_theta = angle_axis_to_rotation_matrix(mean_theta_a)
+    mean_theta[:,:3,-1] = mean_theta_t
+
+    if as_batch_size:
+        mean_theta = mean_theta.view(1,4,4).repeat(bsz,1,1)
+
+    return mean_theta

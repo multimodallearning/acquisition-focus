@@ -50,7 +50,7 @@ from mdl_seg_class.metrics import dice3d, hausdorff3d
 import numpy as np
 
 from slice_inflate.models.generic_UNet_opt_skip_connections import Generic_UNet
-from slice_inflate.models.affine_transform import AffineTransformModule, get_random_angles, SoftCutModule
+from slice_inflate.models.affine_transform import AffineTransformModule, get_random_angles, SoftCutModule, get_theta_params
 import dill
 
 import einops as eo
@@ -679,21 +679,11 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
             scaler.update()
             if epx % 10 == 0 and '1010-mr' in batch['id']:
                 idx = batch['id'].index('1010-mr')
-                sa_theta = training_dataset.sa_atm.get_batch_affine(1)
-                sa_offsets = training_dataset.sa_cut_module.offsets
-                hla_offsets = training_dataset.hla_cut_module.offsets
-                hla_theta = training_dataset.hla_atm.get_batch_affine(1)
-                print("theta SA is:")
-                print(sa_theta)
+                print("theta SA rotations params are:")
+                print(get_theta_params(training_dataset.sa_atm.last_theta_a)[0].mean(0))
                 print()
-                print("theta HLA is:")
-                print(hla_theta)
-                print()
-                print("Cut module offsets SA are:")
-                print(sa_offsets)
-                print()
-                print("Cut module offsets HLA are:")
-                print(hla_offsets)
+                print("theta HLA rotations params are:")
+                print(get_theta_params(training_dataset.hla_atm.last_theta_a)[0].mean(0))
                 print()
                 _dir = Path(f"data/output/{wandb.run.name}")
                 _dir.mkdir(exist_ok=True)
