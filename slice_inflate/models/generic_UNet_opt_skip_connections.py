@@ -391,7 +391,7 @@ class Generic_UNet(SegmentationNetwork):
             self.apply(self.weightInitializer)
             # self.apply(print_module_training_status)
 
-    def forward(self, x):
+    def forward(self, x, encoder_only=False):
         skips = []
         seg_outputs = []
         for d in range(len(self.conv_blocks_context) - 1):
@@ -399,6 +399,9 @@ class Generic_UNet(SegmentationNetwork):
             skips.append(x)
             if not self.convolutional_pooling:
                 x = self.td[d](x)
+
+        if encoder_only:
+            return x
 
         x = self.conv_blocks_context[-1](x)
 

@@ -34,23 +34,26 @@ class ConvNet(torch.nn.Module):
 class LocalisationNet(torch.nn.Module):
     def __init__(self, input_channels):
         super().__init__()
-        self.dim_size_after_conv_net = 13
-        self.conv_net = ConvNet(input_channels=input_channels, kernel_size=5, inner_padding=2)
-        # init_dict_path = Path(get_script_dir(), "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
-        # with open(init_dict_path, 'rb') as f:
-        #     init_dict = dill.load(f)
-        # init_dict['num_classes'] = input_channels
-        # init_dict['deep_supervision'] = False
-        # init_dict['final_nonlin'] = torch.nn.Identity()
-        # use_skip_connections = False
-        # nnunet_model = Generic_UNet(**init_dict, use_skip_connections=use_skip_connections, use_onehot_input=True)
-        # self.conv_net = nnunet_model.conv_blocks_localization()
-        self.fca = nn.Linear(self.dim_size_after_conv_net**3*2, 3)
-        self.fct = nn.Linear(self.dim_size_after_conv_net**3*2, 3)
+        self.dim_size_after_conv_net = 16
+
+        # self.conv_net = ConvNet(input_channels=input_channels, kernel_size=5, inner_padding=2)
+
+        init_dict_path = Path(get_script_dir(), "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
+        with open(init_dict_path, 'rb') as f:
+            init_dict = dill.load(f)
+        init_dict['num_classes'] = input_channels
+        init_dict['deep_supervision'] = False
+        init_dict['final_nonlin'] = torch.nn.Identity()
+        use_skip_connections = False
+        nnunet_model = Generic_UNet(**init_dict, use_skip_connections=use_skip_connections, use_onehot_input=True)
+        self.conv_net = nnunet_model
+
+        self.fca = nn.Linear(256*self.dim_size_after_conv_net**3, 3)
+        self.fct = nn.Linear(256*self.dim_size_after_conv_net**3, 3)
 
     def forward(self, x):
         bsz = x.shape[0]
-        h = self.conv_net(x)
+        h = self.conv_net(x, encoder_only=True)
         theta_ap = self.fca(h.view(bsz, -1))
         theta_tp = self.fct(h.view(bsz, -1))
 

@@ -414,6 +414,20 @@ class BlendowskiVAE(BlendowskiAE):
 #             print("In", self.__class__.__name__)
 #             raise RuntimeError(f"Found NAN in output {i} at indices: ", nan_mask.nonzero(), "where:", out[nan_mask.nonzero()[:, 0].unique(sorted=True)])
 
+def get_norms(model):
+    norms = {}
+    for name, mod in model.named_modules():
+        mod_norm = 0
+        for p in mod.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                mod_norm += param_norm.item() ** 2
+        mod_norm = mod_norm ** 0.5
+        norms[name] = mod_norm
+    return norms
+
+
+
 def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, device='cpu', load_model_only=False, encoder_training_only=False):
     if not _path is None:
         _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
@@ -532,8 +546,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     test_dataset.hla_cut_module = hla_cut_module
 
     if config.train_affine_theta:
-        optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters(), lr=0.001))
-        optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters(), lr=0.001))
+        optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters(), lr=0.01))
+        optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters(), lr=0.01))
         pass
 
     # for submodule in model.modules():
@@ -657,24 +671,28 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
 
     if phase == 'train':
         model.train()
+        dataset.sa_atm.train()
+        dataset.hla_atm.train()
         dataset.train(augment=True)
     else:
         model.eval()
+        dataset.sa_atm.eval()
+        dataset.hla_atm.eval()
         dataset.eval()
 
     if isinstance(model, BlendowskiVAE):
         model.set_epoch(epx)
 
-
-
     for batch_idx, batch in tqdm(enumerate(dataloader), desc=phase, total=len(dataloader)):
-        b_input, b_seg = get_model_input(batch, config, len(dataset.label_tags))
         if phase == 'train':
             optimizer.zero_grad()
+            b_input, b_seg = get_model_input(batch, config, len(dataset.label_tags))
             y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
-            # old_theta = training_dataset.sa_atm.get_batch_affine(1)
+
             scaler.scale(loss).backward()
             # test_all_parameters_updated(model)
+            # test_all_parameters_updated(training_dataset.sa_atm)
+            # test_all_parameters_updated(training_dataset.hla_atm)
             scaler.step(optimizer)
             scaler.update()
             if epx % 1 == 0 and '1010-mr' in batch['id']:
@@ -684,7 +702,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
                 print("theta HLA rotations params are:")
                 print(get_theta_params(training_dataset.hla_atm.last_theta_a)[0].mean(0))
                 print()
-                
+
             if epx % 10 == 0 and '1010-mr' in batch['id']:
                 idx = batch['id'].index('1010-mr')
                 _dir = Path(f"data/output/{wandb.run.name}")
@@ -695,6 +713,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
 
         else:
             with torch.no_grad():
+                b_input, b_seg = get_model_input(batch, config, len(dataset.label_tags))
                 y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
 
         epx_losses.append(loss.item())

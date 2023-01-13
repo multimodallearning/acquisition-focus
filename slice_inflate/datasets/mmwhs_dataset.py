@@ -192,7 +192,9 @@ class MMWHSDataset(HybridIdDataset):
             cut_module = self.hla_cut_module
 
        # Transform label with 'bilinear' interpolation to have gradients
-        soft_label, _, _ = atm(label.float().view(B, CLASS_NUM, D, H, W), label.view(B, CLASS_NUM, D, H, W),
+        label = label.float() # TODO Check, can this be removed?
+        label.requires_grad = True # TODO Check, can this be removed?
+        soft_label, _, _ = atm(label.view(B, CLASS_NUM, D, H, W), label.view(B, CLASS_NUM, D, H, W),
                                nifti_affine, augment_affine)
 
         image, label, affine = atm(image.view(B, C, D, H, W), label.view(B, CLASS_NUM, D, H, W),
