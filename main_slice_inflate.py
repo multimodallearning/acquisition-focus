@@ -471,41 +471,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
     model.to(device)
 
-    if _path and _path.is_dir():
-        model_dict = torch.load(_path.joinpath('model.pth'), map_location=device)
-        epx = model_dict.get('metadata', {}).get('epx', 0)
-        print(f"Loading model from {_path}")
-        print(model.load_state_dict(model_dict, strict=False))
-    else:
-        print(f"Generating fresh '{type(model).__name__}' model.")
-        epx = 0
-
-    if encoder_training_only:
-        decoder_modules = filter(lambda elem: 'decoder' in elem[0], model.named_modules())
-        for nmod in decoder_modules:
-            for param in nmod[1].parameters():
-                param.requires_grad = False
-
-    print(f"Trainable param count model: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
-    print(f"Non-trainable param count model: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}")
-
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config.lr)
-    scaler = amp.GradScaler()
-
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', patience=20, threshold=0.01, threshold_mode='rel')
-
-    if _path and _path.is_dir() and not load_model_only:
-        print(f"Loading optimizer, scheduler, scaler from {_path}")
-        optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
-        scheduler.load_state_dict(torch.load(_path.joinpath('scheduler.pth'), map_location=device))
-        scaler.load_state_dict(torch.load(_path.joinpath('scaler.pth'), map_location=device))
-
-    else:
-        print(f"Generating fresh optimizer, scheduler, scaler.")
-
+    # Add atm models
     hla_affine_path = Path(
         THIS_SCRIPT_DIR,
         "slice_inflate/preprocessing",
@@ -535,15 +501,56 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     sa_cut_module.to(device)
     hla_cut_module.to(device)
 
-    if config.train_affine_theta:
-        optimizer.add_param_group(dict(params=sa_atm.parameters(), lr=0.01))
-        optimizer.add_param_group(dict(params=hla_atm.parameters(), lr=0.01))
-        pass
 
+    if _path and _path.is_dir():
+        model_dict = torch.load(_path.joinpath('model.pth'), map_location=device)
+        epx = model_dict.get('metadata', {}).get('epx', 0)
+
+        sa_atm_dict = torch.load(_path.joinpath('sa_atm.pth'), map_location=device)
+        hla_atm_dict = torch.load(_path.joinpath('hla_atm.pth'), map_location=device)
+
+        print(f"Loading models from {_path}")
+        print(model.load_state_dict(model_dict, strict=False))
+        print(sa_atm.load_state_dict(sa_atm_dict, strict=False))
+        print(hla_atm.load_state_dict(hla_atm_dict, strict=False))
+    else:
+        print(f"Generating fresh '{type(model).__name__}' model and align modules.")
+        epx = 0
+
+    if encoder_training_only:
+        decoder_modules = filter(lambda elem: 'decoder' in elem[0], model.named_modules())
+        for nmod in decoder_modules:
+            for param in nmod[1].parameters():
+                param.requires_grad = False
+
+    print(f"Trainable param count model: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+    print(f"Non-trainable param count model: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}")
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+    scaler = amp.GradScaler()
+
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', patience=20, threshold=0.01, threshold_mode='rel')
+
+    loc_optimizer = torch.optim.AdamW(
+        list(sa_atm.parameters()) + list(hla_atm.parameters()),
+        lr=config.lr)
+
+    if _path and _path.is_dir() and not load_model_only:
+        print(f"Loading optimizer, scheduler, scaler from {_path}")
+        optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
+        loc_optimizer.load_state_dict(torch.load(_path.joinpath('loc_optimizer.pth'), map_location=device))
+        scheduler.load_state_dict(torch.load(_path.joinpath('scheduler.pth'), map_location=device))
+        scaler.load_state_dict(torch.load(_path.joinpath('scaler.pth'), map_location=device))
+
+    else:
+        print(f"Generated fresh optimizers, schedulers, scalers.")
+
+    all_optimizers = dict(optimizer=optimizer, loc_optimizer=loc_optimizer)
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)
 
-    return (model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, optimizer, scheduler, scaler), epx
+    return (model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, all_optimizers, scheduler, scaler), epx
 
 
 
@@ -604,6 +611,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     augment_affine = batch['additional_data']['augment_affine']
     B,D,H,W = b_label.shape
 
+    sa_atm.with_batch_theta = config.train_affine_theta
     hla_atm.with_batch_theta = False # TODO remove this line
 
     sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
@@ -717,7 +725,7 @@ def model_step(config, model, b_input, b_target, label_tags, class_weights, io_n
 
 
 def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, dataset, dataloader, class_weights, fold_postfix, phase='train',
-    autocast_enabled=False, optimizer=None, scaler=None, store_net_output_to=None):
+    autocast_enabled=False, all_optimizers=None, scaler=None, store_net_output_to=None):
     PHASES = ['train', 'val', 'test']
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
 
@@ -744,16 +752,18 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
     for batch_idx, batch in tqdm(enumerate(dataloader), desc=phase, total=len(dataloader)):
         if phase == 'train':
-            optimizer.zero_grad()
+            for opt in all_optimizers.values():
+                opt.zero_grad()
             b_input, b_seg, sa_affine = get_model_input(batch, config, len(dataset.label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
             y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
 
-            scaler.scale(loss).backward()
+            loss.backward()
             # test_all_parameters_updated(model)
             # test_all_parameters_updated(sa_atm)
             # test_all_parameters_updated(hla_atm)
-            scaler.step(optimizer)
-            scaler.update()
+            for opt in all_optimizers.values():
+                opt.step()
+
             if epx % 1 == 0 and '1010-mr' in batch['id']:
                 print("theta SA rotations params are:")
                 print(get_theta_params(sa_atm.last_theta_a)[0].mean(0))
@@ -895,7 +905,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
         chk_path = config.checkpoint_path if 'checkpoint_path' in config else None
 
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
-        (model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, optimizer, scheduler, scaler), epx_start = get_model(config, len(training_dataset), len(training_dataset.label_tags),
+        (model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, all_optimizers, scheduler, scaler), epx_start = get_model(config, len(training_dataset), len(training_dataset.label_tags),
             THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=chk_path, device=config.device, load_model_only=False, encoder_training_only=config.encoder_training_only)
 
         all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
@@ -920,13 +930,13 @@ def run_dl(run_name, config, training_dataset, test_dataset):
 
             if not run_test_once_only:
                 train_loss = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, training_dataset, train_dataloader, class_weights, fold_postfix,
-                    phase='train', autocast_enabled=autocast_enabled, optimizer=optimizer, scaler=scaler, store_net_output_to=None)
+                    phase='train', autocast_enabled=autocast_enabled, all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None)
 
                 val_loss = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, training_dataset, val_dataloader, class_weights, fold_postfix,
-                    phase='val', autocast_enabled=autocast_enabled, optimizer=None, scaler=None, store_net_output_to=None)
+                    phase='val', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=None)
 
             quality_metric = test_loss = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, test_dataset, test_dataloader, class_weights, fold_postfix,
-                phase='test', autocast_enabled=autocast_enabled, optimizer=None, scaler=None, store_net_output_to=config.test_only_and_output_to)
+                phase='test', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=config.test_only_and_output_to)
 
             if run_test_once_only:
                 break
@@ -955,7 +965,8 @@ def run_dl(run_name, config, training_dataset, test_dataset):
                         hla_atm=hla_atm,
                         sa_cut_module=sa_cut_module,
                         hla_cut_module=hla_cut_module,
-                        optimizer=optimizer,
+                        optimizer=all_optimizers['optimizer'],
+                        loc_optimizer=all_optimizers['loc_optimizer'],
                         scheduler=scheduler,
                         scaler=scaler)
 
