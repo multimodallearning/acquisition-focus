@@ -535,41 +535,100 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     sa_cut_module.to(device)
     hla_cut_module.to(device)
 
-    training_dataset.sa_atm = sa_atm
-    training_dataset.hla_atm = hla_atm
-    training_dataset.sa_cut_module = sa_cut_module
-    training_dataset.hla_cut_module = hla_cut_module
-
-    test_dataset.sa_atm = sa_atm
-    test_dataset.hla_atm = hla_atm
-    test_dataset.sa_cut_module = sa_cut_module
-    test_dataset.hla_cut_module = hla_cut_module
-
     if config.train_affine_theta:
-        optimizer.add_param_group(dict(params=training_dataset.sa_atm.parameters(), lr=0.01))
-        optimizer.add_param_group(dict(params=training_dataset.hla_atm.parameters(), lr=0.01))
+        optimizer.add_param_group(dict(params=sa_atm.parameters(), lr=0.01))
+        optimizer.add_param_group(dict(params=hla_atm.parameters(), lr=0.01))
         pass
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(nan_hook)
 
-    return (model, optimizer, scheduler, scaler), epx
+    return (model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, optimizer, scheduler, scaler), epx
+
 
 
 # %%
-def get_model_input(batch, config, num_classes):
-    W_TARGET_LEN = 128
-    b_hla_slc_seg = batch['hla_label_slc']
-    b_sa_slc_seg = batch['sa_label_slc']
-    b_input = torch.cat([b_hla_slc_seg, b_sa_slc_seg], dim=-1)
+def get_transformed(label, nifti_affine, augment_affine, atm, cut_module, num_classes,
+    crop_around_3d_label_center, crop_around_2d_label_center, image=None):
+
+    img_is_invalid = image is None or image.dim() == 0
+    if img_is_invalid:
+        image = torch.zeros_like(label)
+
+    B, _, D, H, W = label.shape
+
+    label = eo.rearrange(F.one_hot(label, num_classes),
+                            'b c d h w oh -> b (c oh) d h w')
+
+    # Transform label with 'bilinear' interpolation to have gradients
+    label = label.float() # TODO Check, can this be removed?
+    label.requires_grad = True # TODO Check, can this be removed?
+    soft_label, _, _ = atm(label.view(B, num_classes, D, H, W), label.view(B, num_classes, D, H, W),
+                            nifti_affine, augment_affine)
+
+    image, label, affine = atm(image.view(B, 1, D, H, W), label.view(B, num_classes, D, H, W),
+                                nifti_affine, augment_affine, theta_override=atm.last_theta)
+
+    if crop_around_3d_label_center is not None:
+        _3d_vox_size = torch.as_tensor(
+            crop_around_3d_label_center)
+        label, image, _ = crop_around_label_center(
+            label, _3d_vox_size, image)
+        _, soft_label, _ = crop_around_label_center(
+            label, _3d_vox_size, soft_label)
+
+    label_slc = cut_module(soft_label)
+    image_slc = cut_slice(image) # TODO change this to hardcut module
+
+    if crop_around_2d_label_center is not None:
+        _2d_vox_size = torch.as_tensor(
+            crop_around_2d_label_center+[1])
+        label_slc, image_slc, _ = crop_around_label_center(
+            label_slc, _2d_vox_size, image_slc)
+
+    if img_is_invalid:
+        image = torch.empty([])
+        image_slc = torch.empty([])
+        # Do not set label_slc to .int() here, since we (may) need the gradients
+    return image, label.int(), image_slc, label_slc, affine.float()
+
+
+
+def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, hla_cut_module):
+
+    W_TARGET_LEN = 128 # TODO remove this parameter
+
+    b_label = batch['label']
+    b_image = batch['image']
+    nifti_affine = batch['additional_data']['nifti_affine']
+    augment_affine = batch['additional_data']['augment_affine']
+    B,D,H,W = b_label.shape
+
+    hla_atm.with_batch_theta = False # TODO remove this line
+
+    sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
+        get_transformed(
+            b_label.view(B, 1, D, H, W),
+            nifti_affine, augment_affine,
+            sa_atm, sa_cut_module, num_classes,
+            config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
+            image=None)
+
+    hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
+        get_transformed(
+            b_label.view(B, 1, D, H, W),
+            nifti_affine, augment_affine,
+            hla_atm, hla_cut_module, num_classes,
+            config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
+            image=None)
+
+    b_input = torch.cat([hla_label_slc, sa_label_slc], dim=-1)
     b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
 
-    b_seg = batch['label']
-
     b_input = b_input.to(device=config.device)
-    b_seg = b_seg.to(device=config.device)
+    b_label = hla_label.to(device=config.device)
 
-    return b_input.float(), b_seg
+    return b_input.float(), b_label, sa_affine
 
 def inference_wrap(model, seg):
     with torch.inference_mode():
@@ -657,7 +716,7 @@ def model_step(config, model, b_input, b_target, label_tags, class_weights, io_n
 
 
 
-def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weights, fold_postfix, phase='train',
+def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, dataset, dataloader, class_weights, fold_postfix, phase='train',
     autocast_enabled=False, optimizer=None, scaler=None, store_net_output_to=None):
     PHASES = ['train', 'val', 'test']
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
@@ -671,13 +730,13 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
 
     if phase == 'train':
         model.train()
-        dataset.sa_atm.train()
-        dataset.hla_atm.train()
+        sa_atm.train()
+        hla_atm.train()
         dataset.train(augment=True)
     else:
         model.eval()
-        dataset.sa_atm.eval()
-        dataset.hla_atm.eval()
+        sa_atm.eval()
+        hla_atm.eval()
         dataset.eval()
 
     if isinstance(model, BlendowskiVAE):
@@ -686,21 +745,21 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
     for batch_idx, batch in tqdm(enumerate(dataloader), desc=phase, total=len(dataloader)):
         if phase == 'train':
             optimizer.zero_grad()
-            b_input, b_seg = get_model_input(batch, config, len(dataset.label_tags))
+            b_input, b_seg, sa_affine = get_model_input(batch, config, len(dataset.label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
             y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
 
             scaler.scale(loss).backward()
             # test_all_parameters_updated(model)
-            # test_all_parameters_updated(training_dataset.sa_atm)
-            # test_all_parameters_updated(training_dataset.hla_atm)
+            # test_all_parameters_updated(sa_atm)
+            # test_all_parameters_updated(hla_atm)
             scaler.step(optimizer)
             scaler.update()
             if epx % 1 == 0 and '1010-mr' in batch['id']:
                 print("theta SA rotations params are:")
-                print(get_theta_params(training_dataset.sa_atm.last_theta_a)[0].mean(0))
+                print(get_theta_params(sa_atm.last_theta_a)[0].mean(0))
                 print()
                 print("theta HLA rotations params are:")
-                print(get_theta_params(training_dataset.hla_atm.last_theta_a)[0].mean(0))
+                print(get_theta_params(hla_atm.last_theta_a)[0].mean(0))
                 print()
 
             if epx % 10 == 0 and '1010-mr' in batch['id']:
@@ -713,7 +772,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
 
         else:
             with torch.no_grad():
-                b_input, b_seg = get_model_input(batch, config, len(dataset.label_tags))
+                b_input, b_seg, sa_affine = get_model_input(batch, config, len(dataset.label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
                 y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
 
         epx_losses.append(loss.item())
@@ -721,7 +780,7 @@ def epoch_iter(epx, global_idx, config, model, dataset, dataloader, class_weight
         pred_seg = y_hat.argmax(1)
 
         # Taken from nibabel nifti1.py
-        RZS = batch['sa_affine'][0][:3,:3].detach().cpu().numpy()
+        RZS = sa_affine[0][:3,:3].detach().cpu().numpy()
         nifti_zooms = np.sqrt(np.sum(RZS * RZS, axis=0))
 
         # Calculate fast dice score
@@ -822,7 +881,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
                 sampler=train_subsampler, pin_memory=False, drop_last=False,
                 collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
             )
-            training_dataset.set_augment_at_collate(True)
+            training_dataset.set_augment_at_collate(False) # CAUTION: THIS INTERFERES WITH GRADIENT COMPUTATION IN AFFINE MODULES
 
             val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
                 sampler=val_subsampler, pin_memory=False, drop_last=False
@@ -836,7 +895,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
         chk_path = config.checkpoint_path if 'checkpoint_path' in config else None
 
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
-        (model, optimizer, scheduler, scaler), epx_start = get_model(config, len(training_dataset), len(training_dataset.label_tags),
+        (model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, optimizer, scheduler, scaler), epx_start = get_model(config, len(training_dataset), len(training_dataset.label_tags),
             THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=chk_path, device=config.device, load_model_only=False, encoder_training_only=config.encoder_training_only)
 
         all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
@@ -860,15 +919,14 @@ def run_dl(run_name, config, training_dataset, test_dataset):
             wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
             if not run_test_once_only:
-                train_loss = epoch_iter(epx, global_idx, config, model, training_dataset, train_dataloader, class_weights, fold_postfix,
+                train_loss = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, training_dataset, train_dataloader, class_weights, fold_postfix,
                     phase='train', autocast_enabled=autocast_enabled, optimizer=optimizer, scaler=scaler, store_net_output_to=None)
 
-                val_loss = epoch_iter(epx, global_idx, config, model, training_dataset, val_dataloader, class_weights, fold_postfix,
+                val_loss = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, training_dataset, val_dataloader, class_weights, fold_postfix,
                     phase='val', autocast_enabled=autocast_enabled, optimizer=None, scaler=None, store_net_output_to=None)
 
-            quality_metric = test_loss = epoch_iter(epx, global_idx, config, model, test_dataset, test_dataloader, class_weights, fold_postfix,
+            quality_metric = test_loss = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, test_dataset, test_dataloader, class_weights, fold_postfix,
                 phase='test', autocast_enabled=autocast_enabled, optimizer=None, scaler=None, store_net_output_to=config.test_only_and_output_to)
-
 
             if run_test_once_only:
                 break
@@ -893,10 +951,10 @@ def run_dl(run_name, config, training_dataset, test_dataset):
                         epx=epx,
                         loss=train_loss,
                         model=model,
-                        sa_atm=training_dataset.sa_atm,
-                        hla_atm=training_dataset.hla_atm,
-                        sa_cut_module=training_dataset.sa_cut_module,
-                        hla_cut_module=training_dataset.hla_cut_module,
+                        sa_atm=sa_atm,
+                        hla_atm=hla_atm,
+                        sa_cut_module=sa_cut_module,
+                        hla_cut_module=hla_cut_module,
                         optimizer=optimizer,
                         scheduler=scheduler,
                         scaler=scaler)
@@ -908,10 +966,10 @@ def run_dl(run_name, config, training_dataset, test_dataset):
                     epx=epx,
                     loss=train_loss,
                     model=model,
-                    sa_atm=training_dataset.sa_atm,
-                    hla_atm=training_dataset.hla_atm,
-                    sa_cut_module=training_dataset.sa_cut_module,
-                    hla_cut_module=training_dataset.hla_cut_module,
+                    sa_atm=sa_atm,
+                    hla_atm=hla_atm,
+                    sa_cut_module=sa_cut_module,
+                    hla_cut_module=hla_cut_module,
                     optimizer=optimizer,
                     scheduler=scheduler,
                     scaler=scaler)

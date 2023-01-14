@@ -45,11 +45,6 @@ class MMWHSDataset(HybridIdDataset):
                 "Static 2D data extraction for this dataset is skipped.")
             kwargs['use_2d_normal_to'] = None
 
-        self.sa_atm = None
-        self.hla_atm = None
-        self.sa_cut_module = None
-        self.hla_cut_module = None
-
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
 
     def extract_3d_id(self, _input):
@@ -117,10 +112,11 @@ class MMWHSDataset(HybridIdDataset):
         augment_affine = None
 
         if self.augment_at_collate:
-            hla_image, hla_label = image, label
-            sa_image_slc, sa_label_slc = torch.tensor([]), torch.tensor([])
-            hla_image_slc, hla_label_slc = torch.tensor([]), torch.tensor([])
-            sa_affine, hla_affine = torch.tensor([]), torch.tensor([])
+            raise NotImplementedError()
+            # hla_image, hla_label = image, label
+            # sa_image_slc, sa_label_slc = torch.tensor([]), torch.tensor([])
+            # hla_image_slc, hla_label_slc = torch.tensor([]), torch.tensor([])
+            # sa_affine, hla_affine = torch.tensor([]), torch.tensor([])
 
         else:
             augment_affine = torch.eye(4)
@@ -132,24 +128,9 @@ class MMWHSDataset(HybridIdDataset):
                 augment_affine[:3, :3] = get_rotation_matrix_3d_from_angles(
                     deg_angles)
 
-            nifti_affine = additional_data['nifti_affine'].view(1, 4, 4)
-            augment_affine = augment_affine.view(1, 4, 4)
+            additional_data['augment_affine'] = augment_affine.view(4, 4)
 
             D, H, W = label.shape
-
-            sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
-                self.get_transformed(label.view(
-                    1, 1, D, H, W), nifti_affine, augment_affine, 'sa', image=None)
-            hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
-                self.get_transformed(label.view(
-                    1, 1, D, H, W), nifti_affine, augment_affine, 'hla', image=None)
-
-            sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
-                sa_image.squeeze(0), sa_label.squeeze(0), sa_image_slc.squeeze(
-                    0), sa_label_slc.squeeze(0), sa_affine.squeeze(0)
-            hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
-                hla_image.squeeze(0), hla_label.squeeze(0), hla_image_slc.squeeze(
-                    0), hla_label_slc.squeeze(0), hla_affine.squeeze(0)
 
         return dict(
             dataset_idx=dataset_idx,
@@ -157,71 +138,11 @@ class MMWHSDataset(HybridIdDataset):
             image_path=image_path,
             label_path=label_path,
 
-            image=hla_image.to(device=self.device),
-            sa_image_slc=sa_image_slc.to(device=self.device),
-            hla_image_slc=hla_image_slc.to(device=self.device),
-
-            label=hla_label.long().to(device=self.device),
-            sa_label_slc=sa_label_slc.long().to(device=self.device),
-            hla_label_slc=hla_label_slc.long().to(device=self.device),
-
-            sa_affine=sa_affine,
-            hla_affine=hla_affine,
+            image=image.to(device=self.device),
+            label=label.long().to(device=self.device),
 
             additional_data=additional_data
         )
-
-    def get_transformed(self, label, nifti_affine, augment_affine, atm_name, image=None):
-
-        assert atm_name in ['sa', 'hla']
-        img_is_invalid = image is None or image.dim() == 0
-        if img_is_invalid:
-            image = torch.zeros_like(label)
-
-        B, C, D, H, W = label.shape
-        CLASS_NUM = len(self.self_attributes['label_tags'])
-        label = eo.rearrange(F.one_hot(label, CLASS_NUM),
-                             'b c d h w oh -> b (c oh) d h w')
-
-        if atm_name == 'sa':
-            atm = self.sa_atm
-            cut_module = self.sa_cut_module
-        elif atm_name == 'hla':
-            atm = self.hla_atm
-            atm.with_batch_theta = False # TODO remove this line
-            cut_module = self.hla_cut_module
-
-       # Transform label with 'bilinear' interpolation to have gradients
-        label = label.float() # TODO Check, can this be removed?
-        label.requires_grad = True # TODO Check, can this be removed?
-        soft_label, _, _ = atm(label.view(B, CLASS_NUM, D, H, W), label.view(B, CLASS_NUM, D, H, W),
-                               nifti_affine, augment_affine)
-
-        image, label, affine = atm(image.view(B, C, D, H, W), label.view(B, CLASS_NUM, D, H, W),
-                                   nifti_affine, augment_affine, theta_override=atm.last_theta)
-
-        if self.self_attributes['crop_around_3d_label_center'] is not None:
-            _3d_vox_size = torch.as_tensor(
-                self.self_attributes['crop_around_3d_label_center'])
-            label, image, _ = crop_around_label_center(
-                label, _3d_vox_size, image)
-            _, soft_label, _ = crop_around_label_center(
-                label, _3d_vox_size, soft_label)
-
-        label_slc = cut_module(soft_label)
-        image_slc = cut_slice(image) # TODO change this to hardcut module
-
-        if self.self_attributes['crop_around_2d_label_center'] is not None:
-            _2d_vox_size = torch.as_tensor(
-                self.self_attributes['crop_around_2d_label_center']+[1])
-            label_slc, image_slc, _ = crop_around_label_center(
-                label_slc, _2d_vox_size, image_slc)
-
-        if img_is_invalid:
-            image = torch.empty([])
-            image_slc = torch.empty([])
-            # Do not set label_slc to .int() here, since we (may) need the gradients
-        return image, label.int(), image_slc, label_slc, affine.float()
 
     def get_efficient_augmentation_collate_fn(self):
 
