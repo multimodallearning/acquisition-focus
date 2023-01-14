@@ -534,7 +534,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
     loc_optimizer = torch.optim.AdamW(
         list(sa_atm.parameters()) + list(hla_atm.parameters()),
-        lr=config.lr)
+        # weight_decay=1.,
+        lr=0.001)
 
     if _path and _path.is_dir() and not load_model_only:
         print(f"Loading optimizer, scheduler, scaler from {_path}")
@@ -555,17 +556,15 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
 
 # %%
-def get_transformed(label, nifti_affine, augment_affine, atm, cut_module, num_classes,
+def get_transformed(label, nifti_affine, augment_affine, atm, cut_module,
     crop_around_3d_label_center, crop_around_2d_label_center, image=None):
 
     img_is_invalid = image is None or image.dim() == 0
+
+    B, num_classes, D, H, W = label.shape
+
     if img_is_invalid:
-        image = torch.zeros_like(label)
-
-    B, _, D, H, W = label.shape
-
-    label = eo.rearrange(F.one_hot(label, num_classes),
-                            'b c d h w oh -> b (c oh) d h w')
+        image = torch.zeros(B,1,D,H,W, device=label.device)
 
     # Transform label with 'bilinear' interpolation to have gradients
     label = label.float() # TODO Check, can this be removed?
@@ -609,24 +608,27 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     b_image = batch['image']
     nifti_affine = batch['additional_data']['nifti_affine']
     augment_affine = batch['additional_data']['augment_affine']
-    B,D,H,W = b_label.shape
+
+    b_label = eo.rearrange(F.one_hot(b_label, num_classes),
+                        'B D H W OH -> B OH D H W')
+    B,NUM_CLASSES,D,H,W = b_label.shape
 
     sa_atm.with_batch_theta = config.train_affine_theta
     hla_atm.with_batch_theta = False # TODO remove this line
 
     sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
         get_transformed(
-            b_label.view(B, 1, D, H, W),
+            b_label.view(B, NUM_CLASSES, D, H, W),
             nifti_affine, augment_affine,
-            sa_atm, sa_cut_module, num_classes,
+            sa_atm, sa_cut_module,
             config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
             image=None)
 
     hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
         get_transformed(
-            b_label.view(B, 1, D, H, W),
+            b_label.view(B, NUM_CLASSES, D, H, W),
             nifti_affine, augment_affine,
-            hla_atm, hla_cut_module, num_classes,
+            hla_atm, hla_cut_module,
             config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
             image=None)
 
@@ -634,7 +636,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
 
     b_input = b_input.to(device=config.device)
-    b_label = hla_label.to(device=config.device)
+    b_label = b_label.to(device=config.device)
 
     return b_input.float(), b_label, sa_affine
 

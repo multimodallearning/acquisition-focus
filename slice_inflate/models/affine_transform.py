@@ -48,12 +48,17 @@ class LocalisationNet(torch.nn.Module):
         nnunet_model = Generic_UNet(**init_dict, use_skip_connections=use_skip_connections, use_onehot_input=True)
         self.conv_net = nnunet_model
 
-        self.fca = nn.Linear(256*self.dim_size_after_conv_net**3, 3)
-        self.fct = nn.Linear(256*self.dim_size_after_conv_net**3, 3)
+        # self.post_layers = nn.Sequential(
+        #     nn.BatchNorm3d(256), nn.LeakyReLU()
+        # )
+        self.fc_in_num = 256*self.dim_size_after_conv_net**3
+        self.fca = nn.Linear(self.fc_in_num, 3)
+        self.fct = nn.Linear(self.fc_in_num, 3)
 
     def forward(self, x):
         bsz = x.shape[0]
         h = self.conv_net(x, encoder_only=True)
+        # h = self.post_layers(h)
         theta_ap = self.fca(h.view(bsz, -1))
         theta_tp = self.fct(h.view(bsz, -1))
 

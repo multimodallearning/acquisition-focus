@@ -395,7 +395,12 @@ class Generic_UNet(SegmentationNetwork):
         skips = []
         seg_outputs = []
         for d in range(len(self.conv_blocks_context) - 1):
-            x = self.conv_blocks_context[d](x)
+            if encoder_only and d == (len(self.conv_blocks_context) - 2):
+                # Do not apply instance norm and relu in the last layer of the encoder
+                x = self.conv_blocks_context[d].blocks[0](x)
+                x = self.conv_blocks_context[d].blocks[1].conv(x)
+            else:
+                x = self.conv_blocks_context[d](x)
             skips.append(x)
             if not self.convolutional_pooling:
                 x = self.td[d](x)
