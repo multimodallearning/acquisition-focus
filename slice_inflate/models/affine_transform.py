@@ -7,6 +7,7 @@ from slice_inflate.utils.torch_utils import get_rotation_matrix_3d_from_angles
 
 import dill
 from slice_inflate.models.generic_UNet_opt_skip_connections import Generic_UNet
+from slice_inflate.models.ae_models import BlendowskiAE
 from slice_inflate.utils.common_utils import get_script_dir
 from pathlib import Path
 
@@ -75,7 +76,9 @@ class AffineTransformModule(torch.nn.Module):
         self.fov_mm = fov_mm
         self.fov_vox = fov_vox
         self.view_affine = view_affine.view(1,4,4)
-        self.localisation_net = LocalisationNet(input_channels)
+        self.localisation_net = BlendowskiAE(input_channels, input_channels)
+        # self.localisation_net = LocalisationNet(input_channels)
+
         self.with_batch_theta = with_batch_theta
 
         self.set_init_theta_ap(init_theta_ap)
