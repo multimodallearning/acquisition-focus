@@ -32,7 +32,7 @@
     "use_scheduling": false,
     "model_type": "unet",
     "encoder_training_only": false,
-    "save_every": "best",
+    "save_every": null,
     "mdl_save_prefix": "data/models",
     "debug": false,
     "wandb_mode": "disabled",

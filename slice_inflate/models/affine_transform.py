@@ -45,6 +45,8 @@ class LocalisationNet(torch.nn.Module):
         init_dict['deep_supervision'] = False
         init_dict['final_nonlin'] = torch.nn.Identity()
         use_skip_connections = False
+        init_dict['norm_op'] = nn.BatchNorm3d
+        init_dict['norm_op_kwargs'] = None
         nnunet_model = Generic_UNet(**init_dict, use_skip_connections=use_skip_connections, use_onehot_input=True)
         self.conv_net = nnunet_model
 
@@ -58,11 +60,11 @@ class LocalisationNet(torch.nn.Module):
     def forward(self, x):
         bsz = x.shape[0]
         h = self.conv_net(x, encoder_only=True)
-        # h = self.post_layers(h)
-        theta_ap = self.fca(h.view(bsz, -1))
-        theta_tp = self.fct(h.view(bsz, -1))
-
-        return theta_ap.atan(), 2.0*theta_tp.sigmoid()-1.0
+        h = h.reshape(bsz, -1)
+        theta_ap = self.fca(h)
+        theta_tp = self.fct(h)
+        return theta_ap, theta_tp
+        # return theta_ap.atan(), 2.0*theta_tp.sigmoid()-1.0
 
 
 

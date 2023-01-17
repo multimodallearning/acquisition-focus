@@ -732,6 +732,8 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
 
     epx_losses = []
+    epx_sa_thetas = []
+    epx_hla_thetas = []
     label_scores_epoch = {}
     seg_metrics_nanmean = {}
     seg_metrics_std = {}
@@ -766,14 +768,6 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             for opt in all_optimizers.values():
                 opt.step()
 
-            if epx % 1 == 0 and '1010-mr' in batch['id']:
-                print("theta SA rotations params are:")
-                print(get_theta_params(sa_atm.last_theta_a)[0].mean(0))
-                print()
-                print("theta HLA rotations params are:")
-                print(get_theta_params(hla_atm.last_theta_a)[0].mean(0))
-                print()
-
             if epx % 10 == 0 and '1010-mr' in batch['id']:
                 idx = batch['id'].index('1010-mr')
                 _dir = Path(f"data/output/{wandb.run.name}")
@@ -788,6 +782,8 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
 
         epx_losses.append(loss.item())
+        epx_sa_thetas.append(sa_atm.last_theta_a)
+        epx_hla_thetas.append(hla_atm.last_theta_a)
 
         pred_seg = y_hat.argmax(1)
 
@@ -846,6 +842,27 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
     log_oa_metrics(f"scores/{phase}_std_oa_exclude_bg", fold_postfix, seg_metrics_std_oa, global_idx,
         logger_selected_metrics=('dice', 'hd', 'hd95'), print_selected_metrics=())
+
+    print()
+    
+    if epx_sa_thetas:
+        print("theta SA rotation param stats are:")
+        epx_sa_thetas = torch.cat(epx_sa_thetas).cpu().detach()[:, :3]
+        sa_angles = get_theta_params(epx_sa_thetas)[0]
+        sa_offsets = get_theta_params(epx_sa_thetas)[1]
+        print("Angles", "mean=", sa_angles.mean(0), "std=", sa_angles.std(0))
+        print("Offsets", "mean=", sa_offsets.mean(0), "std=", sa_offsets.std(0))
+        print()
+
+    if epx_hla_thetas:
+        print("theta HLA rotation param stats are:")
+        epx_hla_thetas = torch.cat(epx_hla_thetas).cpu().detach()[:, :3]
+        hla_angles = get_theta_params(epx_hla_thetas)[0]
+        hla_offsets = get_theta_params(epx_hla_thetas)[1]
+        print("Angles", "mean=", hla_angles.mean(0), "std=", hla_angles.std(0))
+        print("Offsets", "mean=", hla_offsets.mean(0), "std=", hla_offsets.std(0))
+        print()
+
     print()
     print()
 
