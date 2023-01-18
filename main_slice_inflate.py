@@ -538,7 +538,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     loc_optimizer = torch.optim.AdamW(
         list(sa_atm.parameters()) + list(hla_atm.parameters()),
         # weight_decay=1.,
-        lr=0.001)
+        lr=0.0001)
 
     if _path and _path.is_dir() and not load_model_only:
         print(f"Loading optimizer, scheduler, scaler from {_path}")
