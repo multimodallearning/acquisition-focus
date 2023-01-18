@@ -54,6 +54,9 @@ from slice_inflate.models.affine_transform import AffineTransformModule, get_ran
 import dill
 
 import einops as eo
+from datetime import datetime
+
+NOW_STR = datetime.now().strftime("%Y%d%m__%H_%M_%S")
 
 THIS_SCRIPT_DIR = get_script_dir()
 
@@ -632,7 +635,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
             config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
             image=None)
 
-    b_input = torch.cat([hla_label_slc, sa_label_slc], dim=-1)
+    b_input = torch.cat([sa_label_slc, sa_label_slc], dim=-1) # TODO input HLA again
     b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
 
     b_input = b_input.to(device=config.device)
@@ -770,7 +773,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
             if epx % 10 == 0 and '1010-mr' in batch['id']:
                 idx = batch['id'].index('1010-mr')
-                _dir = Path(f"data/output/{wandb.run.name}")
+                _dir = Path(f"data/output/{NOW_STR}_{wandb.run.name}")
                 _dir.mkdir(exist_ok=True)
                 nib.save(nib.Nifti1Image(b_input[idx].argmax(0).int().detach().cpu().numpy(), affine=np.eye(4)), _dir.joinpath(f"input_epx_{epx}.nii.gz"))
 
@@ -844,14 +847,22 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         logger_selected_metrics=('dice', 'hd', 'hd95'), print_selected_metrics=())
 
     print()
-    
+
     if epx_sa_thetas:
         print("theta SA rotation param stats are:")
         epx_sa_thetas = torch.cat(epx_sa_thetas).cpu().detach()[:, :3]
         sa_angles = get_theta_params(epx_sa_thetas)[0]
+        sa_angles_mean = sa_angles.mean(0)
+        sa_angles_std = sa_angles.std(0)
+
         sa_offsets = get_theta_params(epx_sa_thetas)[1]
-        print("Angles", "mean=", sa_angles.mean(0), "std=", sa_angles.std(0))
-        print("Offsets", "mean=", sa_offsets.mean(0), "std=", sa_offsets.std(0))
+        sa_offsets_mean = sa_offsets.mean(0)
+        sa_offsets_std = sa_offsets.std(0)
+        print("Angles", "mean=", sa_angles_mean, "std=", sa_angles_std)
+        print("Offsets", "mean=", sa_offsets_mean, "std=", sa_offsets_std)
+
+        wandb.log({f"orientations/{phase}_sa_angle_mean": sa_angles_mean[2]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_sa_angle_std": sa_angles_std[2]}, step=global_idx)
         print()
 
     if epx_hla_thetas:
@@ -974,7 +985,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
             elif config.save_every == 'best':
                 if quality_metric < best_quality_metric:
                     best_quality_metric = quality_metric
-                    save_path = f"{config.mdl_save_prefix}/{wandb.run.name}{fold_postfix}_best"
+                    save_path = f"{config.mdl_save_prefix}/{NOW_STR}_{wandb.run.name}_{fold_postfix}_best"
                     save_model(
                         Path(THIS_SCRIPT_DIR, save_path),
                         epx=epx,
@@ -990,7 +1001,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
                         scaler=scaler)
 
             elif (epx % config.save_every == 0) or (epx+1 == config.epochs):
-                save_path = f"{config.mdl_save_prefix}/{wandb.run.name}{fold_postfix}_epx{epx}"
+                save_path = f"{config.mdl_save_prefix}/{NOW_STR}_{wandb.run.name}_{fold_postfix}_epx{epx}"
                 save_model(
                     Path(THIS_SCRIPT_DIR, save_path),
                     epx=epx,
