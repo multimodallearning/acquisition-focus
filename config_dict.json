@@ -7,8 +7,8 @@
     "batch_size": 4,
     "val_batch_size": 1,
     "modality": "all",
-    "train_affine_theta": false,
-    "soft_cut_std": 0.125,
+    "train_affine_theta": true,
+    "soft_cut_std": -999,
     "use_2d_normal_to": null,
     "dataset": "mmwhs",
     "data_base_path": "./data/MMWHS",
@@ -40,6 +40,7 @@
     "checkpoint_path": null,
     "do_plot": false,
     "device": "cuda",
+    "use_autocast": false,
 
     "fixed_slice_seed": 2
 }

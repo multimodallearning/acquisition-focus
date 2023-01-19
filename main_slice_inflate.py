@@ -50,7 +50,7 @@ from mdl_seg_class.metrics import dice3d, hausdorff3d
 import numpy as np
 
 from slice_inflate.models.generic_UNet_opt_skip_connections import Generic_UNet
-from slice_inflate.models.affine_transform import AffineTransformModule, get_random_angles, SoftCutModule, get_theta_params
+from slice_inflate.models.affine_transform import AffineTransformModule, get_random_angles, SoftCutModule, HardCutModule, get_theta_params
 import dill
 
 import einops as eo
@@ -496,8 +496,12 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         torch.tensor(config['fov_vox']),
         view_affine=torch.as_tensor(np.loadtxt(hla_affine_path)).float())
 
-    sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
-    hla_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
+    if config['soft_cut_std'] > 0:
+        sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
+        hla_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
+    else:
+        sa_cut_module = HardCutModule()
+        hla_cut_module = HardCutModule()
 
     sa_atm.to(device)
     hla_atm.to(device)
@@ -780,14 +784,6 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 scaler.step(opt)
             scaler.update()
 
-            if epx % 1 == 0 and '1010-mr' in batch['id']:
-                print("theta SA rotations params are:")
-                print(get_theta_params(sa_atm.last_theta_a)[0].mean(0))
-                print()
-                print("theta HLA rotations params are:")
-                print(get_theta_params(hla_atm.last_theta_a)[0].mean(0))
-                print()
-
         else:
             with torch.no_grad():
                 y_hat, b_target, loss = model_step(
@@ -961,7 +957,7 @@ def run_dl(run_name, config, training_dataset, test_dataset):
         # class_weights = class_weights.to(device=config.device)
         class_weights = None
 
-        autocast_enabled = 'cuda' in config.device
+        autocast_enabled = 'cuda' in config.device and config['use_autocast']
 
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
