@@ -535,10 +535,9 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', patience=20, threshold=0.01, threshold_mode='rel')
 
-    loc_optimizer = torch.optim.AdamW(
+    loc_optimizer = torch.optim.Adam(
         list(sa_atm.parameters()) + list(hla_atm.parameters()),
-        # weight_decay=1.,
-        lr=0.0001)
+        lr=0.001)
 
     if _path and _path.is_dir() and not load_model_only:
         print(f"Loading optimizer, scheduler, scaler from {_path}")
@@ -639,8 +638,8 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
 
     b_input = b_input.to(device=config.device)
-    b_label = b_label.to(device=config.device)
-
+    # b_label = b_label.to(device=config.device)
+    b_label = sa_label.to(device=config.device)
     return b_input.float(), b_label, sa_affine
 
 def inference_wrap(model, seg):
