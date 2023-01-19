@@ -611,7 +611,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     augment_affine = batch['additional_data']['augment_affine']
     B,D,H,W = b_label.shape
 
-    sa_atm.with_batch_theta = config.train_affine_theta
+    sa_atm.with_batch_theta = False
     hla_atm.with_batch_theta = False # TODO remove this line
 
     sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
@@ -638,12 +638,6 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
 
     return b_input.float(), b_label, sa_affine
 
-def inference_wrap(model, seg):
-    with torch.inference_mode():
-        b_seg = seg.unsqueeze(0).unsqueeze(0).float()
-        b_out = model(b_seg)[0]
-        b_out = b_out.argmax(1)
-        return b_out
 
 
 
@@ -690,12 +684,14 @@ def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
 
     return elbo
 
-def model_step(config, model, b_input, b_target, label_tags, class_weights, io_normalisation_values, autocast_enabled=False):
+def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, batch, label_tags, class_weights, io_normalisation_values, autocast_enabled=False):
     # b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
     # b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
 
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
+        b_input, b_target, _ = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
+
         assert b_input.dim() == 5, \
             f"Input image for model must be {5}D: BxCxSPATIAL but is {b_input.shape}"
 
@@ -720,7 +716,13 @@ def model_step(config, model, b_input, b_target, label_tags, class_weights, io_n
         else:
             loss = get_ae_loss_value(y_hat, b_target.float(), class_weights)
 
-    return y_hat, loss
+        if epx % 10 == 0 and '1010-mr' in batch['id']:
+            idx = batch['id'].index('1010-mr')
+            _dir = Path(f"data/output/{wandb.run.name}")
+            _dir.mkdir(exist_ok=True)
+            nib.save(nib.Nifti1Image(b_input[idx].argmax(0).int().detach().cpu().numpy(), affine=np.eye(4)), _dir.joinpath(f"input_epx_{epx}.nii.gz"))
+
+    return y_hat, b_target, loss
 
 
 
@@ -754,15 +756,24 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         if phase == 'train':
             for opt in all_optimizers.values():
                 opt.zero_grad()
-            b_input, b_seg, sa_affine = get_model_input(batch, config, len(dataset.label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
-            y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
 
-            loss.backward()
+            y_hat, b_target, loss = model_step(
+                config,
+                epx,
+                model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
+                batch,
+                dataset.label_tags, class_weights,
+                dataset.io_normalisation_values, autocast_enabled)
+
+            scaler.scale(loss).backward()
             # test_all_parameters_updated(model)
             # test_all_parameters_updated(sa_atm)
             # test_all_parameters_updated(hla_atm)
-            for opt in all_optimizers.values():
-                opt.step()
+            for name, opt in all_optimizers.items():
+                if name == 'loc_optimizer' and not config.train_affine_theta:
+                    continue
+                scaler.step(opt)
+            scaler.update()
 
             if epx % 1 == 0 and '1010-mr' in batch['id']:
                 print("theta SA rotations params are:")
@@ -772,49 +783,45 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 print(get_theta_params(hla_atm.last_theta_a)[0].mean(0))
                 print()
 
-            if epx % 10 == 0 and '1010-mr' in batch['id']:
-                idx = batch['id'].index('1010-mr')
-                _dir = Path(f"data/output/{wandb.run.name}")
-                _dir.mkdir(exist_ok=True)
-                nib.save(nib.Nifti1Image(b_input[idx].argmax(0).int().detach().cpu().numpy(), affine=np.eye(4)), _dir.joinpath(f"input_epx_{epx}.nii.gz"))
-
-            # print((new_theta - old_theta).abs().sum())
-
         else:
             with torch.no_grad():
-                b_input, b_seg, sa_affine = get_model_input(batch, config, len(dataset.label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
-                y_hat, loss = model_step(config, model, b_input, b_seg, dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
+                y_hat, b_target, loss = model_step(
+                    config,
+                    epx,
+                    model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
+                    batch,
+                    dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
 
         epx_losses.append(loss.item())
 
         pred_seg = y_hat.argmax(1)
 
         # Taken from nibabel nifti1.py
-        RZS = sa_affine[0][:3,:3].detach().cpu().numpy()
+        RZS = sa_atm.last_resampled_affine[0,:3,:3].detach().cpu().numpy()
         nifti_zooms = np.sqrt(np.sum(RZS * RZS, axis=0))
 
         # Calculate fast dice score
         b_dice = dice3d(
             eo.rearrange(torch.nn.functional.one_hot(pred_seg, len(training_dataset.label_tags)), 'b d h w oh -> b oh d h w'),
-            b_seg,
+            b_target,
             one_hot_torch_style=False
         )
         label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'dice',
             b_dice, training_dataset.label_tags, exclude_bg=True)
 
         if epx % 20 == 0 and epx > 0 and False:
-            b_hd = hausdorff3d(b_input, b_seg, spacing_mm=tuple(nifti_zooms), percent=100)
+            b_hd = hausdorff3d(b_input, b_target, spacing_mm=tuple(nifti_zooms), percent=100)
             label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd',
                 b_hd, training_dataset.label_tags, exclude_bg=True)
 
-            b_hd95 = hausdorff3d(b_input, b_seg, spacing_mm=tuple(nifti_zooms), percent=95)
+            b_hd95 = hausdorff3d(b_input, b_target, spacing_mm=tuple(nifti_zooms), percent=95)
             label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd95',
                 b_hd95, training_dataset.label_tags, exclude_bg=True)
 
         if store_net_output_to not in ["", None]:
             store_path = Path(store_net_output_to, f"output_batch{batch_idx}.pth")
             store_path.parent.mkdir(exist_ok=True, parents=True)
-            torch.save(dict(batch=batch, input=b_input, output=y_hat, target=b_seg), store_path)
+            torch.save(dict(batch=batch, input=b_input, output=y_hat, target=b_target), store_path)
 
         if config.debug: break
 
