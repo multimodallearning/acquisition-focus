@@ -7,7 +7,7 @@
     "batch_size": 4,
     "val_batch_size": 1,
     "modality": "all",
-    "train_affine_theta": true,
+    "train_affine_theta": false,
     "soft_cut_std": 0.125,
     "use_2d_normal_to": null,
     "dataset": "mmwhs",
