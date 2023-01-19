@@ -634,7 +634,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
             config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
             image=None)
 
-    b_input = torch.cat([hla_label_slc, sa_label_slc], dim=-1) # TODO input HLA again
+    b_input = torch.cat([sa_label_slc, sa_label_slc], dim=-1) # TODO input HLA again
     b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
 
     b_input = b_input.to(device=config.device)
