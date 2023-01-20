@@ -245,6 +245,49 @@ def get_random_angles(angle_std, seed=0):
     angles = torch.normal(mean, std)
     return angles
 
+def normal_to_rotation_matrix(normals):
+    """Convert 3d vector (unnormalized normals) to 4x4 rotation matrix
+
+    Args:
+        normal (Tensor): tensor of 3d vector of normals.
+
+    Returns:
+        Tensor: tensor of 4x4 rotation matrices.
+
+    Shape:
+        - Input: :math:`(N, 3)`
+        - Output: :math:`(N, 4, 4)`
+
+    Example:
+        >>> input = torch.rand(1, 3)  # Nx3
+        >>> output = tgm.angle_axis_to_rotation_matrix(input)  # Nx4x4
+    """
+
+    nzs, nys, nxs = normals[:,0], normals[:,1], normals[:,2]
+
+    # see https://math.stackexchange.com/questions/1956699/getting-a-transformation-matrix-from-a-normal-vector
+    r00 = nys / torch.sqrt(nxs**2 + nys**2)
+    r01 = -nxs / torch.sqrt(nxs**2 + nys**2)
+    r02 = torch.zeros_like(nxs)
+    r10 = nxs * nzs / torch.sqrt(nxs**2 + nys**2)
+    r11 = nys * nzs / torch.sqrt(nxs**2 + nys**2)
+    r12 = -torch.sqrt(nxs**2 + nys**2)
+    r20 = nxs
+    r21 = nys
+    r22 = nzs
+    zer = torch.zeros_like(nxs)
+    one = torch.ones_like(nxs)
+
+    theta_r = torch.stack(
+        [r00, r01, r02, zer,
+         r10, r11, r12, zer,
+         r20, r21, r22, zer,
+         zer, zer, zer, one], dim=1)
+
+    theta_r = theta_r.view(-1,4,4)
+
+    return theta_r
+
 
 
 def angle_axis_to_rotation_matrix(angle_axis):
