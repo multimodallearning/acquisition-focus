@@ -874,17 +874,29 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         print("Angles", "mean=", sa_angles_mean, "std=", sa_angles_std)
         print("Offsets", "mean=", sa_offsets_mean, "std=", sa_offsets_std)
 
-        wandb.log({f"orientations/{phase}_sa_angle_mean": sa_angles_mean[2]}, step=global_idx)
-        wandb.log({f"orientations/{phase}_sa_angle_std": sa_angles_std[2]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_sa_angle_mean[1]": sa_angles_mean[1]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_sa_angle_std[1]": sa_angles_std[1]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_sa_angle_mean[2]": sa_angles_mean[2]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_sa_angle_std[2]": sa_angles_std[2]}, step=global_idx)
         print()
 
     if epx_hla_thetas:
         print("theta HLA rotation param stats are:")
         epx_hla_thetas = torch.cat(epx_hla_thetas).cpu().detach()[:, :3]
         hla_angles = get_theta_params(epx_hla_thetas)[0]
+        hla_angles_mean = hla_angles.mean(0)
+        hla_angles_std = hla_angles.std(0)
+
         hla_offsets = get_theta_params(epx_hla_thetas)[1]
+        hla_offsets_mean = hla_offsets.mean(0)
+        hla_offsets_std = hla_offsets.std(0)
         print("Angles", "mean=", hla_angles.mean(0), "std=", hla_angles.std(0))
         print("Offsets", "mean=", hla_offsets.mean(0), "std=", hla_offsets.std(0))
+
+        wandb.log({f"orientations/{phase}_hla_angle_mean[1]": hla_angles_mean[1]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_hla_angle_std[1]": hla_angles_std[1]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_hla_angle_mean[2]": hla_angles_mean[2]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_hla_angle_std[2]": hla_angles_std[2]}, step=global_idx)
         print()
 
     print()
