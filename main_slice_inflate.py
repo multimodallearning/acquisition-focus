@@ -405,17 +405,17 @@ class BlendowskiVAE(BlendowskiAE):
 # y, _ = model(smp)
 
 # %%
-# def nan_hook(self, inp, output):
-#     if not isinstance(output, tuple):
-#         outputs = [output]
-#     else:
-#         outputs = output
+def anomaly_hook(self, inp, output):
+    if not isinstance(output, tuple):
+        outputs = [output]
+    else:
+        outputs = output
 
-#     for i, out in enumerate(outputs):
-#         nan_mask = torch.isnan(out)
-#         if nan_mask.any():
-#             print("In", self.__class__.__name__)
-#             raise RuntimeError(f"Found NAN in output {i} at indices: ", nan_mask.nonzero(), "where:", out[nan_mask.nonzero()[:, 0].unique(sorted=True)])
+    for out_idx, out in enumerate(outputs):
+        if isinstance(out, torch.Tensor):
+            nan_mask = torch.isnan(out)
+            inf_mask = torch.isinf(out)
+            raise RuntimeError(f"Found nan/inf in output")
 
 def get_norms(model):
     norms = {}
@@ -541,6 +541,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
     loc_optimizer = torch.optim.AdamW(
         list(sa_atm.parameters()) + list(hla_atm.parameters()),
+        weight_decay=0.1,
         lr=0.001)
 
     if _path and _path.is_dir() and not load_model_only:
@@ -555,7 +556,11 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
     all_optimizers = dict(optimizer=optimizer, loc_optimizer=loc_optimizer)
     # for submodule in model.modules():
-    #     submodule.register_forward_hook(nan_hook)
+    #     submodule.register_forward_hook(anomaly_hook)
+    # for submodule in sa_atm.modules():
+    #     submodule.register_forward_hook(anomaly_hook)
+    # for submodule in hla_atm.modules():
+    #     submodule.register_forward_hook(anomaly_hook)
 
     return (model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, all_optimizers, scheduler, scaler), epx
 
@@ -572,7 +577,7 @@ def get_transformed(label, nifti_affine, augment_affine, atm, cut_module,
     if img_is_invalid:
         image = torch.zeros(B,1,D,H,W, device=label.device)
 
-    # Transform label with 'bilinear' interpolation to have gradients
+    # Transform  label with 'bilinear' interpolation to have gradients
     label = label.float() # TODO Check, can this be removed?
     label.requires_grad = True # TODO Check, can this be removed?
     soft_label, _, _ = atm(label.view(B, num_classes, D, H, W), label.view(B, num_classes, D, H, W),
@@ -724,7 +729,7 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
         else:
             loss = get_ae_loss_value(y_hat, b_target.float(), class_weights)
 
-        if epx % 10 == 0 and '1010-mr' in batch['id']:
+        if config.do_output and epx % 10 == 0 and '1010-mr' in batch['id']:
             idx = batch['id'].index('1010-mr')
             _dir = Path(f"data/output/{wandb.run.name}")
             _dir.mkdir(exist_ok=True)

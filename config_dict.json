@@ -38,9 +38,9 @@
     "wandb_mode": "online",
     "do_sweep": false,
     "checkpoint_path": null,
-    "do_plot": false,
+    "do_output": false,
     "device": "cuda",
-    "use_autocast": false,
+    "use_autocast": true,
 
     "fixed_slice_seed": 2
 }

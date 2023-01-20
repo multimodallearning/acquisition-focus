@@ -1,6 +1,8 @@
 
 import torch
 import torch.nn as nn
+import torch.cuda.amp as amp
+import numpy as np
 import einops as eo
 from slice_inflate.datasets.align_mmwhs import nifti_transform
 from slice_inflate.utils.torch_utils import get_rotation_matrix_3d_from_angles
@@ -22,11 +24,15 @@ class ConvNet(torch.nn.Module):
             nn.Conv3d(64,64,kernel_size,padding=inner_padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
             nn.Conv3d(64,64,kernel_size,padding=inner_padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
             nn.AvgPool3d(2),
+            nn.Conv3d(64,64,kernel_size,padding=inner_padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
             nn.Conv3d(64,32,kernel_size,padding=inner_padding), nn.BatchNorm3d(32), nn.LeakyReLU(),
-            nn.Conv3d(32,2,kernel_size,padding=1)
+            nn.AvgPool3d(2),
+            nn.Conv3d(32,32,kernel_size,padding=1), nn.BatchNorm3d(32), nn.LeakyReLU(),
+            nn.Conv3d(32,1,1,padding=1), nn.BatchNorm3d(1)
         )
 
-    def forward(self, x):
+
+    def forward(self, x, encoder_only=False):
         return self.net(x)
 
 
@@ -36,24 +42,23 @@ class LocalisationNet(torch.nn.Module):
         super().__init__()
         self.dim_size_after_conv_net = 16
 
-        # self.conv_net = ConvNet(input_channels=input_channels, kernel_size=5, inner_padding=2)
+        if True:
+            self.conv_net = ConvNet(input_channels=input_channels, kernel_size=5, inner_padding=2)
+            self.fc_in_num = 1*7**3
+        else:
+            init_dict_path = Path(get_script_dir(), "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
+            with open(init_dict_path, 'rb') as f:
+                init_dict = dill.load(f)
+            init_dict['num_classes'] = input_channels
+            init_dict['deep_supervision'] = False
+            init_dict['final_nonlin'] = torch.nn.Identity()
+            use_skip_connections = False
+            init_dict['norm_op'] = nn.BatchNorm3d
+            init_dict['norm_op_kwargs'] = None
+            nnunet_model = Generic_UNet(**init_dict, use_skip_connections=use_skip_connections, use_onehot_input=True)
+            self.conv_net = nnunet_model
+            self.fc_in_num = 256*self.dim_size_after_conv_net**3
 
-        init_dict_path = Path(get_script_dir(), "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
-        with open(init_dict_path, 'rb') as f:
-            init_dict = dill.load(f)
-        init_dict['num_classes'] = input_channels
-        init_dict['deep_supervision'] = False
-        init_dict['final_nonlin'] = torch.nn.Identity()
-        use_skip_connections = False
-        init_dict['norm_op'] = nn.BatchNorm3d
-        init_dict['norm_op_kwargs'] = None
-        nnunet_model = Generic_UNet(**init_dict, use_skip_connections=use_skip_connections, use_onehot_input=True)
-        self.conv_net = nnunet_model
-
-        # self.post_layers = nn.Sequential(
-        #     nn.BatchNorm3d(256), nn.LeakyReLU()
-        # )
-        self.fc_in_num = 256*self.dim_size_after_conv_net**3
         self.fca = nn.Linear(self.fc_in_num, 3)
         self.fct = nn.Linear(self.fc_in_num, 3)
 
@@ -260,13 +265,12 @@ def angle_axis_to_rotation_matrix(angle_axis):
         >>> input = torch.rand(1, 3)  # Nx3
         >>> output = tgm.angle_axis_to_rotation_matrix(input)  # Nx4x4
     """
-    def _compute_rotation_matrix(angle_axis, theta2, eps=1e-6):
+    def _compute_rotation_matrix(angle_axis, sqrt_theta2, eps=1e-6):
         # We want to be careful to only evaluate the square root if the
         # norm of the angle_axis vector is greater than zero. Otherwise
         # we get a division by zero.
         k_one = 1.0
-        EPS = 1e-6
-        theta = torch.sqrt(theta2+EPS)
+        theta = sqrt_theta2
         wxyz = angle_axis / (theta + eps)
         wx, wy, wz = torch.chunk(wxyz, 3, dim=1)
         cos_theta = torch.cos(theta)
@@ -292,21 +296,26 @@ def angle_axis_to_rotation_matrix(angle_axis):
             [k_one, -rz, ry, rz, k_one, -rx, -ry, rx, k_one], dim=1)
         return rotation_matrix.view(-1, 3, 3)
 
+    eps = 1e-6
     # stolen from ceres/rotation.h
 
     _angle_axis = torch.unsqueeze(angle_axis, dim=1)
-    theta2 = torch.matmul(_angle_axis, _angle_axis.transpose(1, 2))
-    theta2 = torch.squeeze(theta2, dim=1)
+    with amp.autocast(enabled=False):
+        _angle_axis = _angle_axis.to(torch.float32)
+        sqrt_theta2 = torch.matmul(
+            (_angle_axis.abs()+eps).sqrt(),
+            (_angle_axis.abs()+eps).sqrt().transpose(1, 2)
+        ) # Problem here!
+    sqrt_theta2 = torch.squeeze(sqrt_theta2, dim=1)
 
     # compute rotation matrices
-    rotation_matrix_normal = _compute_rotation_matrix(angle_axis, theta2)
+    rotation_matrix_normal = _compute_rotation_matrix(angle_axis, sqrt_theta2)
     rotation_matrix_taylor = _compute_rotation_matrix_taylor(angle_axis)
 
     # create mask to handle both cases
-    eps = 1e-6
-    mask = (theta2 > eps).view(-1, 1, 1).to(theta2.device)
-    mask_pos = (mask).type_as(theta2)
-    mask_neg = (mask == False).type_as(theta2)  # noqa
+    mask = (sqrt_theta2 > eps).view(-1, 1, 1).to(sqrt_theta2.device)
+    mask_pos = (mask).type_as(sqrt_theta2)
+    mask_neg = (mask == False).type_as(sqrt_theta2)  # noqa
 
     # create output pose matrix
     batch_size = angle_axis.shape[0]
@@ -416,14 +425,24 @@ def rotation_matrix_to_quaternion(rotation_matrix, eps=1e-6):
     mask_c3 = mask_c3.view(-1, 1).type_as(q3)
 
     q = q0 * mask_c0 + q1 * mask_c1 + q2 * mask_c2 + q3 * mask_c3
-    q /= torch.sqrt(t0_rep * mask_c0 + t1_rep * mask_c1 +  # noqa
-                    t2_rep * mask_c2 + t3_rep * mask_c3)  # noqa
+    with amp.autocast(enabled=False):
+        t0_rep = t0_rep.to(torch.float32)
+        mask_c0 = mask_c0.to(torch.float32)
+        t1_rep = t1_rep.to(torch.float32)
+        mask_c1 = mask_c1.to(torch.float32)
+        t2_rep = t2_rep.to(torch.float32)
+        mask_c2 = mask_c2.to(torch.float32)
+        t3_rep = t3_rep.to(torch.float32)
+        mask_c3 = mask_c3.to(torch.float32)
+
+        q /= torch.sqrt(t0_rep * mask_c0 + t1_rep * mask_c1 +  # noqa
+                        t2_rep * mask_c2 + t3_rep * mask_c3 + eps)  # noqa
     q *= 0.5
     return q
 
 
 
-def quaternion_to_angle_axis(quaternion: torch.Tensor) -> torch.Tensor:
+def quaternion_to_angle_axis(quaternion: torch.Tensor, eps=1e-6) -> torch.Tensor:
     """Convert quaternion vector to angle axis of rotation.
 
     Adapted from ceres C++ library: ceres-solver/include/ceres/rotation.h
@@ -455,7 +474,10 @@ def quaternion_to_angle_axis(quaternion: torch.Tensor) -> torch.Tensor:
     q3: torch.Tensor = quaternion[..., 3]
     sin_squared_theta: torch.Tensor = q1 * q1 + q2 * q2 + q3 * q3
 
-    sin_theta: torch.Tensor = torch.sqrt(sin_squared_theta)
+    with amp.autocast(enabled=False):
+        sin_squared_theta = sin_squared_theta.to(torch.float32)
+        sin_theta: torch.Tensor = torch.sqrt(sin_squared_theta+eps)
+
     cos_theta: torch.Tensor = quaternion[..., 0]
     two_theta: torch.Tensor = 2.0 * torch.where(
         cos_theta < 0.0,
