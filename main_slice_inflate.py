@@ -489,12 +489,14 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     sa_atm = AffineTransformModule(num_classes,
         torch.tensor(config['fov_mm']),
         torch.tensor(config['fov_vox']),
-        view_affine=torch.as_tensor(np.loadtxt(sa_affine_path)).float())
+        view_affine=torch.as_tensor(np.loadtxt(sa_affine_path)).float(),
+        optim_method='normal-vector')
 
     hla_atm = AffineTransformModule(num_classes,
         torch.tensor(config['fov_mm']),
         torch.tensor(config['fov_vox']),
-        view_affine=torch.as_tensor(np.loadtxt(hla_affine_path)).float())
+        view_affine=torch.as_tensor(np.loadtxt(hla_affine_path)).float(),
+        optim_method='normal-vector')
 
     if config['soft_cut_std'] > 0:
         sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])

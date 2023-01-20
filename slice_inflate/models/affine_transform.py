@@ -40,7 +40,6 @@ class ConvNet(torch.nn.Module):
 class LocalisationNet(torch.nn.Module):
     def __init__(self, input_channels):
         super().__init__()
-        self.dim_size_after_conv_net = 16
 
         if True:
             self.conv_net = ConvNet(input_channels=input_channels, kernel_size=5, inner_padding=2)
@@ -57,7 +56,7 @@ class LocalisationNet(torch.nn.Module):
             init_dict['norm_op_kwargs'] = None
             nnunet_model = Generic_UNet(**init_dict, use_skip_connections=use_skip_connections, use_onehot_input=True)
             self.conv_net = nnunet_model
-            self.fc_in_num = 256*self.dim_size_after_conv_net**3
+            self.fc_in_num = 256*16**3
 
         self.fca = nn.Linear(self.fc_in_num, 3)
         self.fct = nn.Linear(self.fc_in_num, 3)
@@ -76,8 +75,13 @@ class LocalisationNet(torch.nn.Module):
 class AffineTransformModule(torch.nn.Module):
     def __init__(self, input_channels,
         fov_mm, fov_vox, view_affine,
-        init_theta_ap=None, init_theta_tp=None, with_batch_theta=True):
+        init_theta_ap=None, init_theta_tp=None,
+        optim_method='angle-axis', with_batch_theta=True):
+
         super().__init__()
+        assert optim_method in ['angle-axis', 'normal-vector'], \
+            f"optim_method must be 'angle-axis' or 'normal-vector', not {optim_method}"
+        self.optim_method = optim_method
 
         self.fov_mm = fov_mm
         self.fov_vox = fov_vox
@@ -118,7 +122,12 @@ class AffineTransformModule(torch.nn.Module):
 
         theta_tp[...]  = 0. # TODO remove override
 
-        theta_a = angle_axis_to_rotation_matrix(theta_ap.view(batch_size,3))
+        if self.optim_method == 'angle-axis':
+            theta_a = angle_axis_to_rotation_matrix(theta_ap.view(batch_size,3))
+        elif self.optim_method == 'normal-vector':
+            theta_a = normal_to_rotation_matrix(theta_ap.view(batch_size,3))
+        else:
+            raise ValueError()
         theta_t = torch.cat([theta_tp, torch.ones(batch_size, device=device).view(batch_size,1)], dim=1)
         theta_t = torch.cat([
             torch.eye(4, device=device)[:4,:3].view(1,4,3).repeat(batch_size,1,1),
