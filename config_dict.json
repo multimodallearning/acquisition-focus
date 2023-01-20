@@ -38,7 +38,7 @@
     "wandb_mode": "online",
     "do_sweep": false,
     "checkpoint_path": null,
-    "do_output": false,
+    "do_output": true,
     "device": "cuda",
     "use_autocast": true,
 

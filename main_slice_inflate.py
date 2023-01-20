@@ -731,7 +731,7 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
 
         if config.do_output and epx % 10 == 0 and '1010-mr' in batch['id']:
             idx = batch['id'].index('1010-mr')
-            _dir = Path(f"data/output/{wandb.run.name}")
+            _dir = Path(f"data/output/{NOW_STR}_{wandb.run.name}")
             _dir.mkdir(exist_ok=True)
             nib.save(nib.Nifti1Image(b_input[idx].argmax(0).int().detach().cpu().numpy(), affine=np.eye(4)), _dir.joinpath(f"input_epx_{epx}.nii.gz"))
 
