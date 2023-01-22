@@ -51,7 +51,10 @@ import numpy as np
 
 from slice_inflate.models.generic_UNet_opt_skip_connections import Generic_UNet
 from slice_inflate.models.affine_transform import AffineTransformModule, get_random_angles, SoftCutModule, HardCutModule, get_theta_params
+from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
+
 import dill
+
 
 import einops as eo
 from datetime import datetime
@@ -176,8 +179,6 @@ if False:
         plt.show()
 
 # %%
-
-# %%
 if False:
     training_dataset.train()
 
@@ -237,179 +238,11 @@ if False:
     plt.show()
 
 # %%
-
-# %%
-class BlendowskiAE(torch.nn.Module):
-
-    class ConvBlock(torch.nn.Module):
-        def __init__(self, in_channels: int, out_channels_list: list, strides_list: list, kernels_list:list=None, paddings_list:list=None):
-            super().__init__()
-
-            ops = []
-            in_channels = [in_channels] + out_channels_list[:-1]
-            if kernels_list is None:
-                kernels_list = [3] * len(out_channels_list)
-            if paddings_list is None:
-                paddings_list = [1] * len(out_channels_list)
-
-            for op_idx in range(len(out_channels_list)):
-                ops.append(torch.nn.Conv3d(
-                    in_channels[op_idx],
-                    out_channels_list[op_idx],
-                    kernel_size=kernels_list[op_idx],
-                    stride=strides_list[op_idx],
-                    padding=paddings_list[op_idx]
-                ))
-                ops.append(torch.nn.BatchNorm3d(out_channels_list[op_idx]))
-                ops.append(torch.nn.LeakyReLU())
-
-            self.block = torch.nn.Sequential(*ops)
-
-        def forward(self, x):
-            return self.block(x)
-
-
-
-    def __init__(self, in_channels, out_channels, decoder_in_channels=2, debug_mode=False):
-        super().__init__()
-
-        self.debug_mode = debug_mode
-
-        self.first_layer_encoder = self.ConvBlock(in_channels, out_channels_list=[8], strides_list=[1])
-        self.first_layer_decoder = self.ConvBlock(8, out_channels_list=[8,out_channels], strides_list=[1,1])
-
-        self.second_layer_encoder = self.ConvBlock(8, out_channels_list=[20,20,20], strides_list=[2,1,1])
-        self.second_layer_decoder = self.ConvBlock(20, out_channels_list=[8], strides_list=[1])
-
-        self.third_layer_encoder = self.ConvBlock(20, out_channels_list=[40,40,40], strides_list=[2,1,1])
-        self.third_layer_decoder = self.ConvBlock(40, out_channels_list=[20], strides_list=[1])
-
-        self.fourth_layer_encoder = self.ConvBlock(40, out_channels_list=[60,60,60], strides_list=[2,1,1])
-        self.fourth_layer_decoder = self.ConvBlock(decoder_in_channels, out_channels_list=[40], strides_list=[1])
-
-        self.deepest_layer = torch.nn.Sequential(
-            self.ConvBlock(60, out_channels_list=[60,40,20], strides_list=[2,1,1]),
-            torch.nn.Conv3d(20, 2, kernel_size=1, stride=1, padding=0)
-        )
-
-        self.encoder = torch.nn.Sequential(
-            self.first_layer_encoder,
-            self.second_layer_encoder,
-            self.third_layer_encoder,
-            self.fourth_layer_encoder,
-        )
-
-        self.decoder = torch.nn.Sequential(
-            torch.nn.Upsample(scale_factor=2),
-            self.fourth_layer_decoder,
-            torch.nn.Upsample(scale_factor=2),
-            self.third_layer_decoder,
-            torch.nn.Upsample(scale_factor=2),
-            self.second_layer_decoder,
-            torch.nn.Upsample(scale_factor=2),
-            self.first_layer_decoder,
-        )
-
-    def encode(self, x):
-        h = self.encoder(x)
-        h = self.deepest_layer(h)
-        # h = debug_forward_pass(self.encoder, x, STEP_MODE=False)
-        # h = debug_forward_pass(self.deepest_layer, h, STEP_MODE=False)
-        return h
-
-    def decode(self, z):
-        if self.debug_mode:
-            return debug_forward_pass(self.decoder, z, STEP_MODE=False)
-        else:
-            return self.decoder(z)
-
-    def forward(self, x):
-        # x = torch.nn.functional.instance_norm(x)
-        z = self.encode(x)
-        return self.decode(z), z
-
-
-
-class BlendowskiVAE(BlendowskiAE):
-    def __init__(self, std_max=10.0, epoch=0, epoch_reach_std_max=250, *args, **kwargs):
-        kwargs['decoder_in_channels'] = 1
-        super().__init__(*args, **kwargs)
-
-        self.deepest_layer_upstream = self.ConvBlock(60, out_channels_list=[60,40,20], strides_list=[2,1,1])
-        self.deepest_layer_downstream = nn.ModuleList([
-            torch.nn.Conv3d(20, 1, kernel_size=1, stride=1, padding=0),
-            torch.nn.Conv3d(20, 1, kernel_size=1, stride=1, padding=0)
-        ])
-
-        self.log_var_scale = nn.Parameter(torch.Tensor([0.0]))
-        self.epoch = epoch
-        self.epoch_reach_std_max = epoch_reach_std_max
-        self.std_max = std_max
-
-    def set_epoch(self, epoch):
-        self.epoch = epoch
-
-    def get_std_max(self):
-        SIGMOID_XMIN, SIGMOID_XMAX = -8.0, 8.0
-        s_x = (SIGMOID_XMAX-SIGMOID_XMIN) / (self.epoch_reach_std_max - 0) * self.epoch + SIGMOID_XMIN
-        std_max = torch.sigmoid(torch.tensor(s_x)) * self.std_max
-        return std_max
-
-    def sample_z(self, mean, std):
-        q = torch.distributions.Normal(mean, std)
-        return q.rsample() # Caution, dont use torch.normal(mean=mean, std=std). Gradients are not backpropagated
-
-    def encode(self, x):
-        h = self.encoder(x)
-        h = self.deepest_layer_upstream(h)
-        mean = self.deepest_layer_downstream[0](h)
-        log_var = self.deepest_layer_downstream[1](h)
-        return mean, log_var
-
-    def forward(self, x):
-        mean, log_var = self.encode(x)
-        std = torch.exp(log_var/2)
-        std = std.clamp(min=1e-10, max=self.get_std_max())
-        z = self.sample_z(mean=mean, std=std)
-        return self.decode(z), (z, mean, std)
-
-
-
-# %%
-# x = torch.zeros(1,8,128,128,128)
-# bae = BlendowskiAE(in_channels=8, out_channels=8)
-
-# y, z = bae(x)
-
-# print("BAE")
-# print("x", x.shape)
-# print("z", z.shape)
-# print("y", y.shape)
-# print()
-
-# bvae = BlendowskiVAE(in_channels=8, out_channels=8)
-
-# y, z = bvae(x)
-
-# print("BVAE")
-# print("x", x.shape)
-# print("z", z.shape)
-# print("y", y.shape)
-
-
-# %%
-# model = BlendowskiVAE(in_channels=6, out_channels=6)
-# model.cuda()
-# with torch.no_grad():
-#     smp = torch.nn.functional.one_hot(training_dataset[1]['label'], 6).unsqueeze(0).permute([0,4,1,2,3]).float().cuda()
-# y, _ = model(smp)
-
-# %%
-def anomaly_hook(self, inp, output):
-    if not isinstance(output, tuple):
-        outputs = [output]
-    else:
-        outputs = output
+# def nan_hook(self, inp, output):
+#     if not isinstance(output, tuple):
+#         outputs = [output]
+#     else:
+#         outputs = output
 
     for out_idx, out in enumerate(outputs):
         if isinstance(out, torch.Tensor):
@@ -441,6 +274,10 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
     elif config.model_type == 'ae':
         model = BlendowskiAE(in_channels=num_classes, out_channels=num_classes)
+
+    elif config.model_type == 'hybrid_ae':
+        model = HybridAE(in_channels=num_classes*2, out_channels=num_classes)
+
     elif 'unet' in config.model_type:
         init_dict_path = Path(THIS_SCRIPT_DIR, "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
         with open(init_dict_path, 'rb') as f:
@@ -645,8 +482,8 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
             config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
             image=None)
 
-    b_input = torch.cat([sa_label_slc, sa_label_slc], dim=-1) # TODO input HLA again
-    b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
+    b_input = torch.cat([sa_label_slc, sa_label_slc], dim=1)
+    b_input = b_input.view(-1, NUM_CLASSES*2, W_TARGET_LEN, W_TARGET_LEN) # TODO change this and input hla_slc again
 
     b_input = b_input.to(device=config.device)
     b_label = b_label.to(device=config.device)
@@ -706,13 +543,13 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
         b_input, b_target, _ = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
-
-        assert b_input.dim() == 5, \
-            f"Input image for model must be {5}D: BxCxSPATIAL but is {b_input.shape}"
+        
+        assert b_input.dim() == 4, \
+            f"Input image for model must be {4}D: BxCxSPATIAL but is {b_input.shape}"
 
         if config.model_type == 'vae':
-            y_hat, (z, mean, std) = model(b_input)
-        elif config.model_type in ['ae', 'unet', 'unet-wo-skip']:
+            y_hat, (z, mean, std) = model()
+        elif config.model_type in ['ae', 'unet', 'unet-wo-skip', 'hybrid_ae']:
             y_hat, _ = model(b_input)
         else:
             raise ValueError

@@ -87,6 +87,7 @@ class AffineTransformModule(torch.nn.Module):
         self.fov_vox = fov_vox
         self.view_affine = view_affine.view(1,4,4)
         self.localisation_net = LocalisationNet(input_channels)
+
         self.with_batch_theta = with_batch_theta
 
         self.set_init_theta_ap(init_theta_ap)
