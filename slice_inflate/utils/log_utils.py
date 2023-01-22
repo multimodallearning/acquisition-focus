@@ -18,7 +18,7 @@ def log_label_metrics(log_prefix, log_postfix, metrics, log_idx,
             if m_name in logger_selected_metrics:
                 wandb.log({log_path: m_content[tag]}, step=log_idx)
             if m_name in print_selected_metrics:
-                print(log_path, m_content[tag])
+                print(log_path, f"{m_content[tag]}:.2f")
 
 def log_oa_metrics(log_prefix, log_postfix, metrics, log_idx,
     logger_selected_metrics=('dice'), print_selected_metrics=('dice')):

@@ -8,7 +8,7 @@ from slice_inflate.datasets.align_mmwhs import nifti_transform
 from slice_inflate.utils.torch_utils import get_rotation_matrix_3d_from_angles
 
 import dill
-from slice_inflate.models.generic_UNet_opt_skip_connections import Generic_UNet
+from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.utils.common_utils import get_script_dir
 from pathlib import Path
 

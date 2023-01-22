@@ -49,7 +49,7 @@ from slice_inflate.losses.dice_loss import DC_and_CE_loss
 from mdl_seg_class.metrics import dice3d, hausdorff3d
 import numpy as np
 
-from slice_inflate.models.generic_UNet_opt_skip_connections import Generic_UNet
+from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.models.affine_transform import AffineTransformModule, get_random_angles, SoftCutModule, HardCutModule, get_theta_params
 from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
 
@@ -253,6 +253,8 @@ def get_norms(model):
 
 
 def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, device='cpu', load_model_only=False, encoder_training_only=False):
+
+    assert config.model_type in ['vae', 'ae', 'hybrid-ae', 'unet', 'unet-wo-skip', 'hybrid-unet-wo-skip']
     if not _path is None:
         _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
@@ -263,23 +265,33 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     elif config.model_type == 'ae':
         model = BlendowskiAE(in_channels=num_classes, out_channels=num_classes)
 
-    elif config.model_type == 'hybrid_ae':
+    elif config.model_type == 'hybrid-ae':
         model = HybridAE(in_channels=num_classes*2, out_channels=num_classes)
 
     elif 'unet' in config.model_type:
+        assert config.model_type
         init_dict_path = Path(THIS_SCRIPT_DIR, "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
         with open(init_dict_path, 'rb') as f:
             init_dict = dill.load(f)
-        init_dict['num_classes'] = num_classes
+        init_dict['num_classes'] = num_classes*2
         init_dict['deep_supervision'] = False
         init_dict['final_nonlin'] = torch.nn.Identity()
+
         use_skip_connections = True if not 'wo-skip' in config.model_type else False
-        nnunet_model = Generic_UNet(**init_dict, use_skip_connections=use_skip_connections, use_onehot_input=True)
+        if 'hybrid' in config.model_type:
+            enc_mode = '2d'
+            dec_mode = '3d'
+        else:
+            enc_mode = '3d'
+            dec_mode = '3d'
+
+        nnunet_model = Generic_UNet_Hybrid(**init_dict, use_onehot_input=True, use_skip_connections=use_skip_connections, encoder_mode=enc_mode, decoder_mode=dec_mode)
 
         seg_outputs = list(filter(lambda elem: 'seg_outputs' in elem[0], nnunet_model.named_parameters()))
         # Disable gradients of non-used deep supervision
         for so_idx in range(len(seg_outputs)-1):
             seg_outputs[so_idx][1].requires_grad = False
+
         class InterfaceModel(torch.nn.Module):
             def __init__(self, nnunet_model):
                 super().__init__()
@@ -537,7 +549,7 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
 
         if config.model_type == 'vae':
             y_hat, (z, mean, std) = model()
-        elif config.model_type in ['ae', 'unet', 'unet-wo-skip', 'hybrid_ae']:
+        elif config.model_type in ['ae', 'unet', 'unet-wo-skip', 'hybrid-ae', 'hybrid-unet-wo-skip']:
             y_hat, _ = model(b_input)
         else:
             raise ValueError
