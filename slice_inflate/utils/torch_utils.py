@@ -589,3 +589,32 @@ def get_seg_boundary(binary_seg):
     bg_cont = torch.logical_xor(bg_dil.bool(), binary_seg)
 
     return torch.logical_or(fg_cont, bg_cont)
+
+
+
+def anomaly_hook(self, _input, output):
+    if isinstance(_input, tuple):
+        _input = list(_input)
+    elif isinstance(_input, dict):
+        _input = _input.values()
+    elif isinstance(_input, list):
+        pass
+
+    if isinstance(output, tuple):
+        output = list(output)
+    elif isinstance(output, dict):
+        output = output.values()
+    elif isinstance(output, list):
+        pass
+
+    for inp_idx, inp_item in enumerate(_input):
+        if isinstance(inp_item, torch.Tensor):
+            nan_mask = torch.isnan(inp_item)
+            inf_mask = torch.isinf(inp_item)
+            raise RuntimeError(f"Found nan/inf in input")
+
+    for out_idx, out_item in enumerate(output):
+        if isinstance(out_item, torch.Tensor):
+            nan_mask = torch.isnan(out)
+            inf_mask = torch.isinf(out)
+            raise RuntimeError(f"Found nan/inf in output")

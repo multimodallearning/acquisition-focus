@@ -37,7 +37,7 @@ from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset, load_data, extrac
 from slice_inflate.utils.common_utils import DotDict, get_script_dir, in_notebook
 from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
     get_batch_dice_over_all, get_batch_score_per_label, save_model, \
-    reduce_label_scores_epoch, get_test_func_all_parameters_updated
+    reduce_label_scores_epoch, get_test_func_all_parameters_updated, anomaly_hook
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
 from slice_inflate.datasets.align_mmwhs import cut_slice
@@ -237,18 +237,6 @@ if False:
 
     plt.show()
 
-# %%
-# def nan_hook(self, inp, output):
-#     if not isinstance(output, tuple):
-#         outputs = [output]
-#     else:
-#         outputs = output
-
-    for out_idx, out in enumerate(outputs):
-        if isinstance(out, torch.Tensor):
-            nan_mask = torch.isnan(out)
-            inf_mask = torch.isinf(out)
-            raise RuntimeError(f"Found nan/inf in output")
 
 def get_norms(model):
     norms = {}
@@ -543,7 +531,7 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
         b_input, b_target, _ = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
-        
+
         assert b_input.dim() == 4, \
             f"Input image for model must be {4}D: BxCxSPATIAL but is {b_input.shape}"
 
