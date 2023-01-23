@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.14.1
+#       jupytext_version: 1.14.4
 #   kernelspec:
 #     display_name: 'Python 3.9.13 (''.venv'': poetry)'
 #     language: python
@@ -485,8 +485,12 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
             config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
             image=None)
 
-    b_input = torch.cat([sa_label_slc, sa_label_slc], dim=1)
-    b_input = b_input.view(-1, NUM_CLASSES*2, W_TARGET_LEN, W_TARGET_LEN) # TODO change this and input hla_slc again
+    if 'hybrid' in config.model_type:
+        b_input = torch.cat([sa_label_slc, sa_label_slc], dim=1)
+        b_input = b_input.view(-1, NUM_CLASSES*2, W_TARGET_LEN, W_TARGET_LEN) # TODO input HLA again
+    else:
+        b_input = torch.cat([sa_label_slc, sa_label_slc], dim=-1) # TODO input HLA again
+        b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
 
     b_input = b_input.to(device=config.device)
     b_label = b_label.to(device=config.device)
@@ -547,8 +551,9 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
     with amp.autocast(enabled=autocast_enabled):
         b_input, b_target, _ = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
 
-        assert b_input.dim() == 4, \
-            f"Input image for model must be {4}D: BxCxSPATIAL but is {b_input.shape}"
+        wanted_input_dim = 4 if 'hybrid' in config.model_type else 5
+        assert b_input.dim() == wanted_input_dim, \
+            f"Input image for model must be {wanted_input_dim}D but is {b_input.shape}"
 
         if config.model_type == 'vae':
             y_hat, (z, mean, std) = model()

@@ -402,6 +402,18 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             self.apply(self.weightInitializer)
             # self.apply(print_module_training_status)
 
+        if self.is_hybrid:
+            CHN = 32
+            self.connector = nn.Sequential(
+                nn.Conv2d(320,CHN,1),
+                self.enc_norm_op(CHN),
+                torch.nn.Flatten(1,-1),
+                nn.Linear(CHN*16*16, CHN*8*16*16),
+                torch.nn.Unflatten(1, (CHN,8,16,16)),
+                self.dec_norm_op(CHN),
+                nn.ConvTranspose3d(CHN,320,1),
+            )
+
     def forward(self, x):
         skips = []
         seg_outputs = []
@@ -424,7 +436,8 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
         x = self.conv_blocks_context[-1](x)
 
         if self.is_hybrid:
-            x = x.unsqueeze(2).repeat(1,1,8,1,1) # TODO: automate calculation here
+            # x = x.unsqueeze(2).repeat(1,1,8,1,1) # TODO: automate calculation here
+            x = self.connector(x)
 
         for u in range(len(self.tu)):
             x = self.tu[u](x)
