@@ -232,6 +232,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
 
         self.encoder_mode = encoder_mode
         self.decoder_mode = decoder_mode
+        self.is_hybrid = (decoder_mode == '3d' and encoder_mode == '2d')
 
         if encoder_mode == '2d':
             self.enc_conv_op = nn.Conv2d
@@ -273,7 +274,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
         for d in range(num_pool):
             # determine the first stride
             if d != 0 and self.convolutional_pooling:
-                first_stride = pool_op_kernel_sizes[d - 1]
+                first_stride = self.enc_pool_op_kernel_sizes[d - 1]
             else:
                 first_stride = None
 
@@ -286,7 +287,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
                                                               self.enc_dropout_op_kwargs, self.nonlin, self.nonlin_kwargs,
                                                               first_stride, basic_block=basic_block))
             if not self.convolutional_pooling:
-                self.td.append(self.enc_pool_op(pool_op_kernel_sizes[d]))
+                self.td.append(self.enc_pool_op(self.enc_pool_op_kernel_sizes[d]))
             input_features = output_features
             output_features = int(np.round(output_features * feat_map_mul_on_downscale))
 
@@ -295,7 +296,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
         # now the bottleneck.
         # determine the first stride
         if self.convolutional_pooling:
-            first_stride = pool_op_kernel_sizes[-1]
+            first_stride = self.enc_pool_op_kernel_sizes[-1]
         else:
             first_stride = None
 
@@ -324,7 +325,6 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             self.enc_dropout_op_kwargs['p'] = 0.0
 
         # now lets build the localization pathway
-
         if decoder_mode == '2d':
             self.dec_conv_op = nn.Conv2d
         elif decoder_mode == '3d':
@@ -423,6 +423,9 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
 
         x = self.conv_blocks_context[-1](x)
 
+        if self.is_hybrid:
+            x = x.unsqueeze(2).repeat(1,1,8,1,1) # TODO: automate calculation here
+
         for u in range(len(self.tu)):
             x = self.tu[u](x)
             if self.use_skip_connections:
@@ -494,12 +497,15 @@ def get_conv_op_config(conv_op, conv_kernel_sizes, pool_op_kernel_sizes, num_poo
             pool_op_kernel_sizes = [(2, 2)] * num_pool
         else:
             # Crop down 3d to 2d sizes if input kwargs were 3d
-            pool_op_kernel_sizes = [sz[:2] for sz in pool_op_kernel_sizes]
+            mean_pool_sz = [int(sum(pool) / len(pool)) for pool in pool_op_kernel_sizes]
+            pool_op_kernel_sizes = [[sz]*2 for sz in mean_pool_sz]
+
         if conv_kernel_sizes is None:
             conv_kernel_sizes = [(3, 3)] * (num_pool + 1)
         else:
             # Crop down 3d to 2d sizes if input kwargs were 3d
-            conv_kernel_sizes = [sz[:2] for sz in conv_kernel_sizes]
+            mean_conv_sz = [int(sum(krnl) / len(krnl)) for krnl in conv_kernel_sizes]
+            conv_kernel_sizes = [[sz]*2 for sz in mean_conv_sz]
 
     elif conv_op == nn.Conv3d:
         upsample_mode = 'trilinear'

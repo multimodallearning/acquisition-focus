@@ -273,7 +273,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         init_dict_path = Path(THIS_SCRIPT_DIR, "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
         with open(init_dict_path, 'rb') as f:
             init_dict = dill.load(f)
-        init_dict['num_classes'] = num_classes*2
+        init_dict['num_classes'] = num_classes
         init_dict['deep_supervision'] = False
         init_dict['final_nonlin'] = torch.nn.Identity()
 
@@ -281,11 +281,14 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         if 'hybrid' in config.model_type:
             enc_mode = '2d'
             dec_mode = '3d'
+            init_dict['use_onehot_input'] = False
+            init_dict['input_channels'] = num_classes*2
         else:
             enc_mode = '3d'
             dec_mode = '3d'
+            init_dict['use_onehot_input'] = True
 
-        nnunet_model = Generic_UNet_Hybrid(**init_dict, use_onehot_input=True, use_skip_connections=use_skip_connections, encoder_mode=enc_mode, decoder_mode=dec_mode)
+        nnunet_model = Generic_UNet_Hybrid(**init_dict, use_skip_connections=use_skip_connections, encoder_mode=enc_mode, decoder_mode=dec_mode)
 
         seg_outputs = list(filter(lambda elem: 'seg_outputs' in elem[0], nnunet_model.named_parameters()))
         # Disable gradients of non-used deep supervision
@@ -618,15 +621,17 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 dataset.label_tags, class_weights,
                 dataset.io_normalisation_values, autocast_enabled)
 
-            scaler.scale(loss).backward()
+            loss.backward()
+            # scaler.scale(loss).backward()
             # test_all_parameters_updated(model)
             # test_all_parameters_updated(sa_atm)
             # test_all_parameters_updated(hla_atm)
             for name, opt in all_optimizers.items():
                 if name == 'loc_optimizer' and not config.train_affine_theta:
                     continue
-                scaler.step(opt)
-            scaler.update()
+                # scaler.step(opt)
+                opt.step()
+            # scaler.update()
 
         else:
             with torch.no_grad():
