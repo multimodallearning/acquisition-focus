@@ -334,7 +334,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
          self.dec_max_num_features) = get_conv_op_config(self.dec_conv_op, conv_kernel_sizes, pool_op_kernel_sizes, num_pool, norm_op, max_num_features) # TODO check implications
 
         for u in range(num_pool):
-            nfeatures_from_down = final_num_features
+            nfeatures_from_down = min(final_num_features, self.dec_max_num_features)
             nfeatures_from_skip = self.conv_blocks_context[
                 -(2 + u)].output_channels  # self.conv_blocks_context[-1] is bottleneck, so start with -2
             n_features_after_tu_and_concat = nfeatures_from_skip * 2
@@ -355,6 +355,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
 
             self.dec_conv_kwargs['kernel_size'] = self.dec_conv_kernel_sizes[- (u + 1)]
             self.dec_conv_kwargs['padding'] = self.dec_conv_pad_sizes[- (u + 1)]
+
             if not self.use_skip_connections:
                 n_features_after_tu_and_concat = n_features_after_tu_and_concat//2
             self.conv_blocks_localization.append(nn.Sequential(
@@ -397,9 +398,9 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             # self.apply(print_module_training_status)
 
         if self.is_hybrid:
-            CHN = 32
+            CHN = 24
             self.connector = nn.Sequential(
-                nn.Conv2d(320,CHN,1),
+                nn.Conv2d(480,CHN,1),
                 self.enc_norm_op(CHN),
                 torch.nn.Flatten(1,-1),
                 nn.Linear(CHN*16*16, CHN*8*16*16),
