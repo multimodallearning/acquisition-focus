@@ -930,7 +930,7 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
             # Log the epoch idx per fold - so we can recover the diagram by setting
             # ref_epoch_idx as x-axis in wandb interface
-            print(f"### Log epoch {epx}")
+            print(f"### Log epoch {epx}/{config.epochs}")
             wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
             if not run_test_once_only:
