@@ -1114,6 +1114,7 @@ def stage_sweep_run(config_dict, all_stages):
 
             run_dl(run.name, config, training_dataset, test_dataset, stage)
         wandb.finish()
+        torch.cuda.empty_cache()
 
 
 
