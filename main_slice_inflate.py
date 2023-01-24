@@ -283,12 +283,13 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
             dec_mode = '3d'
             init_dict['use_onehot_input'] = False
             init_dict['input_channels'] = num_classes*2
+            nnunet_model = Generic_UNet_Hybrid(**init_dict, use_skip_connections=use_skip_connections, encoder_mode=enc_mode, decoder_mode=dec_mode)
         else:
             enc_mode = '3d'
             dec_mode = '3d'
             init_dict['use_onehot_input'] = True
-
-        nnunet_model = Generic_UNet_Hybrid(**init_dict, use_skip_connections=use_skip_connections, encoder_mode=enc_mode, decoder_mode=dec_mode)
+            # nnunet_model = Generic_UNet(**init_dict, use_skip_connections=use_skip_connections)
+            nnunet_model = Generic_UNet_Hybrid(**init_dict, use_skip_connections=use_skip_connections, encoder_mode=enc_mode, decoder_mode=dec_mode)
 
         seg_outputs = list(filter(lambda elem: 'seg_outputs' in elem[0], nnunet_model.named_parameters()))
         # Disable gradients of non-used deep supervision
@@ -330,13 +331,13 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         torch.tensor(config['fov_mm']),
         torch.tensor(config['fov_vox']),
         view_affine=torch.as_tensor(np.loadtxt(sa_affine_path)).float(),
-        optim_method='normal-vector')
+        optim_method=config.affine_theta_optim_method)
 
     hla_atm = AffineTransformModule(num_classes,
         torch.tensor(config['fov_mm']),
         torch.tensor(config['fov_vox']),
         view_affine=torch.as_tensor(np.loadtxt(hla_affine_path)).float(),
-        optim_method='normal-vector')
+        optim_method=config.affine_theta_optim_method)
 
     if config['soft_cut_std'] > 0:
         sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
@@ -556,7 +557,7 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
             f"Input image for model must be {wanted_input_dim}D but is {b_input.shape}"
 
         if config.model_type == 'vae':
-            y_hat, (z, mean, std) = model()
+            y_hat, (z, mean, std) = model(b_input)
         elif config.model_type in ['ae', 'unet', 'unet-wo-skip', 'hybrid-ae', 'hybrid-unet-wo-skip']:
             y_hat, _ = model(b_input)
         else:
@@ -626,17 +627,15 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 dataset.label_tags, class_weights,
                 dataset.io_normalisation_values, autocast_enabled)
 
-            loss.backward()
-            # scaler.scale(loss).backward()
+            scaler.scale(loss).backward()
             # test_all_parameters_updated(model)
             # test_all_parameters_updated(sa_atm)
             # test_all_parameters_updated(hla_atm)
             for name, opt in all_optimizers.items():
                 if name == 'loc_optimizer' and not config.train_affine_theta:
                     continue
-                # scaler.step(opt)
-                opt.step()
-            # scaler.update()
+                scaler.step(opt)
+            scaler.update()
 
         else:
             with torch.no_grad():

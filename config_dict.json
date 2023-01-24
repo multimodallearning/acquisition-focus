@@ -8,6 +8,7 @@
     "val_batch_size": 1,
     "modality": "all",
     "train_affine_theta": false,
+    "affine_theta_optim_method": "angle-axis",
     "soft_cut_std": -999,
     "use_2d_normal_to": null,
     "dataset": "mmwhs",

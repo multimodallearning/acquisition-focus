@@ -246,18 +246,11 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
          self.enc_conv_kernel_sizes,
          self.enc_conv_pad_sizes,
          self.enc_norm_op,
-         self.enc_dropout_op) = get_conv_op_config(self.enc_conv_op, conv_kernel_sizes, pool_op_kernel_sizes, num_pool, norm_op) # TODO check implications
+         self.enc_dropout_op,
+         self.enc_max_num_features) = get_conv_op_config(self.enc_conv_op, conv_kernel_sizes, pool_op_kernel_sizes, num_pool, norm_op, max_num_features) # TODO check implications
 
 
         # self.input_shape_must_be_divisible_by = np.prod(pool_op_kernel_sizes, 0, dtype=np.int64)
-
-        if max_num_features is None:
-            if conv_op == nn.Conv3d:
-                self.max_num_features = self.MAX_NUM_FILTERS_3D
-            else:
-                self.max_num_features = self.MAX_FILTERS_2D
-        else:
-            self.max_num_features = max_num_features
 
         self.conv_blocks_context = []
         self.conv_blocks_localization = []
@@ -291,7 +284,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             input_features = output_features
             output_features = int(np.round(output_features * feat_map_mul_on_downscale))
 
-            output_features = min(output_features, self.max_num_features)
+            output_features = min(output_features, self.enc_max_num_features)
 
         # now the bottleneck.
         # determine the first stride
@@ -337,7 +330,8 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
          self.dec_conv_kernel_sizes,
          self.dec_conv_pad_sizes,
          self.dec_norm_op,
-         self.dec_dropout_op) = get_conv_op_config(self.dec_conv_op, conv_kernel_sizes, pool_op_kernel_sizes, num_pool, norm_op) # TODO check implications
+         self.dec_dropout_op,
+         self.dec_max_num_features) = get_conv_op_config(self.dec_conv_op, conv_kernel_sizes, pool_op_kernel_sizes, num_pool, norm_op, max_num_features) # TODO check implications
 
         for u in range(num_pool):
             nfeatures_from_down = final_num_features
@@ -499,7 +493,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
 
 
 
-def get_conv_op_config(conv_op, conv_kernel_sizes, pool_op_kernel_sizes, num_pool, norm_op):
+def get_conv_op_config(conv_op, conv_kernel_sizes, pool_op_kernel_sizes, num_pool, norm_op, max_num_features):
     if conv_op == nn.Conv2d:
         upsample_mode = 'bilinear'
         pool_op = nn.MaxPool2d
@@ -538,4 +532,12 @@ def get_conv_op_config(conv_op, conv_kernel_sizes, pool_op_kernel_sizes, num_poo
     for krnl in conv_kernel_sizes:
         conv_pad_sizes.append([1 if i == 3 else 0 for i in krnl])
 
-    return upsample_mode, pool_op, transpconv, pool_op_kernel_sizes, conv_kernel_sizes, conv_pad_sizes, norm_op, dropout_op
+    if max_num_features is None:
+        if conv_op == nn.Conv3d:
+            max_num_features = Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D
+        else:
+            max_num_features = Generic_UNet_Hybrid.MAX_FILTERS_2D
+    else:
+        max_num_features = max_num_features
+
+    return upsample_mode, pool_op, transpconv, pool_op_kernel_sizes, conv_kernel_sizes, conv_pad_sizes, norm_op, dropout_op, max_num_features
