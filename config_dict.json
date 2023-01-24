@@ -7,7 +7,7 @@
     "batch_size": 4,
     "val_batch_size": 1,
     "modality": "all",
-    "train_affine_theta": false,
+    "train_affine_theta": true,
     "affine_theta_optim_method": "angle-axis",
     "soft_cut_std": -999,
     "cuts_mode": "sa+hla",
