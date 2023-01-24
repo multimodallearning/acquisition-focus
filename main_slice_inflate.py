@@ -55,7 +55,7 @@ from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.models.affine_transform import AffineTransformModule, get_random_angles, SoftCutModule, HardCutModule, get_theta_params
 from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
-from slice_inflate.losses.regularization import optimize_sa_angles, optimize_w_offsets, optimize_hla_angles, optimize_h_offsets, init_regularization_params
+from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params
 
 NOW_STR = datetime.now().strftime("%Y%d%m__%H_%M_%S")
 THIS_SCRIPT_DIR = get_script_dir()
@@ -852,7 +852,7 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
             config, len(training_dataset.label_tags), THIS_SCRIPT_DIR, _path=chk_path)
 
         all_optimizers = dict(optimizer=optimizer, transform_optimizer=transform_optimizer)
-        
+
         # all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
 
         # for bn_counts in training_dataset.bincounts_3d.values():
@@ -1021,10 +1021,9 @@ def normal_run():
 
 
 
-def stage_sweep_run(config_dict, all_stages):
-    stage_run_prefix = None
+def stage_sweep_run(all_config_dicts, all_stages):
 
-    for stg in all_stages:
+    for config_dict, stg in zip(all_config_dicts, all_stages):
         stg_idx = stages.idx
 
         # Prepare stage settings
@@ -1102,8 +1101,8 @@ elif config_dict['sweep_type'] == 'stage_sweep':
 
     std_stages = [
         Stage(
-            w_atm=AffineTransformModule(),
-            h_atm=AffineTransformModule(),
+            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             regularization_parameters=r_params,
             cuts_mode='sa',
             epochs=35,
@@ -1111,72 +1110,81 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             __activate_fn__=optimize_sa_angles
         ),
         Stage(
-            w_atm=AffineTransformModule(),
+            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             do_output=False,
             __activate_fn__=optimize_sa_angles
         ),
         Stage(
-            w_atm=AffineTransformModule(),
+            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             do_output=False,
-            __activate_fn__=optimize_w_offsets
+            __activate_fn__=optimize_sa_offsets
         ),
         Stage(
-            w_atm=AffineTransformModule(),
+            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             do_output=False,
-            __activate_fn__=optimize_w_offsets
+            __activate_fn__=optimize_sa_offsets
         ),
         Stage(
-            h_atm=AffineTransformModule(),
+            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa>hla',
             do_output=False,
             __activate_fn__=optimize_hla_angles
         ),
         Stage(
-            h_atm=AffineTransformModule(),
+            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             do_output=False,
             __activate_fn__=optimize_hla_angles
         ),
         Stage(
-            h_atm=AffineTransformModule(),
+            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             do_output=False,
             __activate_fn__=optimize_hla_angles
         ),
         Stage(
-            h_atm=AffineTransformModule(),
+            hla_atm=AffineTransformModule(),
             do_output=True,
-            __activate_fn__=optimize_h_offsets
+            __activate_fn__=optimize_hla_offsets
         ),
     ]
 
-    w_angle_only_stages = [
-        Stage(
-            w_atm=AffineTransformModule(),
-            h_atm=AffineTransformModule(),
-            regularization_parameters=r_params,
-            cuts_mode='sa',
-            epx=EPX//4,
-            do_output=True,
-            __activate_fn__=optimize_sa_angles
-        ),
-        Stage(
-            w_atm=AffineTransformModule(),
-            do_output=True,
-            __activate_fn__=optimize_sa_angles
-        ),
-        Stage(
-            h_atm=AffineTransformModule(),
-            do_output=True,
-            __activate_fn__=optimize_sa_angles
-        ),
-        Stage(
-            h_atm=AffineTransformModule(),
-            do_output=True,
-            __activate_fn__=optimize_sa_angles
-        ),
-    ]
+    # sa_angle_only_stages = [
+    #     Stage(
+    #         sa_atm=AffineTransformModule(),
+    #         hla_atm=AffineTransformModule(),
+    #         regularization_parameters=r_params,
+    #         cuts_mode='sa',
+    #         epx=EPX//4,
+    #         do_output=True,
+    #         __activate_fn__=optimize_sa_angles
+    #     ),
+    #     Stage(
+    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+    #         do_output=True,
+    #         __activate_fn__=optimize_sa_angles
+    #     ),
+    #     Stage(
+    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+    #         do_output=True,
+    #         __activate_fn__=optimize_sa_angles
+    #     ),
+    #     Stage(
+    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+    #         do_output=True,
+    #         __activate_fn__=optimize_sa_angles
+    #     ),
+    # ]
 
     all_stages = StageIterator(std_stages, verbose=True)
-    stage_sweep_run(config_dict, all_stages)
+    all_config_dicts = []
+
+    for stg in all_stages:
+        # Prepare config dict for the stage
+        stage_config = config_dict.copy()
+        # Update intersecting keys of both
+        stage_config.update((key, stg[key]) for key in set(stg).intersection(stage_config))
+        all_config_dicts.append(stage_config)
+
+    stage_sweep_run(all_config_dicts, all_stages)
 
 else:
     normal_run()

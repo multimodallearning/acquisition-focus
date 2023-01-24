@@ -105,7 +105,7 @@ def get_atm_offset_std_closure(atm):
 
 def optimize_sa_angles(stage):
     if 'last_sa_theta_rd' in stage:
-        stage['w_atm'].set_init_theta_ap(torch.tensor([stage['last_sa_theta_rd'],.0,.0]))
+        stage['sa_atm'].set_init_theta_ap(torch.tensor([stage['last_sa_theta_rd'],.0,.0]))
 
     r_params = stage['regularization_parameters']
     r_params['sa_theta_r'].active = False
@@ -113,15 +113,15 @@ def optimize_sa_angles(stage):
     r_params['sa_theta_t'].target_val = 0.0
     r_params['sa_theta_t'].lambda_r = 0.5
 
-    h_atm = stage['h_atm']
-    w_atm = stage['w_atm']
-    r_params['hla_theta_r'].set_call_fn(get_atm_angle_mean_closure(h_atm))
-    r_params['hla_theta_t'].set_call_fn(get_atm_offset_mean_closure(h_atm))
-    r_params['sa_theta_r'].set_call_fn(get_atm_angle_mean_closure(w_atm))
-    r_params['sa_theta_t'].set_call_fn(get_atm_offset_mean_closure(w_atm))
+    hla_atm = stage['hla_atm']
+    sa_atm = stage['sa_atm']
+    r_params['hla_theta_r'].set_call_fn(get_atm_angle_mean_closure(hla_atm))
+    r_params['hla_theta_t'].set_call_fn(get_atm_offset_mean_closure(hla_atm))
+    r_params['sa_theta_r'].set_call_fn(get_atm_angle_mean_closure(sa_atm))
+    r_params['sa_theta_t'].set_call_fn(get_atm_offset_mean_closure(sa_atm))
 
 
-    print('Init w_theta_a', stage['w_atm'].init_theta_ap)
+    print('Init w_theta_a', stage['sa_atm'].init_theta_ap)
     [print(name, rp) for name, rp in stage['regularization_parameters'].items()]
 
 
@@ -136,21 +136,21 @@ def optimize_hla_angles(stage):
     stage['regularization_parameters']['hla_theta_t'].target_val = 0.0
     stage['regularization_parameters']['hla_theta_t'].lambda_r = 0.5
 
-    h_atm = stage['h_atm']
-    w_atm = stage['w_atm']
-    r_params['hla_theta_r'].set_call_fn(get_atm_angle_mean_closure(h_atm))
-    r_params['hla_theta_t'].set_call_fn(get_atm_offset_mean_closure(h_atm))
-    r_params['sa_theta_r'].set_call_fn(get_atm_angle_mean_closure(w_atm))
-    r_params['sa_theta_t'].set_call_fn(get_atm_offset_mean_closure(w_atm))
+    hla_atm = stage['hla_atm']
+    sa_atm = stage['sa_atm']
+    r_params['hla_theta_r'].set_call_fn(get_atm_angle_mean_closure(hla_atm))
+    r_params['hla_theta_t'].set_call_fn(get_atm_offset_mean_closure(hla_atm))
+    r_params['sa_theta_r'].set_call_fn(get_atm_angle_mean_closure(sa_atm))
+    r_params['sa_theta_t'].set_call_fn(get_atm_offset_mean_closure(sa_atm))
 
-    print('Init h_theta_a', stage['h_atm'].init_theta_ap)
+    print('Init h_theta_a', stage['hla_atm'].init_theta_ap)
     [print(name, rp) for name, rp in stage['regularization_parameters'].items()]
 
 
 
-def optimize_w_offsets(stage):
+def optimize_sa_offsets(stage):
     if 'last_sa_theta_rd' in stage:
-        stage['w_atm'].set_init_theta_ap(torch.tensor([stage['last_sa_theta_rd'],.0,.0]))
+        stage['sa_atm'].set_init_theta_ap(torch.tensor([stage['last_sa_theta_rd'],.0,.0]))
 
     stage['regularization_parameters']['sa_theta_r'].active = True
     stage['regularization_parameters']['sa_theta_r'].target_val = stage['last_sa_theta_rd']
@@ -158,21 +158,21 @@ def optimize_w_offsets(stage):
     stage['regularization_parameters']['sa_theta_t'].target_val = 0.0
     stage['regularization_parameters']['sa_theta_t'].lambda_r = 0.1
 
-    h_atm = stage['h_atm']
-    w_atm = stage['w_atm']
-    r_params['hla_theta_r'].set_call_fn(get_atm_angle_mean_closure(h_atm))
-    r_params['hla_theta_t'].set_call_fn(get_atm_offset_mean_closure(h_atm))
-    r_params['sa_theta_r'].set_call_fn(get_atm_angle_mean_closure(w_atm))
-    r_params['sa_theta_t'].set_call_fn(get_atm_offset_mean_closure(w_atm))
+    hla_atm = stage['hla_atm']
+    sa_atm = stage['sa_atm']
+    r_params['hla_theta_r'].set_call_fn(get_atm_angle_mean_closure(hla_atm))
+    r_params['hla_theta_t'].set_call_fn(get_atm_offset_mean_closure(hla_atm))
+    r_params['sa_theta_r'].set_call_fn(get_atm_angle_mean_closure(sa_atm))
+    r_params['sa_theta_t'].set_call_fn(get_atm_offset_mean_closure(sa_atm))
 
-    print('Init w_theta_a', stage['w_atm'].init_theta_ap)
+    print('Init w_theta_a', stage['sa_atm'].init_theta_ap)
     [print(name, rp) for name, rp in stage['regularization_parameters'].items()]
 
 
 
-def optimize_h_offsets(stage):
+def optimize_hla_offsets(stage):
     if 'last_hla_theta_rd' in stage:
-        stage['h_atm'].set_init_theta_ap(torch.tensor([stage['last_hla_theta_rd'],.0,.0]))
+        stage['hla_atm'].set_init_theta_ap(torch.tensor([stage['last_hla_theta_rd'],.0,.0]))
 
     stage['regularization_parameters']['hla_theta_r'].active = True
     stage['regularization_parameters']['hla_theta_r'].target_val = stage['last_hla_theta_rd']
@@ -180,12 +180,12 @@ def optimize_h_offsets(stage):
     stage['regularization_parameters']['hla_theta_t'].target_val = 0.0
     stage['regularization_parameters']['hla_theta_t'].lambda_r = 0.1
 
-    h_atm = stage['h_atm']
-    w_atm = stage['w_atm']
-    r_params['hla_theta_r'].set_call_fn(get_atm_angle_mean_closure(h_atm))
-    r_params['hla_theta_t'].set_call_fn(get_atm_offset_mean_closure(h_atm))
-    r_params['sa_theta_r'].set_call_fn(get_atm_angle_mean_closure(w_atm))
-    r_params['sa_theta_t'].set_call_fn(get_atm_offset_mean_closure(w_atm))
+    hla_atm = stage['hla_atm']
+    sa_atm = stage['sa_atm']
+    r_params['hla_theta_r'].set_call_fn(get_atm_angle_mean_closure(hla_atm))
+    r_params['hla_theta_t'].set_call_fn(get_atm_offset_mean_closure(hla_atm))
+    r_params['sa_theta_r'].set_call_fn(get_atm_angle_mean_closure(sa_atm))
+    r_params['sa_theta_t'].set_call_fn(get_atm_offset_mean_closure(sa_atm))
 
-    print('Init h_theta_a', stage['h_atm'].init_theta_ap)
+    print('Init h_theta_a', stage['hla_atm'].init_theta_ap)
     [print(name, rp) for name, rp in stage['regularization_parameters'].items()]
