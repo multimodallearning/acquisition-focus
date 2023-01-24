@@ -405,10 +405,12 @@ def get_atm(config, num_classes, view, this_script_dir, _path=None):
 class NoneOptimizer():
     def __init__(self):
         super().__init__()
-    def step():
+    def step(self):
         pass
-    def zero_grad():
+    def zero_grad(self):
         pass
+    def state_dict(self):
+        return {}
 
 def get_transform_model(config, num_classes, this_script_dir, _path=None, sa_atm_override=None, hla_atm_override=None):
     device = config.device
@@ -1082,18 +1084,22 @@ def normal_run():
 
 
 
-def stage_sweep_run(all_config_dicts, all_stages):
+def stage_sweep_run(config_dict, all_stages):
     stage_run_prefix = None
 
-    for config_dict, stage in zip(all_config_dicts, all_stages):
+    for stage in all_stages:
         stg_idx = all_stages.idx
 
         # Prepare stage settings
         stage.activate()
+
+        stage_config = config_dict.copy()
+        # Update intersecting keys of both
+        stage_config.update((key, stage[key]) for key in set(stage).intersection(stage_config))
         print()
 
-        with wandb.init(project=PROJECT_NAME, config=config_dict, settings=wandb.Settings(start_method="thread"),
-            mode=config_dict['wandb_mode']) as run:
+        with wandb.init(project=PROJECT_NAME, config=stage_config, settings=wandb.Settings(start_method="thread"),
+            mode=stage_config['wandb_mode']) as run:
 
             if stage_run_prefix is None:
                 stage_run_prefix = run.name
@@ -1236,16 +1242,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
     # ]
 
     selected_stages = std_stages
-
-    all_config_dicts = []
-    for stg in selected_stages:
-        # Prepare config dict for the stage
-        stage_config = config_dict.copy()
-        # Update intersecting keys of both
-        stage_config.update((key, stg[key]) for key in set(stg).intersection(stage_config))
-        all_config_dicts.append(stage_config)
-
-    stage_sweep_run(all_config_dicts, StageIterator(selected_stages, verbose=True))
+    stage_sweep_run(config_dict, StageIterator(selected_stages, verbose=True))
 
 else:
     raise ValueError()
