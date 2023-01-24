@@ -18,6 +18,10 @@ import os
 import sys
 from pathlib import Path
 import json
+import dill
+import einops as eo
+from datetime import datetime
+
 os.environ['MMWHS_CACHE_PATH'] = str(Path('.', '.cache'))
 
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
@@ -28,41 +32,33 @@ torch.set_printoptions(sci_mode=False)
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.cuda.amp as amp
+from torch.utils.data import DataLoader
 
 from tqdm import tqdm
 import wandb
 import nibabel as nib
 
-from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset, load_data, extract_2d_data
-from slice_inflate.utils.common_utils import DotDict, get_script_dir, in_notebook
-from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
-    get_batch_dice_over_all, get_batch_score_per_label, save_model, \
-    reduce_label_scores_epoch, get_test_func_all_parameters_updated, anomaly_hook
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
 from slice_inflate.datasets.align_mmwhs import cut_slice
 from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, log_oa_metrics
 from sklearn.model_selection import KFold
-from torch.utils.data import DataLoader
-from slice_inflate.losses.dice_loss import DC_and_CE_loss
-
-from mdl_seg_class.metrics import dice3d, hausdorff3d
 import numpy as np
+from mdl_seg_class.metrics import dice3d, hausdorff3d
 
+from slice_inflate.losses.dice_loss import DC_and_CE_loss
+from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset, load_data, extract_2d_data
+from slice_inflate.utils.common_utils import DotDict, get_script_dir, in_notebook
+from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
+    get_batch_dice_over_all, get_batch_score_per_label, save_model, \
+    reduce_label_scores_epoch, get_test_func_all_parameters_updated, anomaly_hook
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.models.affine_transform import AffineTransformModule, get_random_angles, SoftCutModule, HardCutModule, get_theta_params
 from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
-
-import dill
-
-
-import einops as eo
-from datetime import datetime
+from slice_inflate.losses.regularization import optimize_sa_angles, optimize_w_offsets, optimize_hla_angles, optimize_h_offsets, init_regularization_params
 
 NOW_STR = datetime.now().strftime("%Y%d%m__%H_%M_%S")
-
 THIS_SCRIPT_DIR = get_script_dir()
-
 PROJECT_NAME = "slice_inflate"
 
 training_dataset, test_dataset = None, None
@@ -486,11 +482,20 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
             config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
             image=None)
 
+    if config.cuts_mode == 'sa':
+        slices = [sa_label_slc, sa_label_slc]
+    elif config.cuts_mode == 'sa>hla':
+        slices = [sa_label_slc.detach(), hla_label_slc]
+    elif config.cuts_mode == 'sa+hla':
+        slices = [hla_label_slc, sa_label_slc]
+    else:
+        raise ValueError()
+
     if 'hybrid' in config.model_type:
-        b_input = torch.cat([sa_label_slc, sa_label_slc], dim=1)
+        b_input = torch.cat(slices, dim=1)
         b_input = b_input.view(-1, NUM_CLASSES*2, W_TARGET_LEN, W_TARGET_LEN) # TODO input HLA again
     else:
-        b_input = torch.cat([sa_label_slc, sa_label_slc], dim=-1) # TODO input HLA again
+        b_input = torch.cat(slices, dim=-1) # TODO input HLA again
         b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
 
     b_input = b_input.to(device=config.device)
@@ -754,7 +759,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
 
 
-def run_dl(run_name, config, training_dataset, test_dataset):
+def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
     reset_determinism()
 
     # Configure folds
@@ -961,6 +966,8 @@ sweep_config_dict = dict(
     )
 )
 
+
+
 # %%
 def normal_run():
     with wandb.init(project=PROJECT_NAME, group="training", job_type="train",
@@ -975,7 +982,34 @@ def normal_run():
 
         run_dl(run_name, config, training_dataset, test_dataset)
 
-def sweep_run():
+
+
+def stage_sweep_run(config_dict, all_stages):
+    stage_run_prefix = None
+
+    for stg in all_stages:
+        stg_idx = stages.idx
+
+        # Prepare stage settings
+        stg.activate()
+        with wandb.init() as run:
+            run = wandb.init(
+                settings=wandb.Settings(start_method="thread"),
+                mode=config_dict['wandb_mode']
+            )
+            if stage_run_prefix is None:
+                stage_run_prefix = run_name
+
+            run.name = f"{stage_run_prefix}-stage{stg_idx}"
+            print("Running", run.name)
+            # training_dataset = prepare_data(config)
+            config = wandb.config
+
+            run_dl(run_name, config, training_dataset, test_dataset, stage)
+
+
+
+def wandb_sweep_run():
     with wandb.init() as run:
         run = wandb.init(
             settings=wandb.Settings(start_method="thread"),
@@ -989,17 +1023,20 @@ def sweep_run():
 
         run_dl(run_name, config, training_dataset, test_dataset)
 
-if config_dict['do_sweep']:
+
+
+def clean_sweep_dict(config_dict):
     # Integrate all config_dict entries into sweep_dict.parameters -> sweep overrides config_dict
     cp_config_dict = copy.deepcopy(config_dict)
-    # cp_config_dict.update(copy.deepcopy(sweep_config_dict['parameters']))
+
     for del_key in sweep_config_dict['parameters'].keys():
         if del_key in cp_config_dict:
             del cp_config_dict[del_key]
     merged_sweep_config_dict = copy.deepcopy(sweep_config_dict)
-    # merged_sweep_config_dict.update(cp_config_dict)
+
     for key, value in cp_config_dict.items():
         merged_sweep_config_dict['parameters'][key] = dict(value=value)
+
     # Convert enum values in parameters to string. They will be identified by their numerical index otherwise
     for key, param_dict in merged_sweep_config_dict['parameters'].items():
         if 'value' in param_dict and isinstance(param_dict['value'], Enum):
@@ -1008,9 +1045,101 @@ if config_dict['do_sweep']:
             param_dict['values'] = [str(elem) if isinstance(elem, Enum) else elem for elem in param_dict['values']]
 
         merged_sweep_config_dict['parameters'][key] = param_dict
+    return merged_sweep_config_dict
 
+
+
+if config_dict['sweep_type'] == 'wandb_sweep':
+    merged_sweep_config_dict = clean_sweep_dict(config_dict)
     sweep_id = wandb.sweep(merged_sweep_config_dict, project=PROJECT_NAME)
-    wandb.agent(sweep_id, function=sweep_run)
+    wandb.agent(sweep_id, function=wandb_sweep_run)
+
+elif config_dict['sweep_type'] == 'stage_sweep':
+    r_params = init_regularization_params(
+        [
+            'hla_theta_r',
+            'hla_theta_t',
+            'sa_theta_r',
+            'sa_theta_t',
+        ], lambda_r=0.01)
+
+    std_stages = [
+        Stage(
+            w_atm=AffineTransformModule(),
+            h_atm=AffineTransformModule(),
+            regularization_parameters=r_params,
+            cuts_mode='sa',
+            epochs=35,
+            do_output=False,
+            __activate_fn__=optimize_sa_angles
+        ),
+        Stage(
+            w_atm=AffineTransformModule(),
+            do_output=False,
+            __activate_fn__=optimize_sa_angles
+        ),
+        Stage(
+            w_atm=AffineTransformModule(),
+            do_output=False,
+            __activate_fn__=optimize_w_offsets
+        ),
+        Stage(
+            w_atm=AffineTransformModule(),
+            do_output=False,
+            __activate_fn__=optimize_w_offsets
+        ),
+        Stage(
+            h_atm=AffineTransformModule(),
+            cuts_mode='sa>hla',
+            do_output=False,
+            __activate_fn__=optimize_hla_angles
+        ),
+        Stage(
+            h_atm=AffineTransformModule(),
+            do_output=False,
+            __activate_fn__=optimize_hla_angles
+        ),
+        Stage(
+            h_atm=AffineTransformModule(),
+            do_output=False,
+            __activate_fn__=optimize_hla_angles
+        ),
+        Stage(
+            h_atm=AffineTransformModule(),
+            do_output=True,
+            __activate_fn__=optimize_h_offsets
+        ),
+    ]
+
+    w_angle_only_stages = [
+        Stage(
+            w_atm=AffineTransformModule(),
+            h_atm=AffineTransformModule(),
+            regularization_parameters=r_params,
+            cuts_mode='sa',
+            epx=EPX//4,
+            do_output=True,
+            __activate_fn__=optimize_sa_angles
+        ),
+        Stage(
+            w_atm=AffineTransformModule(),
+            do_output=True,
+            __activate_fn__=optimize_sa_angles
+        ),
+        Stage(
+            h_atm=AffineTransformModule(),
+            do_output=True,
+            __activate_fn__=optimize_sa_angles
+        ),
+        Stage(
+            h_atm=AffineTransformModule(),
+            do_output=True,
+            __activate_fn__=optimize_sa_angles
+        ),
+    ]
+
+    all_stages = StageIterator(std_stages, verbose=True)
+    stage_sweep_run(config_dict, all_stages)
 
 else:
     normal_run()
