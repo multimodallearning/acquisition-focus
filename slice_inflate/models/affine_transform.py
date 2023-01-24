@@ -76,7 +76,7 @@ class AffineTransformModule(torch.nn.Module):
     def __init__(self, input_channels,
         fov_mm, fov_vox, view_affine,
         init_theta_ap=None, init_theta_tp=None,
-        optim_method='angle-axis', with_batch_theta=True):
+        optim_method='angle-axis', with_batch_theta=True, tag=None):
 
         super().__init__()
         assert optim_method in ['angle-axis', 'normal-vector'], \
@@ -96,6 +96,8 @@ class AffineTransformModule(torch.nn.Module):
         self.last_theta = None
         self.last_theta_a = None
         self.last_theta_t = None
+
+        self.tag = tag
 
     def set_init_theta_ap(self, init_theta_ap):
         self.init_theta_ap = torch.zeros(3) if init_theta_ap is None else init_theta_ap
@@ -120,8 +122,6 @@ class AffineTransformModule(torch.nn.Module):
         device = theta_tp.device
         theta_ap[:,0] = 0.0 # [:,0] rotates in plane -> do not predict
         theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict
-
-        theta_tp[...]  = 0. # TODO remove override
 
         if self.optim_method == 'angle-axis':
             theta_a = angle_axis_to_rotation_matrix(theta_ap.view(batch_size,3))

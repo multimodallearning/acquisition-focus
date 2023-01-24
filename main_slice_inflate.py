@@ -392,7 +392,7 @@ def get_atm(config, num_classes, view, this_script_dir, _path=None):
         torch.tensor(config['fov_mm']),
         torch.tensor(config['fov_vox']),
         view_affine=torch.as_tensor(np.loadtxt(affine_path)).float(),
-        optim_method=config.affine_theta_optim_method)
+        optim_method=config.affine_theta_optim_method, tag=view)
 
     if _path and _path.is_dir():
 
@@ -650,7 +650,7 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
 
 
 def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, dataset, dataloader, class_weights, fold_postfix, phase='train',
-    autocast_enabled=False, all_optimizers=None, scaler=None, store_net_output_to=None):
+    autocast_enabled=False, all_optimizers=None, scaler=None, store_net_output_to=None, r_params=None):
     PHASES = ['train', 'val', 'test']
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
 
@@ -688,6 +688,13 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 batch,
                 dataset.label_tags, class_weights,
                 dataset.io_normalisation_values, autocast_enabled)
+
+            if r_params is None:
+                regularization = 0.0
+            else:
+                regularization = torch.cat([r().view(1,1).to(device=loss.device) for r in r_params.values()]).sum()
+
+            loss = loss + regularization
 
             scaler.scale(loss).backward()
             # test_all_parameters_updated(model)
@@ -830,7 +837,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 epoch_hla_offsets_mean=hla_offsets_mean
             )
         )
-
+    print(f"### END {phase.upper()}")
     print()
     print()
 
@@ -925,8 +932,9 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
             wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
             if not run_test_once_only:
-                train_loss, mean_transform_dict = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, training_dataset, train_dataloader, class_weights, fold_postfix,
-                    phase='train', autocast_enabled=autocast_enabled, all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None)
+                train_loss, mean_transform_dict = epoch_iter(
+                    epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, training_dataset, train_dataloader, class_weights, fold_postfix,
+                    phase='train', autocast_enabled=autocast_enabled, all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None, r_params=stage['r_params'])
 
                 if stage:
                     stage.update(mean_transform_dict)

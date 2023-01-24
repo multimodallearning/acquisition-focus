@@ -1,5 +1,6 @@
 import torch
 import collections
+from slice_inflate.models.affine_transform import get_theta_params
 
 class StageIterator(collections.abc.Iterator):
     def __init__(self, stages, verbose=False):
@@ -77,28 +78,37 @@ def init_regularization_params(name_list, target_val=0.0, lambda_r=0.0, active=F
 
 def get_atm_angle_mean_closure(atm):
     def closure(target_val):
-        return ((get_theta_params(atm.last_theta)[0][:,0]-target_val)**2).mean()
+        theta_ap = get_theta_params(atm.last_theta)[0]
+        return ((theta_ap-target_val.to(theta_ap))**2).mean()
     return closure
 
 
 
 def get_atm_angle_std_closure(atm):
     def closure(target_val):
-        return (get_theta_params(atm.last_theta)[0][:,0].std()-target_val).abs()
+        theta_ap = get_theta_params(atm.last_theta)[0]
+        std = theta_ap.std(0)
+        std[std.isnan()] = 0.
+        return (std-target_val.to(theta_ap)).abs()
     return closure
 
 
 
 def get_atm_offset_mean_closure(atm):
     def closure(target_val):
-        return ((get_theta_params(atm.last_theta_t)[1][:,1]-target_val)**2).mean()
+        theta_tp = get_theta_params(atm.last_theta_t)[1]
+        return ((theta_tp-target_val.to(theta_tp))**2).mean()
     return closure
 
 
 
 def get_atm_offset_std_closure(atm):
     def closure(target_val):
-        return (get_theta_params(atm.last_theta_t)[1][:,1].std()-target_val).abs()
+        theta_tp = get_theta_params(atm.last_theta_t)[1]
+        std = theta_tp.std(0)
+        std[std.isnan()] = 0.
+        return (std-target_val.to(std)).abs()
+
     return closure
 
 
@@ -110,7 +120,7 @@ def optimize_sa_angles(stage):
     r_params = stage['r_params']
     r_params['sa_angles'].active = False
     r_params['sa_offsets'].active = True
-    r_params['sa_offsets'].target_val = 0.0
+    r_params['sa_offsets'].target_val = torch.zeros(3)
     r_params['sa_offsets'].lambda_r = 0.5
 
     hla_atm = stage['hla_atm']
@@ -133,7 +143,7 @@ def optimize_hla_angles(stage):
     r_params['sa_offsets'].active = False
     r_params['hla_angles'].active = False
     r_params['hla_offsets'].active = True
-    r_params['hla_offsets'].target_val = 0.0
+    r_params['hla_offsets'].target_val = torch.zeros(3)
     r_params['hla_offsets'].lambda_r = 0.5
 
     hla_atm = stage['hla_atm']
@@ -157,7 +167,8 @@ def optimize_sa_offsets(stage):
     r_params['sa_angles'].active = True
     r_params['sa_angles'].target_val = stage['epoch_sa_angles_mean']
     r_params['sa_angles'].lambda_r = 0.2
-    r_params['sa_offsets'].target_val = 0.0
+    r_params['sa_offsets'].active = False
+    r_params['sa_offsets'].target_val = torch.zeros(3)
     r_params['sa_offsets'].lambda_r = 0.1
 
     hla_atm = stage['hla_atm']
@@ -182,7 +193,8 @@ def optimize_hla_offsets(stage):
     r_params['hla_angles'].active = True
     r_params['hla_angles'].target_val = stage['epoch_hla_angles_mean']
     r_params['hla_angles'].lambda_r = 0.2
-    r_params['hla_offsets'].target_val = 0.0
+    r_params['hla_offsets'].active = False
+    r_params['hla_offsets'].target_val = torch.zeros(3)
     r_params['hla_offsets'].lambda_r = 0.1
 
     hla_atm = stage['hla_atm']
