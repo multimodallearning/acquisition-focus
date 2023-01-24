@@ -55,7 +55,7 @@ from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.models.affine_transform import AffineTransformModule, get_random_angles, SoftCutModule, HardCutModule, get_theta_params
 from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
-from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params
+from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params, Stage, StageIterator
 
 NOW_STR = datetime.now().strftime("%Y%d%m__%H_%M_%S")
 THIS_SCRIPT_DIR = get_script_dir()
@@ -402,11 +402,28 @@ def get_atm(config, num_classes, view, this_script_dir, _path=None):
 
     return atm
 
+class NoneOptimizer():
+    def __init__(self):
+        super().__init__()
+    def step():
+        pass
+    def zero_grad():
+        pass
 
-def get_transform_model(config, num_classes, this_script_dir, _path=None):
+def get_transform_model(config, num_classes, this_script_dir, _path=None, sa_atm_override=None, hla_atm_override=None):
+    device = config.device
 
-    sa_atm = get_atm(config, num_classes, view='sa', this_script_dir=this_script_dir, _path = _path)
-    sa_atm = get_atm(config, num_classes, view='hla', this_script_dir=this_script_dir, _path = _path)
+    if isinstance(sa_atm_override, AffineTransformModule):
+        # Check if atm is set externally
+        sa_atm = sa_atm_override
+    else:
+        sa_atm = get_atm(config, num_classes, view='sa', this_script_dir=this_script_dir, _path = _path)
+
+    if isinstance(hla_atm_override, AffineTransformModule):
+        # Check if atm is set externally
+        hla_atm = hla_atm_override
+    else:
+        hla_atm = get_atm(config, num_classes, view='hla', this_script_dir=this_script_dir, _path = _path)
 
     if config['soft_cut_std'] > 0:
         sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
@@ -420,10 +437,19 @@ def get_transform_model(config, num_classes, this_script_dir, _path=None):
     sa_cut_module.to(device)
     hla_cut_module.to(device)
 
-    transform_optimizer = torch.optim.AdamW(
-        list(sa_atm.parameters()) + list(hla_atm.parameters()),
-        weight_decay=0.1,
-        lr=0.001)
+    if config.cuts_mode == 'sa':
+        transform_parameters = list(sa_atm.parameters())
+    elif config.cuts_mode == 'sa>hla':
+        transform_parameters = list(hla_atm.parameters())
+    elif config.cuts_mode == 'sa+hla':
+       transform_parameters = list(sa_atm.parameters()) + list(hla_atm.parameters())
+    else:
+        raise ValueError()
+
+    if config.train_affine_theta:
+        transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=0.001)
+    else:
+        transform_optimizer = NoneOptimizer()
 
     if _path and _path.is_dir() and not load_model_only:
         print(f"Loading transform optimizer from {_path}")
@@ -432,7 +458,7 @@ def get_transform_model(config, num_classes, this_script_dir, _path=None):
     else:
         print(f"Generated fresh transform optimizer.")
 
-    return (sa_atm, hla_atm, sa_cut_module, hla_cut_module, transform_optimizer)
+    return (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer
 
 
 
@@ -465,7 +491,7 @@ def get_transformed(label, nifti_affine, augment_affine, atm, cut_module,
             label, _3d_vox_size, soft_label)
 
     label_slc = cut_module(soft_label)
-    image_slc = cut_slice(image) # TODO change this to hardcut module
+    image_slc = HardCutModule()(image)
 
     if crop_around_2d_label_center is not None:
         _2d_vox_size = torch.as_tensor(
@@ -495,7 +521,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     B,NUM_CLASSES,D,H,W = b_label.shape
 
     sa_atm.with_batch_theta = config.train_affine_theta
-    hla_atm.with_batch_theta = False # TODO remove this line
+    hla_atm.with_batch_theta = config.train_affine_theta
 
     sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
         get_transformed(
@@ -524,9 +550,9 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
 
     if 'hybrid' in config.model_type:
         b_input = torch.cat(slices, dim=1)
-        b_input = b_input.view(-1, NUM_CLASSES*2, W_TARGET_LEN, W_TARGET_LEN) # TODO input HLA again
+        b_input = b_input.view(-1, NUM_CLASSES*2, W_TARGET_LEN, W_TARGET_LEN)
     else:
-        b_input = torch.cat(slices, dim=-1) # TODO input HLA again
+        b_input = torch.cat(slices, dim=-1)
         b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
 
     b_input = b_input.to(device=config.device)
@@ -745,6 +771,8 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
     print()
 
+    mean_transform_dict = dict()
+
     if epx_sa_thetas:
         print("theta SA rotation param stats are:")
         epx_sa_thetas = torch.cat(epx_sa_thetas).cpu().detach()[:, :3]
@@ -762,7 +790,17 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         wandb.log({f"orientations/{phase}_sa_angle_std[1]": sa_angles_std[1]}, step=global_idx)
         wandb.log({f"orientations/{phase}_sa_angle_mean[2]": sa_angles_mean[2]}, step=global_idx)
         wandb.log({f"orientations/{phase}_sa_angle_std[2]": sa_angles_std[2]}, step=global_idx)
+
+        wandb.log({f"orientations/{phase}_sa_offset_mean[0]": sa_angles_mean[0]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_sa_offset_std[0]": sa_angles_std[0]}, step=global_idx)
         print()
+
+        mean_transform_dict.update(
+            dict(
+                epoch_sa_angles_mean=sa_angles_mean,
+                epoch_sa_offsets_mean=sa_offsets_mean,
+            )
+        )
 
     if epx_hla_thetas:
         print("theta HLA rotation param stats are:")
@@ -774,19 +812,31 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         hla_offsets = get_theta_params(epx_hla_thetas)[1]
         hla_offsets_mean = hla_offsets.mean(0)
         hla_offsets_std = hla_offsets.std(0)
-        print("Angles", "mean=", hla_angles.mean(0), "std=", hla_angles.std(0))
-        print("Offsets", "mean=", hla_offsets.mean(0), "std=", hla_offsets.std(0))
+        print("Angles", "mean=", hla_angles_mean, "std=", hla_angles_std)
+        print("Offsets", "mean=", hla_angles_mean, "std=", hla_angles_std)
 
         wandb.log({f"orientations/{phase}_hla_angle_mean[1]": hla_angles_mean[1]}, step=global_idx)
         wandb.log({f"orientations/{phase}_hla_angle_std[1]": hla_angles_std[1]}, step=global_idx)
         wandb.log({f"orientations/{phase}_hla_angle_mean[2]": hla_angles_mean[2]}, step=global_idx)
         wandb.log({f"orientations/{phase}_hla_angle_std[2]": hla_angles_std[2]}, step=global_idx)
+
+        wandb.log({f"orientations/{phase}_hla_offset_mean[0]": hla_offsets_mean[0]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_hla_offset_std[0]": hla_offsets_std[0]}, step=global_idx)
         print()
 
+        mean_transform_dict.update(
+            dict(
+                epoch_hla_angles_mean=hla_angles_mean,
+                epoch_hla_offsets_mean=hla_offsets_mean
+            )
+        )
+
     print()
     print()
 
-    return loss_mean
+
+
+    return loss_mean, mean_transform_dict
 
 
 
@@ -848,8 +898,9 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
             THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=chk_path, load_model_only=False,
             encoder_training_only=config.encoder_training_only)
 
-        sa_atm, hla_atm, sa_cut_module, hla_cut_module = get_transform_model(
-            config, len(training_dataset.label_tags), THIS_SCRIPT_DIR, _path=chk_path)
+        (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer = get_transform_model(
+            config, len(training_dataset.label_tags), THIS_SCRIPT_DIR, _path=chk_path,
+            sa_atm_override=stage['sa_atm'], hla_atm_override=stage['hla_atm'])
 
         all_optimizers = dict(optimizer=optimizer, transform_optimizer=transform_optimizer)
 
@@ -874,13 +925,16 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
             wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
             if not run_test_once_only:
-                train_loss = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, training_dataset, train_dataloader, class_weights, fold_postfix,
+                train_loss, mean_transform_dict = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, training_dataset, train_dataloader, class_weights, fold_postfix,
                     phase='train', autocast_enabled=autocast_enabled, all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None)
 
-                val_loss = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, training_dataset, val_dataloader, class_weights, fold_postfix,
+                if stage:
+                    stage.update(mean_transform_dict)
+
+                val_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, training_dataset, val_dataloader, class_weights, fold_postfix,
                     phase='val', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=None)
 
-            quality_metric = test_loss = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, test_dataset, test_dataloader, class_weights, fold_postfix,
+            quality_metric, _ = test_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, test_dataset, test_dataloader, class_weights, fold_postfix,
                 phase='test', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=config.test_only_and_output_to)
 
             if run_test_once_only:
@@ -1014,7 +1068,6 @@ def normal_run():
 
         run_name = run.name
         print("Running", run_name)
-        # training_dataset = prepare_data(config_dict)
         config = wandb.config
 
         run_dl(run_name, config, training_dataset, test_dataset)
@@ -1022,39 +1075,36 @@ def normal_run():
 
 
 def stage_sweep_run(all_config_dicts, all_stages):
+    stage_run_prefix = None
 
-    for config_dict, stg in zip(all_config_dicts, all_stages):
-        stg_idx = stages.idx
+    for config_dict, stage in zip(all_config_dicts, all_stages):
+        stg_idx = all_stages.idx
 
         # Prepare stage settings
-        stg.activate()
-        with wandb.init() as run:
-            run = wandb.init(
-                settings=wandb.Settings(start_method="thread"),
-                mode=config_dict['wandb_mode']
-            )
-            if stage_run_prefix is None:
-                stage_run_prefix = run_name
+        stage.activate()
+        print()
 
-            run.name = f"{stage_run_prefix}-stage{stg_idx}"
+        with wandb.init(project=PROJECT_NAME, config=config_dict, settings=wandb.Settings(start_method="thread"),
+            mode=config_dict['wandb_mode']) as run:
+
+            if stage_run_prefix is None:
+                stage_run_prefix = run.name
+
+            run.name = f"{stage_run_prefix}-stage-{stg_idx+1}"
             print("Running", run.name)
-            # training_dataset = prepare_data(config)
             config = wandb.config
 
-            run_dl(run_name, config, training_dataset, test_dataset, stage)
+            run_dl(run.name, config, training_dataset, test_dataset, stage)
 
 
 
 def wandb_sweep_run():
-    with wandb.init() as run:
-        run = wandb.init(
+    with wandb.init(
             settings=wandb.Settings(start_method="thread"),
-            mode=config_dict['wandb_mode']
-        )
+            mode=config_dict['wandb_mode']) as run:
 
         run_name = run.name
         print("Running", run_name)
-        # training_dataset = prepare_data(config)
         config = wandb.config
 
         run_dl(run_name, config, training_dataset, test_dataset)
@@ -1085,7 +1135,10 @@ def clean_sweep_dict(config_dict):
 
 
 
-if config_dict['sweep_type'] == 'wandb_sweep':
+if config_dict['sweep_type'] is None:
+    normal_run()
+
+elif config_dict['sweep_type'] == 'wandb_sweep':
     merged_sweep_config_dict = clean_sweep_dict(config_dict)
     sweep_id = wandb.sweep(merged_sweep_config_dict, project=PROJECT_NAME)
     wandb.agent(sweep_id, function=wandb_sweep_run)
@@ -1093,17 +1146,17 @@ if config_dict['sweep_type'] == 'wandb_sweep':
 elif config_dict['sweep_type'] == 'stage_sweep':
     r_params = init_regularization_params(
         [
-            'hla_theta_r',
-            'hla_theta_t',
-            'sa_theta_r',
-            'sa_theta_t',
+            'hla_angles',
+            'hla_offsets',
+            'sa_angles',
+            'sa_offsets',
         ], lambda_r=0.01)
 
     std_stages = [
         Stage(
             sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-            regularization_parameters=r_params,
+            r_params=r_params,
             cuts_mode='sa',
             epochs=35,
             do_output=False,
@@ -1141,7 +1194,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             __activate_fn__=optimize_hla_angles
         ),
         Stage(
-            hla_atm=AffineTransformModule(),
+            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             do_output=True,
             __activate_fn__=optimize_hla_offsets
         ),
@@ -1151,7 +1204,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
     #     Stage(
     #         sa_atm=AffineTransformModule(),
     #         hla_atm=AffineTransformModule(),
-    #         regularization_parameters=r_params,
+    #         r_params=r_params,
     #         cuts_mode='sa',
     #         epx=EPX//4,
     #         do_output=True,
@@ -1174,20 +1227,20 @@ elif config_dict['sweep_type'] == 'stage_sweep':
     #     ),
     # ]
 
-    all_stages = StageIterator(std_stages, verbose=True)
-    all_config_dicts = []
+    selected_stages = std_stages
 
-    for stg in all_stages:
+    all_config_dicts = []
+    for stg in selected_stages:
         # Prepare config dict for the stage
         stage_config = config_dict.copy()
         # Update intersecting keys of both
         stage_config.update((key, stg[key]) for key in set(stg).intersection(stage_config))
         all_config_dicts.append(stage_config)
 
-    stage_sweep_run(all_config_dicts, all_stages)
+    stage_sweep_run(all_config_dicts, StageIterator(selected_stages, verbose=True))
 
 else:
-    normal_run()
+    raise ValueError()
 
 # %%
 if not in_notebook():

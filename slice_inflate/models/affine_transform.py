@@ -108,7 +108,7 @@ class AffineTransformModule(torch.nn.Module):
         theta_t = torch.cat([self.init_theta_tp, torch.tensor([1])])
         theta_t = torch.cat([torch.eye(4)[:4,:3], theta_t.view(4,1)], dim=1)
 
-        theta = theta_m @ theta_t
+        theta = theta_m.to(torch.float32) @ theta_t.to(torch.float32)
         theta = theta.view(1, 4, 4)
 
         assert theta.shape == (1, 4, 4)
