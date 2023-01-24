@@ -795,13 +795,15 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         print("Angles", "mean=", sa_angles_mean, "std=", sa_angles_std)
         print("Offsets", "mean=", sa_offsets_mean, "std=", sa_offsets_std)
 
+        wandb.log({f"orientations/{phase}_sa_angle_mean[0]": sa_angles_mean[0]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_sa_angle_std[0]": sa_angles_std[0]}, step=global_idx)
         wandb.log({f"orientations/{phase}_sa_angle_mean[1]": sa_angles_mean[1]}, step=global_idx)
         wandb.log({f"orientations/{phase}_sa_angle_std[1]": sa_angles_std[1]}, step=global_idx)
         wandb.log({f"orientations/{phase}_sa_angle_mean[2]": sa_angles_mean[2]}, step=global_idx)
         wandb.log({f"orientations/{phase}_sa_angle_std[2]": sa_angles_std[2]}, step=global_idx)
 
-        wandb.log({f"orientations/{phase}_sa_offset_mean[0]": sa_angles_mean[0]}, step=global_idx)
-        wandb.log({f"orientations/{phase}_sa_offset_std[0]": sa_angles_std[0]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_sa_offset_mean[0]": sa_offsets_mean[0]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_sa_offset_std[0]": sa_offsets_std[0]}, step=global_idx)
         print()
 
         mean_transform_dict.update(
@@ -822,8 +824,10 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         hla_offsets_mean = hla_offsets.mean(0)
         hla_offsets_std = hla_offsets.std(0)
         print("Angles", "mean=", hla_angles_mean, "std=", hla_angles_std)
-        print("Offsets", "mean=", hla_angles_mean, "std=", hla_angles_std)
+        print("Offsets", "mean=", hla_offsets_mean, "std=", hla_offsets_std)
 
+        wandb.log({f"orientations/{phase}_hla_angle_mean[0]": hla_angles_mean[0]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_hla_angle_std[0]": hla_angles_std[0]}, step=global_idx)
         wandb.log({f"orientations/{phase}_hla_angle_mean[1]": hla_angles_mean[1]}, step=global_idx)
         wandb.log({f"orientations/{phase}_hla_angle_std[1]": hla_angles_std[1]}, step=global_idx)
         wandb.log({f"orientations/{phase}_hla_angle_mean[2]": hla_angles_mean[2]}, step=global_idx)
@@ -1109,6 +1113,7 @@ def stage_sweep_run(config_dict, all_stages):
             config = wandb.config
 
             run_dl(run.name, config, training_dataset, test_dataset, stage)
+        wandb.finish()
 
 
 
