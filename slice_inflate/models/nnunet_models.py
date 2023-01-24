@@ -398,7 +398,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             # self.apply(print_module_training_status)
 
         if self.is_hybrid:
-            CHN = 24
+            CHN = 4
             self.connector = nn.Sequential(
                 nn.Conv2d(480,CHN,1),
                 self.enc_norm_op(CHN),

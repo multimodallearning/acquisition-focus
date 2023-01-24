@@ -31,7 +31,7 @@
     "max_load_3d_num": null,
     "lr": 0.001,
     "use_scheduling": false,
-    "model_type": "unet",
+    "model_type": "hybrid-unet-wo-skip",
     "encoder_training_only": false,
     "save_every": "best",
     "mdl_save_prefix": "data/models",
