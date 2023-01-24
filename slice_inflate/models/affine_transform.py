@@ -120,7 +120,7 @@ class AffineTransformModule(torch.nn.Module):
         batch_size = x.shape[0]
         theta_ap, theta_tp = self.localisation_net(x.float())
         device = theta_tp.device
-        theta_ap[:,0] = 0.0 # [:,0] rotates in plane -> do not predict
+        # theta_ap[:,0] = 0.0 # [:,0] rotates in plane -> do not predict TODO check if readding this is necessary
         theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict
 
         if self.optim_method == 'angle-axis':
@@ -157,7 +157,7 @@ class AffineTransformModule(torch.nn.Module):
         else:
             if self.with_batch_theta:
                 theta_ab, theta_tb = self.get_batch_affines(x_image)
-                theta_a = (theta_ab @ theta_ai)
+                theta_a = (theta_ab @ theta_ai) # Multiplying here with (2 ang) @ (2 ang) results in (3 angle output) TODO
                 theta_t = theta_tb
             else:
                 theta_a = theta_ai

@@ -76,28 +76,28 @@ def init_regularization_params(name_list, target_val=0.0, lambda_r=0.0, active=F
 
 
 
-def get_atm_angle_mean_closure(atm):
+def get_atm_angle_closure(atm):
     def closure(target_val):
-        theta_ap = get_theta_params(atm.last_theta)[0]
-        return ((theta_ap-target_val.to(theta_ap))**2).mean()
+        theta_ap = get_theta_params(atm.last_theta_a)[0]
+        return ((theta_ap-target_val.to(theta_ap))**2).sum()
     return closure
 
 
 
 def get_atm_angle_std_closure(atm):
     def closure(target_val):
-        theta_ap = get_theta_params(atm.last_theta)[0]
+        theta_ap = get_theta_params(atm.last_theta_a)[0]
         std = theta_ap.std(0)
         std[std.isnan()] = 0.
-        return (std-target_val.to(theta_ap)).abs()
+        return (std-target_val.to(theta_ap)).abs().sum()
     return closure
 
 
 
-def get_atm_offset_mean_closure(atm):
+def get_atm_offset_closure(atm):
     def closure(target_val):
         theta_tp = get_theta_params(atm.last_theta_t)[1]
-        return ((theta_tp-target_val.to(theta_tp))**2).mean()
+        return ((theta_tp-target_val.to(theta_tp))**2).sum()
     return closure
 
 
@@ -107,7 +107,7 @@ def get_atm_offset_std_closure(atm):
         theta_tp = get_theta_params(atm.last_theta_t)[1]
         std = theta_tp.std(0)
         std[std.isnan()] = 0.
-        return (std-target_val.to(std)).abs()
+        return (std-target_val.to(std)).abs().sum()
 
     return closure
 
@@ -125,10 +125,10 @@ def optimize_sa_angles(stage):
 
     hla_atm = stage['hla_atm']
     sa_atm = stage['sa_atm']
-    r_params['hla_angles'].set_call_fn(get_atm_angle_mean_closure(hla_atm))
-    r_params['hla_offsets'].set_call_fn(get_atm_offset_mean_closure(hla_atm))
-    r_params['sa_angles'].set_call_fn(get_atm_angle_mean_closure(sa_atm))
-    r_params['sa_offsets'].set_call_fn(get_atm_offset_mean_closure(sa_atm))
+    r_params['hla_angles'].set_call_fn(get_atm_angle_closure(hla_atm))
+    r_params['hla_offsets'].set_call_fn(get_atm_offset_closure(hla_atm))
+    r_params['sa_angles'].set_call_fn(get_atm_angle_closure(sa_atm))
+    r_params['sa_offsets'].set_call_fn(get_atm_offset_closure(sa_atm))
 
 
     print('Init sa_theta_ap', stage['sa_atm'].init_theta_ap)
@@ -148,10 +148,10 @@ def optimize_hla_angles(stage):
 
     hla_atm = stage['hla_atm']
     sa_atm = stage['sa_atm']
-    r_params['hla_angles'].set_call_fn(get_atm_angle_mean_closure(hla_atm))
-    r_params['hla_offsets'].set_call_fn(get_atm_offset_mean_closure(hla_atm))
-    r_params['sa_angles'].set_call_fn(get_atm_angle_mean_closure(sa_atm))
-    r_params['sa_offsets'].set_call_fn(get_atm_offset_mean_closure(sa_atm))
+    r_params['hla_angles'].set_call_fn(get_atm_angle_closure(hla_atm))
+    r_params['hla_offsets'].set_call_fn(get_atm_offset_closure(hla_atm))
+    r_params['sa_angles'].set_call_fn(get_atm_angle_closure(sa_atm))
+    r_params['sa_offsets'].set_call_fn(get_atm_offset_closure(sa_atm))
 
     print('Init hla_theta_ap', stage['hla_atm'].init_theta_ap)
     [print(name, rp) for name, rp in r_params.items()]
@@ -174,10 +174,10 @@ def optimize_sa_offsets(stage):
     hla_atm = stage['hla_atm']
     sa_atm = stage['sa_atm']
 
-    r_params['hla_angles'].set_call_fn(get_atm_angle_mean_closure(hla_atm))
-    r_params['hla_offsets'].set_call_fn(get_atm_offset_mean_closure(hla_atm))
-    r_params['sa_angles'].set_call_fn(get_atm_angle_mean_closure(sa_atm))
-    r_params['sa_offsets'].set_call_fn(get_atm_offset_mean_closure(sa_atm))
+    r_params['hla_angles'].set_call_fn(get_atm_angle_closure(hla_atm))
+    r_params['hla_offsets'].set_call_fn(get_atm_offset_closure(hla_atm))
+    r_params['sa_angles'].set_call_fn(get_atm_angle_closure(sa_atm))
+    r_params['sa_offsets'].set_call_fn(get_atm_offset_closure(sa_atm))
 
     print('Init sa_theta_ap', stage['sa_atm'].init_theta_ap)
     [print(name, rp) for name, rp in r_params.items()]
@@ -200,10 +200,10 @@ def optimize_hla_offsets(stage):
     hla_atm = stage['hla_atm']
     sa_atm = stage['sa_atm']
 
-    r_params['hla_angles'].set_call_fn(get_atm_angle_mean_closure(hla_atm))
-    r_params['hla_offsets'].set_call_fn(get_atm_offset_mean_closure(hla_atm))
-    r_params['sa_angles'].set_call_fn(get_atm_angle_mean_closure(sa_atm))
-    r_params['sa_offsets'].set_call_fn(get_atm_offset_mean_closure(sa_atm))
+    r_params['hla_angles'].set_call_fn(get_atm_angle_closure(hla_atm))
+    r_params['hla_offsets'].set_call_fn(get_atm_offset_closure(hla_atm))
+    r_params['sa_angles'].set_call_fn(get_atm_angle_closure(sa_atm))
+    r_params['sa_offsets'].set_call_fn(get_atm_offset_closure(sa_atm))
 
     print('Init hla_theta_ap', stage['hla_atm'].init_theta_ap)
     [print(name, rp) for name, rp in r_params.items()]
