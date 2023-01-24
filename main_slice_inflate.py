@@ -248,8 +248,9 @@ def get_norms(model):
 
 
 
-def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, device='cpu', load_model_only=False, encoder_training_only=False):
+def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, load_model_only=False, encoder_training_only=False):
 
+    device = config.device
     assert config.model_type in ['vae', 'ae', 'hybrid-ae', 'unet', 'unet-wo-skip', 'hybrid-unet-wo-skip']
     if not _path is None:
         _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
@@ -311,29 +312,6 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
     model.to(device)
 
-    # Add atm models
-    hla_affine_path = Path(
-        THIS_SCRIPT_DIR,
-        "slice_inflate/preprocessing",
-        "mmwhs_1002_HLA_red_slice_to_ras.mat"
-    )
-    sa_affine_path = Path(
-        THIS_SCRIPT_DIR,
-        "slice_inflate/preprocessing",
-        "mmwhs_1002_SA_yellow_slice_to_ras.mat"
-    )
-
-    sa_atm = AffineTransformModule(num_classes,
-        torch.tensor(config['fov_mm']),
-        torch.tensor(config['fov_vox']),
-        view_affine=torch.as_tensor(np.loadtxt(sa_affine_path)).float(),
-        optim_method=config.affine_theta_optim_method)
-
-    hla_atm = AffineTransformModule(num_classes,
-        torch.tensor(config['fov_mm']),
-        torch.tensor(config['fov_vox']),
-        view_affine=torch.as_tensor(np.loadtxt(hla_affine_path)).float(),
-        optim_method=config.affine_theta_optim_method)
 
     if config['soft_cut_std'] > 0:
         sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
@@ -342,8 +320,6 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         sa_cut_module = HardCutModule()
         hla_cut_module = HardCutModule()
 
-    sa_atm.to(device)
-    hla_atm.to(device)
     sa_cut_module.to(device)
     hla_cut_module.to(device)
 
@@ -351,14 +327,9 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     if _path and _path.is_dir():
         model_dict = torch.load(_path.joinpath('model.pth'), map_location=device)
         epx = model_dict.get('metadata', {}).get('epx', 0)
-
-        sa_atm_dict = torch.load(_path.joinpath('sa_atm.pth'), map_location=device)
-        hla_atm_dict = torch.load(_path.joinpath('hla_atm.pth'), map_location=device)
-
-        print(f"Loading models from {_path}")
+        print(f"Loading model from {_path}")
         print(model.load_state_dict(model_dict, strict=False))
-        print(sa_atm.load_state_dict(sa_atm_dict, strict=False))
-        print(hla_atm.load_state_dict(hla_atm_dict, strict=False))
+
     else:
         print(f"Generating fresh '{type(model).__name__}' model and align modules.")
         epx = 0
@@ -378,22 +349,16 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', patience=20, threshold=0.01, threshold_mode='rel')
 
-    loc_optimizer = torch.optim.AdamW(
-        list(sa_atm.parameters()) + list(hla_atm.parameters()),
-        weight_decay=0.1,
-        lr=0.001)
 
     if _path and _path.is_dir() and not load_model_only:
         print(f"Loading optimizer, scheduler, scaler from {_path}")
         optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
-        loc_optimizer.load_state_dict(torch.load(_path.joinpath('loc_optimizer.pth'), map_location=device))
         scheduler.load_state_dict(torch.load(_path.joinpath('scheduler.pth'), map_location=device))
         scaler.load_state_dict(torch.load(_path.joinpath('scaler.pth'), map_location=device))
 
     else:
-        print(f"Generated fresh optimizers, schedulers, scalers.")
+        print(f"Generated fresh optimizer, scheduler, scaler.")
 
-    all_optimizers = dict(optimizer=optimizer, loc_optimizer=loc_optimizer)
     # for submodule in model.modules():
     #     submodule.register_forward_hook(anomaly_hook)
     # for submodule in sa_atm.modules():
@@ -401,7 +366,73 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     # for submodule in hla_atm.modules():
     #     submodule.register_forward_hook(anomaly_hook)
 
-    return (model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, all_optimizers, scheduler, scaler), epx
+    return (model, optimizer, scheduler, scaler), epx
+
+
+
+def get_atm(config, num_classes, view, this_script_dir, _path=None):
+
+    assert view in ['sa', 'hla']
+    device = config.device
+
+    if view == 'sa':
+        affine_path = Path(
+        this_script_dir,
+        "slice_inflate/preprocessing",
+        "mmwhs_1002_SA_yellow_slice_to_ras.mat"
+    )
+    elif view == 'hla':
+        affine_path = Path(
+        this_script_dir,
+        "slice_inflate/preprocessing",
+        "mmwhs_1002_HLA_red_slice_to_ras.mat"
+    )
+    # Add atm models
+    atm = AffineTransformModule(num_classes,
+        torch.tensor(config['fov_mm']),
+        torch.tensor(config['fov_vox']),
+        view_affine=torch.as_tensor(np.loadtxt(affine_path)).float(),
+        optim_method=config.affine_theta_optim_method)
+
+    if _path and _path.is_dir():
+
+        atm_dict = torch.load(_path.joinpath(f'{view}_atm.pth'), map_location=device)
+        print(f"Loading {view} atm from {_path}")
+        print(atm.load_state_dict(sa_atm_dict, strict=False))
+
+    return atm
+
+
+def get_transform_model(config, num_classes, this_script_dir, _path=None):
+
+    sa_atm = get_atm(config, num_classes, view='sa', this_script_dir=this_script_dir, _path = _path)
+    sa_atm = get_atm(config, num_classes, view='hla', this_script_dir=this_script_dir, _path = _path)
+
+    if config['soft_cut_std'] > 0:
+        sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
+        hla_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
+    else:
+        sa_cut_module = HardCutModule()
+        hla_cut_module = HardCutModule()
+
+    sa_atm.to(device)
+    hla_atm.to(device)
+    sa_cut_module.to(device)
+    hla_cut_module.to(device)
+
+    transform_optimizer = torch.optim.AdamW(
+        list(sa_atm.parameters()) + list(hla_atm.parameters()),
+        weight_decay=0.1,
+        lr=0.001)
+
+    if _path and _path.is_dir() and not load_model_only:
+        print(f"Loading transform optimizer from {_path}")
+        transform_optimizer.load_state_dict(torch.load(_path.joinpath('transform_optimizer.pth'), map_location=device))
+
+    else:
+        print(f"Generated fresh transform optimizer.")
+
+    return (sa_atm, hla_atm, sa_cut_module, hla_cut_module, transform_optimizer)
 
 
 
@@ -637,7 +668,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             # test_all_parameters_updated(sa_atm)
             # test_all_parameters_updated(hla_atm)
             for name, opt in all_optimizers.items():
-                if name == 'loc_optimizer' and not config.train_affine_theta:
+                if name == 'transform_optimizer' and not config.train_affine_theta:
                     continue
                 scaler.step(opt)
             scaler.update()
@@ -812,11 +843,17 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
         # Load from checkpoint, if any
         chk_path = config.checkpoint_path if 'checkpoint_path' in config else None
 
-        ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
-        (model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, all_optimizers, scheduler, scaler), epx_start = get_model(config, len(training_dataset), len(training_dataset.label_tags),
-            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=chk_path, device=config.device, load_model_only=False, encoder_training_only=config.encoder_training_only)
+        (model, optimizer, scheduler, scaler), epx_start = get_model(
+            config, len(training_dataset), len(training_dataset.label_tags),
+            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=chk_path, load_model_only=False,
+            encoder_training_only=config.encoder_training_only)
 
-        all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
+        sa_atm, hla_atm, sa_cut_module, hla_cut_module = get_transform_model(
+            config, len(training_dataset.label_tags), THIS_SCRIPT_DIR, _path=chk_path)
+
+        all_optimizers = dict(optimizer=optimizer, transform_optimizer=transform_optimizer)
+        
+        # all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
 
         # for bn_counts in training_dataset.bincounts_3d.values():
         #     all_bn_counts += bn_counts
@@ -874,7 +911,7 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
                         sa_cut_module=sa_cut_module,
                         hla_cut_module=hla_cut_module,
                         optimizer=all_optimizers['optimizer'],
-                        loc_optimizer=all_optimizers['loc_optimizer'],
+                        transform_optimizer=all_optimizers['transform_optimizer'],
                         scheduler=scheduler,
                         scaler=scaler)
 
