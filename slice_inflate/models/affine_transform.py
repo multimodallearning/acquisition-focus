@@ -119,6 +119,8 @@ class AffineTransformModule(torch.nn.Module):
 
         theta_ap[:,0] = 0.0 # [:,0] rotates in plane -> do not predict TODO check if readding this is necessary
         theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict
+
+        theta_ap[:,1] = 0.0 # TODO remove that
         theta_tp[...] = 0.0 # TODO remove that
 
         device = theta_ap.device
