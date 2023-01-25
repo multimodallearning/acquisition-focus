@@ -105,16 +105,13 @@ class AffineTransformModule(torch.nn.Module):
     def set_init_theta_tp(self, init_theta_tp):
         self.init_theta_tp = torch.zeros(3) if init_theta_tp is None else init_theta_tp
 
-    def get_init_affine(self):
-        theta_m = angle_axis_to_rotation_matrix(self.init_theta_ap.view(1,3))[0]
+    def get_init_affines(self):
+        theta_a = angle_axis_to_rotation_matrix(self.init_theta_ap.view(1,3))[0].view(1,4,4)
         theta_t = torch.cat([self.init_theta_tp, torch.tensor([1])])
-        theta_t = torch.cat([torch.eye(4)[:4,:3], theta_t.view(4,1)], dim=1)
+        theta_t = torch.cat([torch.eye(4)[:4,:3], theta_t.view(4,1)], dim=1).view(1,4,4)
 
-        theta = theta_m.to(torch.float32) @ theta_t.to(torch.float32)
-        theta = theta.view(1, 4, 4)
-
-        assert theta.shape == (1, 4, 4)
-        return theta
+        assert theta_a.shape == theta_t.shape == (1,4,4)
+        return theta_a.to(torch.float32), theta_t.to(torch.float32)
 
     def get_batch_affines(self, x):
         batch_size = x.shape[0]
@@ -132,6 +129,9 @@ class AffineTransformModule(torch.nn.Module):
 
         if self.optim_method == 'angle-axis':
             theta_a = angle_axis_to_rotation_matrix(theta_ap.view(batch_size,3))
+            zooms = (theta_a * theta_a).sum(1).sqrt()
+            inv_zooms = torch.stack([z.diag() for z in (1/zooms)])
+            theta_a = theta_a @ inv_zooms
         elif self.optim_method == 'normal-vector':
             theta_a = normal_to_rotation_matrix(theta_ap.view(batch_size,3))
         else:
@@ -164,12 +164,12 @@ class AffineTransformModule(torch.nn.Module):
             theta = theta_override.detach() # Caution: this is a non-differentiable theta
         else:
             if self.with_batch_theta:
-                theta_a, theta_t = self.get_batch_affines(x_image)
+                theta_a, theta_t = self.get_batch_affines(x_image) # Initial parameters are applied here as well
                 # theta_a = (theta_ab @ theta_ai) # Multiplying here with (2 ang) @ (2 ang) results in (3 angle output) TODO
                 # theta_t = theta_tb
             else:
-                theta_a = self.get_init_affine().to(device=device)
-                theta_t = torch.eye(4, device=device).view(1,4,4).repeat(B,1,1)
+                theta_a, theta_t = self.get_init_affines()
+                theta_a, theta_t = theta_a.to(device), theta_t.to(device)
 
             theta = theta_a @ theta_t
 
@@ -263,6 +263,8 @@ def get_random_angles(angle_std, seed=0):
     angles = torch.normal(mean, std)
     return angles
 
+
+
 def normal_to_rotation_matrix(normals):
     """Convert 3d vector (unnormalized normals) to 4x4 rotation matrix
 
@@ -308,7 +310,7 @@ def normal_to_rotation_matrix(normals):
 
 
 
-def angle_axis_to_rotation_matrix(angle_axis):
+def angle_axis_to_rotation_matrix(angle_axis, eps=1e-6):
     """Convert 3d vector of axis-angle rotation to 4x4 rotation matrix
 
     Args:
@@ -325,12 +327,12 @@ def angle_axis_to_rotation_matrix(angle_axis):
         >>> input = torch.rand(1, 3)  # Nx3
         >>> output = tgm.angle_axis_to_rotation_matrix(input)  # Nx4x4
     """
-    def _compute_rotation_matrix(angle_axis, sqrt_theta2, eps=1e-6):
+    def _compute_rotation_matrix(angle_axis, theta2, eps=1e-6):
         # We want to be careful to only evaluate the square root if the
         # norm of the angle_axis vector is greater than zero. Otherwise
         # we get a division by zero.
         k_one = 1.0
-        theta = sqrt_theta2
+        theta = torch.sqrt(theta2+eps)
         wxyz = angle_axis / (theta + eps)
         wx, wy, wz = torch.chunk(wxyz, 3, dim=1)
         cos_theta = torch.cos(theta)
@@ -356,26 +358,22 @@ def angle_axis_to_rotation_matrix(angle_axis):
             [k_one, -rz, ry, rz, k_one, -rx, -ry, rx, k_one], dim=1)
         return rotation_matrix.view(-1, 3, 3)
 
-    eps = 1e-6
     # stolen from ceres/rotation.h
 
     _angle_axis = torch.unsqueeze(angle_axis, dim=1)
     with amp.autocast(enabled=False):
         _angle_axis = _angle_axis.to(torch.float32)
-        sqrt_theta2 = torch.matmul(
-            (_angle_axis.abs()+eps).sqrt(),
-            (_angle_axis.abs()+eps).sqrt().transpose(1, 2)
-        ) # Problem here!
-    sqrt_theta2 = torch.squeeze(sqrt_theta2, dim=1)
+        theta2 = torch.matmul(_angle_axis, _angle_axis.transpose(1, 2))
+    theta2 = torch.squeeze(theta2, dim=1)
 
     # compute rotation matrices
-    rotation_matrix_normal = _compute_rotation_matrix(angle_axis, sqrt_theta2)
+    rotation_matrix_normal = _compute_rotation_matrix(angle_axis, theta2, eps)
     rotation_matrix_taylor = _compute_rotation_matrix_taylor(angle_axis)
 
     # create mask to handle both cases
-    mask = (sqrt_theta2 > eps).view(-1, 1, 1).to(sqrt_theta2.device)
-    mask_pos = (mask).type_as(sqrt_theta2)
-    mask_neg = (mask == False).type_as(sqrt_theta2)  # noqa
+    mask = (theta2 > eps).view(-1, 1, 1).to(theta2.device)
+    mask_pos = (mask).type_as(theta2)
+    mask_neg = (mask == False).type_as(theta2)  # noqa
 
     # create output pose matrix
     batch_size = angle_axis.shape[0]
@@ -502,7 +500,7 @@ def rotation_matrix_to_quaternion(rotation_matrix, eps=1e-6):
 
 
 
-def quaternion_to_angle_axis(quaternion: torch.Tensor, eps=1e-6) -> torch.Tensor:
+def quaternion_to_angle_axis(quaternion: torch.Tensor) -> torch.Tensor:
     """Convert quaternion vector to angle axis of rotation.
 
     Adapted from ceres C++ library: ceres-solver/include/ceres/rotation.h
