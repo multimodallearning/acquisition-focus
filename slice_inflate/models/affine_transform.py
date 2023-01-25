@@ -90,8 +90,8 @@ class AffineTransformModule(torch.nn.Module):
 
         self.use_affine_theta = use_affine_theta
 
-        self.set_init_theta_ap(init_theta_ap)
-        self.set_init_theta_tp(init_theta_tp)
+        self.init_theta_ap = torch.nn.Parameter(torch.zeros(3), requires_grad=False)
+        self.init_theta_tp = torch.nn.Parameter(torch.zeros(3), requires_grad=False)
 
         self.last_theta = None
         self.last_theta_a = None
@@ -100,14 +100,15 @@ class AffineTransformModule(torch.nn.Module):
         self.tag = tag
 
     def set_init_theta_ap(self, init_theta_ap):
-        self.init_theta_ap = nn.Parameter(torch.zeros(3) if init_theta_ap is None else init_theta_ap)
+        self.init_theta_ap.data = init_theta_ap.data
 
     def set_init_theta_tp(self, init_theta_tp):
-        self.init_theta_tp = nn.Parameter(torch.zeros(3) if init_theta_tp is None else init_theta_tp)
+        self.init_theta_tp.data = init_theta_tp.data
 
     def get_init_affines(self):
-        theta_a = angle_axis_to_rotation_matrix(self.init_theta_ap.detach().view(1,3))[0].view(1,4,4)
-        theta_t = torch.cat([self.init_theta_tp.detach(), torch.tensor([1])])
+        assert not self.init_theta_ap.requires_grad and not self.init_theta_at.requires_grad
+        theta_a = angle_axis_to_rotation_matrix(self.init_theta_ap.view(1,3))[0].view(1,4,4)
+        theta_t = torch.cat([self.init_theta_tp, torch.tensor([1])])
         theta_t = torch.cat([torch.eye(4)[:4,:3], theta_t.view(4,1)], dim=1).view(1,4,4)
 
         assert theta_a.shape == theta_t.shape == (1,4,4)
@@ -116,18 +117,17 @@ class AffineTransformModule(torch.nn.Module):
     def get_batch_affines(self, x):
         batch_size = x.shape[0]
         theta_ap, theta_tp = self.localisation_net(x.float())
+        device = theta_ap.device
+        
+        # Apply initial rotation
+        theta_ap = theta_ap + self.init_theta_ap.view(1,3).to(device)
+        theta_tp = theta_tp + self.init_theta_tp.view(1,3).to(device)
 
         theta_ap[:,0] = 0.0 # [:,0] rotates in plane -> do not predict TODO check if readding this is necessary
         theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict
 
         theta_ap[:,1] = 0.0 # TODO remove that
         theta_tp[...] = 0.0 # TODO remove that
-
-        device = theta_ap.device
-
-        # Apply initial rotation
-        theta_ap = theta_ap + self.init_theta_ap.view(1,3).to(device)
-        theta_tp = theta_tp + self.init_theta_tp.view(1,3).to(device)
 
         if self.optim_method == 'angle-axis':
             theta_a = angle_axis_to_rotation_matrix(theta_ap.view(batch_size,3))

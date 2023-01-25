@@ -324,7 +324,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
     hla_cut_module.to(device)
 
 
-    if _path and Path(_path).is_dir():
+    if _path:
+        assert Path(_path).is_dir()
         model_dict = torch.load(Path(_path).joinpath('model.pth'), map_location=device)
         epx = model_dict.get('metadata', {}).get('epx', 0)
         print(f"Loading model from {_path}")
@@ -350,7 +351,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
         optimizer, mode='min', patience=20, threshold=0.01, threshold_mode='rel')
 
 
-    if _path and Path(_path).is_dir() and not load_model_only:
+    if _path and not load_model_only:
+        assert Path(_path).is_dir()
         print(f"Loading optimizer, scheduler, scaler from {_path}")
         optimizer.load_state_dict(torch.load(Path(_path).joinpath('optimizer.pth'), map_location=device))
         scheduler.load_state_dict(torch.load(Path(_path).joinpath('scheduler.pth'), map_location=device))
@@ -394,10 +396,11 @@ def get_atm(config, num_classes, view, this_script_dir, _path=None):
         view_affine=torch.as_tensor(np.loadtxt(affine_path)).float(),
         optim_method=config.affine_theta_optim_method, tag=view)
 
-    if _path and Path(_path).is_dir():
+    if _path:
+        assert Path(_path).is_dir()
         atm_dict = torch.load(Path(_path).joinpath(f'{view}_atm.pth'), map_location=device)
         print(f"Loading {view} atm from {_path}")
-        print(atm.load_state_dict(sa_atm_dict, strict=False))
+        print(atm.load_state_dict(atm_dict, strict=False))
 
     return atm
 
@@ -455,7 +458,8 @@ def get_transform_model(config, num_classes, this_script_dir, _path=None, sa_atm
     else:
         transform_optimizer = NoneOptimizer()
 
-    if _path and Path(_path).is_dir() and not load_model_only:
+    if _path and config.train_affine_theta:
+        assert Path(_path).is_dir()
         print(f"Loading transform optimizer from {_path}")
         transform_optimizer.load_state_dict(torch.load(Path(_path).joinpath('transform_optimizer.pth'), map_location=device))
 
@@ -679,7 +683,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         model.train()
         sa_atm.train()
         hla_atm.train()
-        dataset.train(augment=True)
+        dataset.train(augment=config.do_augment)
     else:
         model.eval()
         sa_atm.eval()
