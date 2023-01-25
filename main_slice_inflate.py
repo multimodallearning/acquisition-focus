@@ -1135,11 +1135,11 @@ def wandb_sweep_run():
             settings=wandb.Settings(start_method="thread"),
             mode=config_dict['wandb_mode']) as run:
 
-        run_name = run.name
-        print("Running", run_name)
+        run.name = f"{NOW_STR}_{run.name}"
+        print("Running", run.name)
         config = wandb.config
 
-        run_dl(run_name, config, training_dataset, test_dataset)
+        run_dl(run.name, config, training_dataset, test_dataset)
 
 
 
