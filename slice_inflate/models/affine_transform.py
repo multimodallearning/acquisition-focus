@@ -106,10 +106,11 @@ class AffineTransformModule(torch.nn.Module):
         self.init_theta_tp.data = init_theta_tp.data
 
     def get_init_affines(self):
-        assert not self.init_theta_ap.requires_grad and not self.init_theta_at.requires_grad
+        assert not self.init_theta_ap.requires_grad and not self.init_theta_tp.requires_grad
+        device = self.init_theta_tp.device
         theta_a = angle_axis_to_rotation_matrix(self.init_theta_ap.view(1,3))[0].view(1,4,4)
-        theta_t = torch.cat([self.init_theta_tp, torch.tensor([1])])
-        theta_t = torch.cat([torch.eye(4)[:4,:3], theta_t.view(4,1)], dim=1).view(1,4,4)
+        theta_t = torch.cat([self.init_theta_tp, torch.tensor([1], device=device)])
+        theta_t = torch.cat([torch.eye(4)[:4,:3].to(device), theta_t.view(4,1)], dim=1).view(1,4,4)
 
         assert theta_a.shape == theta_t.shape == (1,4,4)
         return theta_a.to(torch.float32), theta_t.to(torch.float32)
@@ -118,7 +119,7 @@ class AffineTransformModule(torch.nn.Module):
         batch_size = x.shape[0]
         theta_ap, theta_tp = self.localisation_net(x.float())
         device = theta_ap.device
-        
+
         # Apply initial rotation
         theta_ap = theta_ap + self.init_theta_ap.view(1,3).to(device)
         theta_tp = theta_tp + self.init_theta_tp.view(1,3).to(device)
