@@ -129,9 +129,7 @@ class AffineTransformModule(torch.nn.Module):
 
         if self.optim_method == 'angle-axis':
             theta_a = angle_axis_to_rotation_matrix(theta_ap.view(batch_size,3))
-            zooms = (theta_a * theta_a).sum(1).sqrt()
-            inv_zooms = torch.stack([z.diag() for z in (1/zooms)])
-            theta_a = theta_a @ inv_zooms
+
         elif self.optim_method == 'normal-vector':
             theta_a = normal_to_rotation_matrix(theta_ap.view(batch_size,3))
         else:
@@ -165,8 +163,6 @@ class AffineTransformModule(torch.nn.Module):
         else:
             if self.with_batch_theta:
                 theta_a, theta_t = self.get_batch_affines(x_image) # Initial parameters are applied here as well
-                # theta_a = (theta_ab @ theta_ai) # Multiplying here with (2 ang) @ (2 ang) results in (3 angle output) TODO
-                # theta_t = theta_tb
             else:
                 theta_a, theta_t = self.get_init_affines()
                 theta_a, theta_t = theta_a.to(device), theta_t.to(device)
@@ -386,7 +382,7 @@ def angle_axis_to_rotation_matrix(angle_axis, eps=1e-6):
 
 
 
-def rotation_matrix_to_angle_axis(rotation_matrix):
+def rotation_matrix_to_angle_axis(rotation_matrix, eps=1e-6):
     """Convert 3x4 rotation matrix to Rodrigues vector
 
     Args:
@@ -405,7 +401,7 @@ def rotation_matrix_to_angle_axis(rotation_matrix):
     """
     # todo add check that matrix is a valid rotation matrix
     quaternion = rotation_matrix_to_quaternion(rotation_matrix)
-    return quaternion_to_angle_axis(quaternion)
+    return quaternion_to_angle_axis(quaternion, eps)
 
 
 
@@ -500,7 +496,7 @@ def rotation_matrix_to_quaternion(rotation_matrix, eps=1e-6):
 
 
 
-def quaternion_to_angle_axis(quaternion: torch.Tensor) -> torch.Tensor:
+def quaternion_to_angle_axis(quaternion: torch.Tensor, eps=1e-6) -> torch.Tensor:
     """Convert quaternion vector to angle axis of rotation.
 
     Adapted from ceres C++ library: ceres-solver/include/ceres/rotation.h
