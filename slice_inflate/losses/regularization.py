@@ -231,3 +231,9 @@ def optimize_hla_offsets(stage):
 
     print('Init hla_theta_ap', stage['hla_atm'].init_theta_ap)
     [print(name, rp) for name, rp in r_params.items()]
+
+def deactivate_r_params(stage):
+    r_params = stage['r_params']
+
+    for p in r_params.values():
+        p.active = False

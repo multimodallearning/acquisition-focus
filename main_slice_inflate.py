@@ -55,7 +55,7 @@ from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.models.affine_transform import AffineTransformModule, get_random_angles, SoftCutModule, HardCutModule, get_theta_params
 from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
-from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params, Stage, StageIterator
+from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params, deactivate_r_params, Stage, StageIterator
 
 NOW_STR = datetime.now().strftime("%Y%d%m__%H_%M_%S")
 THIS_SCRIPT_DIR = get_script_dir()
@@ -563,7 +563,18 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
         b_input = torch.cat(slices, dim=-1)
         b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
 
+    if config.reconstruction_target == 'from-dataloader':
+        b_target = b_label
+    elif config.reconstruction_target == 'sa-oriented':
+        b_target = sa_label
+    elif config.reconstruction_target == 'hla-oriented':
+        b_target = hla_label
+    else:
+        raise ValueError()
+
     b_input = b_input.to(device=config.device)
+    b_target = b_target.to(device=config.device)
+
     b_target = b_label.to(device=config.device)
 
     return b_input.float(), b_target, sa_affine
@@ -1202,45 +1213,57 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             r_params=r_params,
             cuts_mode='sa',
             epochs=35,
+            soft_cut_std=0.125,
+            train_affine_theta=True,
             do_output=True,
             __activate_fn__=optimize_sa_angles
         ),
         Stage(
-            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             do_output=True,
+            cuts_mode='sa',
+            epochs=config_dict['epochs'],
+            soft_cut_std=-999,
+            train_affine_theta=False,
+            __activate_fn__=deactivate_r_params
+        ),
+        Stage(
+            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+            cuts_mode='sa',
+            epochs=35,
+            soft_cut_std=0.125,
+            do_output=True,
+            train_affine_theta=True,
             __activate_fn__=optimize_sa_angles
         ),
         Stage(
-            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             do_output=True,
-            __activate_fn__=optimize_sa_offsets
+            cuts_mode='sa',
+            epochs=config_dict['epochs'],
+            soft_cut_std=-999,
+            train_affine_theta=False,
+            __activate_fn__=deactivate_r_params
         ),
-        Stage(
-            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-            do_output=True,
-            __activate_fn__=optimize_sa_offsets
-        ),
-        Stage(
-            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-            cuts_mode='sa>hla',
-            do_output=True,
-            __activate_fn__=optimize_hla_angles
-        ),
-        Stage(
-            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-            do_output=True,
-            __activate_fn__=optimize_hla_angles
-        ),
-        Stage(
-            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-            do_output=True,
-            __activate_fn__=optimize_hla_angles
-        ),
-        Stage(
-            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-            do_output=True,
-            __activate_fn__=optimize_hla_offsets
-        ),
+        # Stage(
+        #     sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+        #     do_output=True,
+        #     __activate_fn__=optimize_sa_offsets
+        # ),
+        # Stage(
+        #     hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+        #     cuts_mode='sa>hla',
+        #     do_output=True,
+        #     __activate_fn__=optimize_hla_angles
+        # ),
+        # Stage(
+        #     hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+        #     do_output=True,
+        #     __activate_fn__=optimize_hla_angles
+        # ),
+        # Stage(
+        #     hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+        #     do_output=True,
+        #     __activate_fn__=optimize_hla_offsets
+        # ),
     ]
 
     # sa_angle_only_stages = [
