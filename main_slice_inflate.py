@@ -1190,7 +1190,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             r_params=r_params,
             cuts_mode='sa',
-            epochs=1,
+            epochs=35,
             do_output=True,
             __activate_fn__=optimize_sa_angles
         ),
@@ -1222,7 +1222,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
         ),
         Stage(
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-            do_output=False,
+            do_output=True,
             __activate_fn__=optimize_hla_angles
         ),
         Stage(
