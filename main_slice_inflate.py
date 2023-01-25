@@ -643,9 +643,17 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
 
         if config.do_output and epx % 10 == 0 and '1010-mr' in batch['id']:
             idx = batch['id'].index('1010-mr')
-            _dir = Path(f"data/output/{NOW_STR}_{wandb.run.name}")
+            _dir = Path(f"data/output/{wandb.run.name}")
             _dir.mkdir(exist_ok=True)
-            nib.save(nib.Nifti1Image(b_input[idx].argmax(0).int().detach().cpu().numpy(), affine=np.eye(4)), _dir.joinpath(f"input_epx_{epx}.nii.gz"))
+            if 'hybrid' in config.model_type:
+                num_classes = len(label_tags)
+                save_input = b_input[idx].chunk(2,dim=0)
+                save_input = torch.cat([slc.argmax(0, keepdim=True) for slc in save_input], dim=0)
+            else:
+                save_input = b_input[idx].argmax(0)
+            nib.save(nib.Nifti1Image(
+                save_input.int().detach().cpu().numpy(),
+                affine=np.eye(4)), _dir.joinpath(f"input_epx_{epx}.nii.gz"))
 
     return y_hat, b_target, loss
 
@@ -911,12 +919,14 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
             THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=chk_path, load_model_only=False,
             encoder_training_only=config.encoder_training_only)
 
+        sa_atm_override = stage['sa_atm'] if stage is not None and 'sa_atm' in stage else None
+        hla_atm_override = stage['hla_atm'] if stage is not None and 'hla_atm' in stage else None
         (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer = get_transform_model(
             config, len(training_dataset.label_tags), THIS_SCRIPT_DIR, _path=chk_path,
-            sa_atm_override=stage['sa_atm'], hla_atm_override=stage['hla_atm'])
+            sa_atm_override=sa_atm_override, hla_atm_override=hla_atm_override)
 
         all_optimizers = dict(optimizer=optimizer, transform_optimizer=transform_optimizer)
-
+        r_params = stage['r_params'] if stage is not None and 'r_params' in stage else None
         # all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
 
         # for bn_counts in training_dataset.bincounts_3d.values():
@@ -939,8 +949,11 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
 
             if not run_test_once_only:
                 train_loss, mean_transform_dict = epoch_iter(
-                    epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, training_dataset, train_dataloader, class_weights, fold_postfix,
-                    phase='train', autocast_enabled=autocast_enabled, all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None, r_params=stage['r_params'])
+                    epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
+                    training_dataset, train_dataloader, class_weights, fold_postfix,
+                    phase='train', autocast_enabled=autocast_enabled,
+                    all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None,
+                    r_params=r_params)
 
                 if stage:
                     stage.update(mean_transform_dict)
@@ -968,7 +981,7 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
             elif config.save_every == 'best':
                 if quality_metric < best_quality_metric:
                     best_quality_metric = quality_metric
-                    save_path = f"{config.mdl_save_prefix}/{NOW_STR}_{wandb.run.name}_{fold_postfix}_best"
+                    save_path = f"{config.mdl_save_prefix}/{wandb.run.name}_{fold_postfix}_best"
                     save_model(
                         Path(THIS_SCRIPT_DIR, save_path),
                         epx=epx,
@@ -984,7 +997,7 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
                         scaler=scaler)
 
             elif (epx % config.save_every == 0) or (epx+1 == config.epochs):
-                save_path = f"{config.mdl_save_prefix}/{NOW_STR}_{wandb.run.name}_{fold_postfix}_epx{epx}"
+                save_path = f"{config.mdl_save_prefix}/{wandb.run.name}_{fold_postfix}_epx{epx}"
                 save_model(
                     Path(THIS_SCRIPT_DIR, save_path),
                     epx=epx,
@@ -1079,12 +1092,11 @@ def normal_run():
             config=config_dict, settings=wandb.Settings(start_method="thread"),
             mode=config_dict['wandb_mode']
         ) as run:
-
-        run_name = run.name
-        print("Running", run_name)
+        run.name = f"{NOW_STR}_{run.name}"
+        print("Running", run.name)
         config = wandb.config
 
-        run_dl(run_name, config, training_dataset, test_dataset)
+        run_dl(run.name, config, training_dataset, test_dataset)
 
 
 
@@ -1108,7 +1120,7 @@ def stage_sweep_run(config_dict, all_stages):
             if stage_run_prefix is None:
                 stage_run_prefix = run.name
 
-            run.name = f"{stage_run_prefix}-stage-{stg_idx+1}"
+            run.name = f"{NOW_STR}_{stage_run_prefix}-stage-{stg_idx+1}"
             print("Running", run.name)
             config = wandb.config
 
@@ -1178,34 +1190,34 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             r_params=r_params,
             cuts_mode='sa',
-            epochs=35,
-            do_output=False,
+            epochs=1,
+            do_output=True,
             __activate_fn__=optimize_sa_angles
         ),
         Stage(
             sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-            do_output=False,
+            do_output=True,
             __activate_fn__=optimize_sa_angles
         ),
         Stage(
             sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-            do_output=False,
+            do_output=True,
             __activate_fn__=optimize_sa_offsets
         ),
         Stage(
             sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-            do_output=False,
+            do_output=True,
             __activate_fn__=optimize_sa_offsets
         ),
         Stage(
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa>hla',
-            do_output=False,
+            do_output=True,
             __activate_fn__=optimize_hla_angles
         ),
         Stage(
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-            do_output=False,
+            do_output=True,
             __activate_fn__=optimize_hla_angles
         ),
         Stage(

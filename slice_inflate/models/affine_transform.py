@@ -119,10 +119,16 @@ class AffineTransformModule(torch.nn.Module):
     def get_batch_affines(self, x):
         batch_size = x.shape[0]
         theta_ap, theta_tp = self.localisation_net(x.float())
-        device = theta_tp.device
-        # theta_ap[:,0] = 0.0 # [:,0] rotates in plane -> do not predict TODO check if readding this is necessary
+
+        theta_ap[:,0] = 0.0 # [:,0] rotates in plane -> do not predict TODO check if readding this is necessary
         theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict
         theta_tp[...] = 0.0 # TODO remove that
+
+        device = theta_ap.device
+
+        # Apply initial rotation
+        theta_ap = theta_ap + self.init_theta_ap.view(1,3).to(device)
+        theta_tp = theta_tp + self.init_theta_tp.view(1,3).to(device)
 
         if self.optim_method == 'angle-axis':
             theta_a = angle_axis_to_rotation_matrix(theta_ap.view(batch_size,3))
@@ -130,6 +136,7 @@ class AffineTransformModule(torch.nn.Module):
             theta_a = normal_to_rotation_matrix(theta_ap.view(batch_size,3))
         else:
             raise ValueError()
+
         theta_t = torch.cat([theta_tp, torch.ones(batch_size, device=device).view(batch_size,1)], dim=1)
         theta_t = torch.cat([
             torch.eye(4, device=device)[:4,:3].view(1,4,3).repeat(batch_size,1,1),
@@ -151,17 +158,17 @@ class AffineTransformModule(torch.nn.Module):
         device = x_label.device if not x_label_is_none else x_image.device
         B = x_label.shape[0] if not x_label_is_none else x_image.shape[0]
 
-        theta_ai = self.get_init_affine().to(device=device)
+        # theta_ai = self.get_init_affine().to(device=device)
 
         if theta_override is not None:
             theta = theta_override.detach() # Caution: this is a non-differentiable theta
         else:
             if self.with_batch_theta:
-                theta_ab, theta_tb = self.get_batch_affines(x_image)
-                theta_a = (theta_ab @ theta_ai) # Multiplying here with (2 ang) @ (2 ang) results in (3 angle output) TODO
-                theta_t = theta_tb
+                theta_a, theta_t = self.get_batch_affines(x_image)
+                # theta_a = (theta_ab @ theta_ai) # Multiplying here with (2 ang) @ (2 ang) results in (3 angle output) TODO
+                # theta_t = theta_tb
             else:
-                theta_a = theta_ai
+                theta_a = self.get_init_affine().to(device=device)
                 theta_t = torch.eye(4, device=device).view(1,4,4).repeat(B,1,1)
 
             theta = theta_a @ theta_t
