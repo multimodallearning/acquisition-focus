@@ -1213,6 +1213,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             do_output=True,
             cuts_mode='sa',
+            reconstruction_target='sa-oriented',
             epochs=config_dict['epochs'],
             soft_cut_std=-999,
             train_affine_theta=False,
@@ -1221,6 +1222,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
         Stage(
             sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             cuts_mode='sa',
+            reconstruction_target='from-dataloader',
             epochs=35,
             soft_cut_std=0.125,
             train_affine_theta=True,
@@ -1230,6 +1232,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
         Stage(
             do_output=True,
             cuts_mode='sa',
+            reconstruction_target='sa-oriented',
             epochs=config_dict['epochs'],
             soft_cut_std=-999,
             train_affine_theta=False,
@@ -1238,6 +1241,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
         Stage(
             sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             cuts_mode='sa',
+            reconstruction_target='from-dataloader',
             epochs=35,
             soft_cut_std=0.125,
             do_output=True,
@@ -1247,6 +1251,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
         Stage(
             do_output=True,
             cuts_mode='sa',
+            reconstruction_target='sa-oriented',
             epochs=config_dict['epochs'],
             soft_cut_std=-999,
             train_affine_theta=False,
