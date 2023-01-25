@@ -5,7 +5,7 @@ from slice_inflate.models.affine_transform import get_theta_params
 class StageIterator(collections.abc.Iterator):
     def __init__(self, stages, verbose=False):
         super().__init__()
-        self.stages = iter(stages)
+        self.stages = stages
         self.previous = None
         self.idx = -1
         self.len = len(stages)
@@ -13,9 +13,9 @@ class StageIterator(collections.abc.Iterator):
 
     def __next__(self):
         if self.previous is None:
-            self.previous = next(self.stages)
+            self.previous = self.stages.pop(0)
         else:
-            nxt = next(self.stages)
+            nxt = self.stages.pop(0)
             for key, value in self.previous.items():
                 if not key in nxt:
                     nxt[key] = value

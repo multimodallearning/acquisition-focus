@@ -1127,6 +1127,8 @@ def stage_sweep_run(config_dict, all_stages):
             run_dl(run.name, config, training_dataset, test_dataset, stage)
         wandb.finish()
         torch.cuda.empty_cache()
+        free, total = torch.cuda.mem_get_info(device=0)
+        print(f"CUDA memory used: {(total-free)/1024**3:.2f}/{total/1024**3:.2f} GB ({(total-free)/total*100:.2}%)")
 
 
 
