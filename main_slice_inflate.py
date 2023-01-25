@@ -1236,11 +1236,6 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             do_output=True,
             __activate_fn__=optimize_hla_offsets
         ),
-        Stage(
-            epochs=config_dict.epochs,
-            do_output=True,
-            __activate_fn__=finalize_training
-        ),
     ]
 
     # sa_angle_only_stages = [
