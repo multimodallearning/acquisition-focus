@@ -564,9 +564,9 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
         b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
 
     b_input = b_input.to(device=config.device)
-    b_label = b_label.to(device=config.device)
+    b_target = sa_label.to(device=config.device)
 
-    return b_input.float(), b_label, sa_affine
+    return b_input.float(), b_target, sa_affine
 
 
 
