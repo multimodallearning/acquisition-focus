@@ -76,7 +76,7 @@ class AffineTransformModule(torch.nn.Module):
     def __init__(self, input_channels,
         fov_mm, fov_vox, view_affine,
         init_theta_ap=None, init_theta_tp=None,
-        optim_method='angle-axis', with_batch_theta=True, tag=None):
+        optim_method='angle-axis', use_affine_theta=True, tag=None):
 
         super().__init__()
         assert optim_method in ['angle-axis', 'normal-vector'], \
@@ -88,7 +88,7 @@ class AffineTransformModule(torch.nn.Module):
         self.view_affine = view_affine.view(1,4,4)
         self.localisation_net = LocalisationNet(input_channels)
 
-        self.with_batch_theta = with_batch_theta
+        self.use_affine_theta = use_affine_theta
 
         self.set_init_theta_ap(init_theta_ap)
         self.set_init_theta_tp(init_theta_tp)
@@ -100,14 +100,14 @@ class AffineTransformModule(torch.nn.Module):
         self.tag = tag
 
     def set_init_theta_ap(self, init_theta_ap):
-        self.init_theta_ap = torch.zeros(3) if init_theta_ap is None else init_theta_ap
+        self.init_theta_ap = nn.Parameter(torch.zeros(3) if init_theta_ap is None else init_theta_ap)
 
     def set_init_theta_tp(self, init_theta_tp):
-        self.init_theta_tp = torch.zeros(3) if init_theta_tp is None else init_theta_tp
+        self.init_theta_tp = nn.Parameter(torch.zeros(3) if init_theta_tp is None else init_theta_tp)
 
     def get_init_affines(self):
-        theta_a = angle_axis_to_rotation_matrix(self.init_theta_ap.view(1,3))[0].view(1,4,4)
-        theta_t = torch.cat([self.init_theta_tp, torch.tensor([1])])
+        theta_a = angle_axis_to_rotation_matrix(self.init_theta_ap.detach().view(1,3))[0].view(1,4,4)
+        theta_t = torch.cat([self.init_theta_tp.detach(), torch.tensor([1])])
         theta_t = torch.cat([torch.eye(4)[:4,:3], theta_t.view(4,1)], dim=1).view(1,4,4)
 
         assert theta_a.shape == theta_t.shape == (1,4,4)
@@ -163,7 +163,7 @@ class AffineTransformModule(torch.nn.Module):
         if theta_override is not None:
             theta = theta_override.detach() # Caution: this is a non-differentiable theta
         else:
-            if self.with_batch_theta:
+            if self.use_affine_theta:
                 theta_a, theta_t = self.get_batch_affines(x_image) # Initial parameters are applied here as well
             else:
                 theta_a, theta_t = self.get_init_affines()

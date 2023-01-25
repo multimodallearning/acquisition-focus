@@ -324,8 +324,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
     hla_cut_module.to(device)
 
 
-    if _path and _path.is_dir():
-        model_dict = torch.load(_path.joinpath('model.pth'), map_location=device)
+    if _path and Path(_path).is_dir():
+        model_dict = torch.load(Path(_path).joinpath('model.pth'), map_location=device)
         epx = model_dict.get('metadata', {}).get('epx', 0)
         print(f"Loading model from {_path}")
         print(model.load_state_dict(model_dict, strict=False))
@@ -350,11 +350,11 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
         optimizer, mode='min', patience=20, threshold=0.01, threshold_mode='rel')
 
 
-    if _path and _path.is_dir() and not load_model_only:
+    if _path and Path(_path).is_dir() and not load_model_only:
         print(f"Loading optimizer, scheduler, scaler from {_path}")
-        optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
-        scheduler.load_state_dict(torch.load(_path.joinpath('scheduler.pth'), map_location=device))
-        scaler.load_state_dict(torch.load(_path.joinpath('scaler.pth'), map_location=device))
+        optimizer.load_state_dict(torch.load(Path(_path).joinpath('optimizer.pth'), map_location=device))
+        scheduler.load_state_dict(torch.load(Path(_path).joinpath('scheduler.pth'), map_location=device))
+        scaler.load_state_dict(torch.load(Path(_path).joinpath('scaler.pth'), map_location=device))
 
     else:
         print(f"Generated fresh optimizer, scheduler, scaler.")
@@ -394,9 +394,8 @@ def get_atm(config, num_classes, view, this_script_dir, _path=None):
         view_affine=torch.as_tensor(np.loadtxt(affine_path)).float(),
         optim_method=config.affine_theta_optim_method, tag=view)
 
-    if _path and _path.is_dir():
-
-        atm_dict = torch.load(_path.joinpath(f'{view}_atm.pth'), map_location=device)
+    if _path and Path(_path).is_dir():
+        atm_dict = torch.load(Path(_path).joinpath(f'{view}_atm.pth'), map_location=device)
         print(f"Loading {view} atm from {_path}")
         print(atm.load_state_dict(sa_atm_dict, strict=False))
 
@@ -448,14 +447,16 @@ def get_transform_model(config, num_classes, this_script_dir, _path=None, sa_atm
     else:
         raise ValueError()
 
+    assert config.train_affine_theta and (not config.use_affine_theta)
+
     if config.train_affine_theta:
         transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=0.001)
     else:
         transform_optimizer = NoneOptimizer()
 
-    if _path and _path.is_dir() and not load_model_only:
+    if _path and Path(_path).is_dir() and not load_model_only:
         print(f"Loading transform optimizer from {_path}")
-        transform_optimizer.load_state_dict(torch.load(_path.joinpath('transform_optimizer.pth'), map_location=device))
+        transform_optimizer.load_state_dict(torch.load(Path(_path).joinpath('transform_optimizer.pth'), map_location=device))
 
     else:
         print(f"Generated fresh transform optimizer.")
@@ -522,8 +523,8 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
                         'B D H W OH -> B OH D H W')
     B,NUM_CLASSES,D,H,W = b_label.shape
 
-    sa_atm.with_batch_theta = config.train_affine_theta
-    hla_atm.with_batch_theta = config.train_affine_theta
+    sa_atm.use_affine_theta = config.use_affine_theta
+    hla_atm.use_affine_theta = config.use_affine_theta
 
     sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
         get_transformed(
@@ -912,17 +913,20 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
         )
 
         # Load from checkpoint, if any
-        chk_path = config.checkpoint_path if 'checkpoint_path' in config else None
+        mdl_chk_path = config.checkpoint_path if 'checkpoint_path' in config else None
 
         (model, optimizer, scheduler, scaler), epx_start = get_model(
             config, len(training_dataset), len(training_dataset.label_tags),
-            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=chk_path, load_model_only=False,
+            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=mdl_chk_path, load_model_only=False,
             encoder_training_only=config.encoder_training_only)
 
+        # Load transformation model from checkpoint, if any
+        transform_mdl_chk_path = config.transform_model_checkpoint_path if 'transform_model_checkpoint_path' in config else None
         sa_atm_override = stage['sa_atm'] if stage is not None and 'sa_atm' in stage else None
         hla_atm_override = stage['hla_atm'] if stage is not None and 'hla_atm' in stage else None
+
         (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer = get_transform_model(
-            config, len(training_dataset.label_tags), THIS_SCRIPT_DIR, _path=chk_path,
+            config, len(training_dataset.label_tags), THIS_SCRIPT_DIR, _path=transform_mdl_chk_path,
             sa_atm_override=sa_atm_override, hla_atm_override=hla_atm_override)
 
         all_optimizers = dict(optimizer=optimizer, transform_optimizer=transform_optimizer)
@@ -1231,6 +1235,11 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             do_output=True,
             __activate_fn__=optimize_hla_offsets
+        ),
+        Stage(
+            epochs=config_dict.epochs,
+            do_output=True,
+            __activate_fn__=finalize_training
         ),
     ]
 
