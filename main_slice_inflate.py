@@ -1208,9 +1208,18 @@ elif config_dict['sweep_type'] == 'stage_sweep':
 
     std_stages = [
         Stage(
+            r_params=r_params,
             sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-            r_params=r_params,
+            do_output=True,
+            cuts_mode='sa',
+            epochs=config_dict['epochs'],
+            soft_cut_std=-999,
+            train_affine_theta=False,
+            __activate_fn__=deactivate_r_params
+        ),
+        Stage(
+            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             cuts_mode='sa',
             epochs=35,
             soft_cut_std=0.125,
