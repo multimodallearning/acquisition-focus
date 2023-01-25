@@ -76,20 +76,44 @@ def init_regularization_params(name_list, target_val=0.0, lambda_r=0.0, active=F
 
 
 
-def get_atm_angle_closure(atm):
+def get_atm_angle_closure(atm, idx_selector='all'):
+    assert idx_selector in [0,1,2,'all']
+    if idx_selector == 0:
+        idx_start, idx_end = 0, 1
+    if idx_selector == 1:
+        idx_start, idx_end = 1, 2
+    elif idx_selector == 2:
+        idx_start, idx_end = 2, 3
+    elif idx_selector == 'all':
+        idx_start, idx_end = 0, 3
+    else:
+        raise ValueError
+
     def closure(target_val):
-        theta_ap = get_theta_params(atm.last_theta_a)[0]
-        return ((theta_ap-target_val.to(theta_ap))**2).sum()
+        theta_ap = get_theta_params(atm.last_theta_a)[0][:,idx_start:idx_end]
+        return ((theta_ap-target_val[idx_start:idx_end].to(theta_ap))**2).sum()
     return closure
 
 
 
-def get_atm_angle_std_closure(atm):
+def get_atm_angle_std_closure(atm, idx_selector='all'):
+    assert idx_selector in [0,1,2,'all']
+    if idx_selector == 0:
+        idx_start, idx_end = 0, 1
+    if idx_selector == 1:
+        idx_start, idx_end = 1, 2
+    elif idx_selector == 2:
+        idx_start, idx_end = 2, 3
+    elif idx_selector == 'all':
+        idx_start, idx_end = 0, 3
+    else:
+        raise ValueError
+
     def closure(target_val):
-        theta_ap = get_theta_params(atm.last_theta_a)[0]
+        theta_ap = get_theta_params(atm.last_theta_a)[0][:,idx_start:idx_end]
         std = theta_ap.std(0)
         std[std.isnan()] = 0.
-        return (std-target_val.to(theta_ap)).abs().sum()
+        return (std-target_val[idx_start:idx_end].to(theta_ap)).abs().sum()
     return closure
 
 
