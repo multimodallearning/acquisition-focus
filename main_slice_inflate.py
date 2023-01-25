@@ -447,7 +447,8 @@ def get_transform_model(config, num_classes, this_script_dir, _path=None, sa_atm
     else:
         raise ValueError()
 
-    assert config.train_affine_theta and (not config.use_affine_theta)
+    if config.train_affine_theta:
+        assert config.use_affine_theta
 
     if config.train_affine_theta:
         transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=0.001)
