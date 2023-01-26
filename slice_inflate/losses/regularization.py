@@ -15,6 +15,7 @@ class StageIterator(collections.abc.Iterator):
         if self.previous is None:
             self.previous = self.stages.pop(0)
         else:
+            if not self.stages: return # Return from generator if list is empty
             nxt = self.stages.pop(0)
             for key, value in self.previous.items():
                 if not key in nxt:
