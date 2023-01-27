@@ -40,7 +40,7 @@
     "save_every": "best",
     "mdl_save_prefix": "data/models",
     "debug": false,
-    "wandb_mode": "disabled",
+    "wandb_mode": "online",
     "sweep_type": null,
     "model_checkpoint_path": null,
     "transform_model_checkpoint_path": null,
