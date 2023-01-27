@@ -21,6 +21,7 @@ import json
 import dill
 import einops as eo
 from datetime import datetime
+from git import Repo
 
 os.environ['MMWHS_CACHE_PATH'] = str(Path('.', '.cache'))
 
@@ -59,6 +60,7 @@ from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_
 
 NOW_STR = datetime.now().strftime("%Y%d%m__%H_%M_%S")
 THIS_SCRIPT_DIR = get_script_dir()
+THIS_REPO = Repo(THIS_SCRIPT_DIR)
 PROJECT_NAME = "slice_inflate"
 
 training_dataset, test_dataset = None, None
@@ -67,6 +69,10 @@ test_all_parameters_updated = get_test_func_all_parameters_updated()
 
 with open(Path(THIS_SCRIPT_DIR, 'config_dict.json'), 'r') as f:
     config_dict = DotDict(json.load(f))
+
+# Log commmit id and dirtiness
+dirty_str = "!dirty-" if THIS_REPO.is_dirty() else ""
+config_dict['git_commit'] = f"{dirty_str}{THIS_REPO.commit().hexsha}"
 
 def prepare_data(config):
     training_dataset = MMWHSDataset(
