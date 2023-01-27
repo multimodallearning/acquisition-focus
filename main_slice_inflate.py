@@ -748,8 +748,8 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         pred_seg = y_hat.argmax(1)
 
         # Taken from nibabel nifti1.py
-        RZS = sa_atm.last_resampled_affine[0,:3,:3].detach().cpu().numpy()
-        nifti_zooms = np.sqrt(np.sum(RZS * RZS, axis=0))
+        rzs = sa_atm.last_resampled_affine[0,:3,:3]
+        nifti_zooms = (rzs[:3,:3]*rzs[:3,:3]).sum(1).sqrt().detach().cpu().numpy()
 
         # Calculate fast dice score
         b_dice = dice3d(
