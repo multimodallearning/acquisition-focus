@@ -10,7 +10,7 @@
     "modality": "all",
     "train_affine_theta": false,
     "use_affine_theta": true,
-    "reconstruction_target": "sa",
+    "reconstruction_target": "sa-oriented",
     "affine_theta_optim_method": "normal-vector",
     "soft_cut_std": -999,
     "cuts_mode": "sa",
