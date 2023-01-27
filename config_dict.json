@@ -43,7 +43,7 @@
     "wandb_mode": "online",
     "sweep_type": null,
     "model_checkpoint_path": null,
-    "transform_model_checkpoint_path": "/shared/slice_inflate/data/output/20232701__14_53_30_abundant-festival-525__best",
+    "transform_model_checkpoint_path": "/shared/slice_inflate/data/models/20232701__14_53_30_abundant-festival-525__best",
     "do_output": true,
     "device": "cuda",
     "use_autocast": true,
