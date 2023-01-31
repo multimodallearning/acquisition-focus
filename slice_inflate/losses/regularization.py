@@ -15,7 +15,7 @@ class StageIterator(collections.abc.Iterator):
         if self.previous is None:
             self.previous = self.stages.pop(0)
         else:
-            if not self.stages: return # Return from generator if list is empty
+            if not self.stages: raise StopIteration()
             nxt = self.stages.pop(0)
             for key, value in self.previous.items():
                 if not key in nxt:
@@ -190,11 +190,15 @@ def optimize_sa_offsets(stage):
 
     r_params = stage['r_params']
     r_params['sa_angles'].active = True
-    r_params['sa_angles'].target_val = stage['epoch_sa_angles_mean']
+    if 'epoch_sa_angles_mean' in stage:
+        r_params['sa_angles'].target_val = stage['epoch_sa_angles_mean']
+    else:
+        r_params['sa_angles'].target_val = torch.zeros(3)
+
     r_params['sa_angles'].lambda_r = 0.2
-    r_params['sa_offsets'].active = False
+    r_params['sa_offsets'].active = True
     r_params['sa_offsets'].target_val = torch.zeros(3)
-    r_params['sa_offsets'].lambda_r = 0.1
+    r_params['sa_offsets'].lambda_r = 0.05
 
     hla_atm = stage['hla_atm']
     sa_atm = stage['sa_atm']

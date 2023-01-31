@@ -124,11 +124,12 @@ class AffineTransformModule(torch.nn.Module):
         theta_ap = theta_ap + self.init_theta_ap.view(1,3).to(device)
         theta_tp = theta_tp + self.init_theta_tp.view(1,3).to(device)
 
-        # theta_ap[:,0] = 0.0 # [:,0] rotates in plane -> do not predict TODO check if readding this is necessary
-        # theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict
+        if self.optim_method == 'angle-axis':
+            theta_ap[:,0] = 0.0 # [:,0] rotates in plane
+        theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict only this
 
         # theta_ap[:,1] = 0.0 # TODO remove that
-        theta_tp[...] = 0.0 # TODO remove that
+        # theta_tp[...] = 0.0 # TODO remove that
 
         if self.optim_method == 'angle-axis':
             theta_a = angle_axis_to_rotation_matrix(theta_ap.view(batch_size,3))

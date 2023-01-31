@@ -748,8 +748,8 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                     dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
 
         epx_losses.append(loss.item())
-        epx_sa_thetas.append(sa_atm.last_theta_a)
-        epx_hla_thetas.append(hla_atm.last_theta_a)
+        epx_sa_thetas.append(sa_atm.last_theta)
+        epx_hla_thetas.append(hla_atm.last_theta)
 
         pred_seg = y_hat.argmax(1)
 
@@ -826,8 +826,8 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         print("Angles", "mean=", sa_angles_mean, "std=", sa_angles_std)
         print("Offsets", "mean=", sa_offsets_mean, "std=", sa_offsets_std)
 
-        # wandb.log({f"orientations/{phase}_sa_angle_mean[0]": sa_angles_mean[0]}, step=global_idx)
-        # wandb.log({f"orientations/{phase}_sa_angle_std[0]": sa_angles_std[0]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_sa_angle_mean[0]": sa_angles_mean[0]}, step=global_idx)
+        wandb.log({f"orientations/{phase}_sa_angle_std[0]": sa_angles_std[0]}, step=global_idx)
         wandb.log({f"orientations/{phase}_sa_angle_mean[1]": sa_angles_mean[1]}, step=global_idx)
         wandb.log({f"orientations/{phase}_sa_angle_std[1]": sa_angles_std[1]}, step=global_idx)
         wandb.log({f"orientations/{phase}_sa_angle_mean[2]": sa_angles_mean[2]}, step=global_idx)
@@ -1313,7 +1313,66 @@ elif config_dict['sweep_type'] == 'stage_sweep':
     #     ),
     # ]
 
-    selected_stages = std_stages
+    sa_offset_only_stages = [
+        Stage(
+            r_params=r_params,
+            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+            do_output=True,
+            cuts_mode='sa',
+            reconstruction_target='from-dataloader',
+            epochs=40,
+            soft_cut_std=-999,
+            train_affine_theta=True,
+            __activate_fn__=optimize_sa_offsets
+        ),
+        Stage(
+            do_output=True,
+            cuts_mode='sa',
+            reconstruction_target='sa-oriented',
+            epochs=config_dict['epochs'],
+            soft_cut_std=-999,
+            train_affine_theta=False,
+            __activate_fn__=deactivate_r_params
+        ),
+    ]
+
+    sa_angle_offset_stages = [
+        Stage(
+            r_params=r_params,
+            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+            cuts_mode='sa',
+            reconstruction_target='from-dataloader',
+            epochs=50,
+            soft_cut_std=-999,
+            train_affine_theta=True,
+            do_output=True,
+            __activate_fn__=optimize_sa_angles
+        ),
+        Stage(
+            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+            do_output=True,
+            cuts_mode='sa',
+            reconstruction_target='from-dataloader',
+            epochs=50,
+            soft_cut_std=-999,
+            train_affine_theta=True,
+            __activate_fn__=optimize_sa_offsets
+        ),
+        Stage(
+            do_output=True,
+            cuts_mode='sa',
+            reconstruction_target='sa-oriented',
+            epochs=config_dict['epochs'],
+            soft_cut_std=-999,
+            train_affine_theta=False,
+            __activate_fn__=deactivate_r_params
+        ),
+    ]
+
+    selected_stages = sa_angle_offset_stages
     stage_sweep_run(config_dict, StageIterator(selected_stages, verbose=True))
 
 else:
