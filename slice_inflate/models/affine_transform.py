@@ -5,7 +5,7 @@ import torch.cuda.amp as amp
 import numpy as np
 import einops as eo
 from slice_inflate.datasets.align_mmwhs import nifti_transform
-from slice_inflate.utils.torch_utils import get_rotation_matrix_3d_from_angles
+from slice_inflate.utils.torch_utils import get_rotation_matrix_3d_from_angles, calc_dist_map
 
 import dill
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
@@ -76,7 +76,7 @@ class AffineTransformModule(torch.nn.Module):
     def __init__(self, input_channels,
         fov_mm, fov_vox, view_affine,
         init_theta_ap=None, init_theta_tp=None,
-        optim_method='angle-axis', use_affine_theta=True, tag=None):
+        optim_method='angle-axis', use_affine_theta=True, use_distance_map_localization=False, tag=None):
 
         super().__init__()
         assert optim_method in ['angle-axis', 'normal-vector'], \
@@ -93,6 +93,7 @@ class AffineTransformModule(torch.nn.Module):
         self.init_theta_ap = torch.nn.Parameter(torch.zeros(3), requires_grad=False)
         self.init_theta_tp = torch.nn.Parameter(torch.zeros(3), requires_grad=False)
 
+        self.use_distance_map_localization = use_distance_map_localization
         self.last_theta = None
         self.last_theta_a = None
         self.last_theta_t = None
@@ -117,6 +118,13 @@ class AffineTransformModule(torch.nn.Module):
 
     def get_batch_affines(self, x):
         batch_size = x.shape[0]
+
+        if self.use_distance_map_localization:
+            x = eo.rearrange(x, 'B C D H W -> (B C) D H W')
+            for idx, elem in enumerate(x):
+                x[idx] = calc_dist_map(elem.bool())
+            x = eo.rearrange(x, '(B C) D H W -> B C D H W')
+
         theta_ap, theta_tp = self.localisation_net(x.float())
         device = theta_ap.device
 

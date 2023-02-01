@@ -488,8 +488,8 @@ def get_transformed(label, nifti_affine, augment_affine, atm, cut_module,
         image = torch.zeros(B,1,D,H,W, device=label.device)
 
     # Transform  label with 'bilinear' interpolation to have gradients
-    label = label.float() # TODO Check, can this be removed?
-    label.requires_grad = True # TODO Check, can this be removed?
+    # label = label.float() # TODO Check, can this be removed?
+    # label.requires_grad = True # TODO Check, can this be removed?
     soft_label, _, _ = atm(label.view(B, num_classes, D, H, W), label.view(B, num_classes, D, H, W),
                             nifti_affine, augment_affine)
 
