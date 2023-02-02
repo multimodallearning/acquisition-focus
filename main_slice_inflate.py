@@ -589,8 +589,6 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     b_input = b_input.to(device=config.device)
     b_target = b_target.to(device=config.device)
 
-    b_target = b_label.to(device=config.device)
-
     return b_input.float(), b_target, sa_affine
 
 
