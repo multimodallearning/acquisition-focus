@@ -1294,32 +1294,28 @@ elif config_dict['sweep_type'] == 'stage_sweep':
         # ),
     ]
 
-    # sa_angle_only_stages = [
-    #     Stage(
-    #         sa_atm=AffineTransformModule(),
-    #         hla_atm=AffineTransformModule(),
-    #         r_params=r_params,
-    #         cuts_mode='sa',
-    #         epx=EPX//4,
-    #         do_output=True,
-    #         __activate_fn__=optimize_sa_angles
-    #     ),
-    #     Stage(
-    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-    #         do_output=True,
-    #         __activate_fn__=optimize_sa_angles
-    #     ),
-    #     Stage(
-    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-    #         do_output=True,
-    #         __activate_fn__=optimize_sa_angles
-    #     ),
-    #     Stage(
-    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-    #         do_output=True,
-    #         __activate_fn__=optimize_sa_angles
-    #     ),
-    # ]
+    sa_angle_only_stages = [
+        Stage(
+            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+            cuts_mode='sa',
+            reconstruction_target='from-dataloader',
+            epochs=40,
+            soft_cut_std=0.125,
+            train_affine_theta=True,
+            do_output=True,
+            __activate_fn__=optimize_sa_angles
+        ),
+        Stage(
+            do_output=True,
+            cuts_mode='sa',
+            reconstruction_target='sa-oriented',
+            epochs=config_dict['epochs'],
+            soft_cut_std=-999,
+            train_affine_theta=False,
+            __activate_fn__=deactivate_r_params
+        ),
+    ]
 
     sa_offset_only_stages = [
         Stage(
@@ -1380,7 +1376,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
         ),
     ]
 
-    selected_stages = sa_angle_offset_stages
+    selected_stages = sa_angle_only_stages
     stage_sweep_run(config_dict, StageIterator(selected_stages, verbose=True))
 
 else:
