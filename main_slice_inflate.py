@@ -58,7 +58,7 @@ from slice_inflate.models.affine_transform import AffineTransformModule, get_ran
 from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
 from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params, deactivate_r_params, Stage, StageIterator
 
-NOW_STR = datetime.now().strftime("%Y%d%m__%H_%M_%S")
+NOW_STR = datetime.now().strftime("%Y%m%d__%H_%M_%S")
 THIS_SCRIPT_DIR = get_script_dir()
 THIS_REPO = Repo(THIS_SCRIPT_DIR)
 PROJECT_NAME = "slice_inflate"
@@ -674,12 +674,17 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
             idx = batch['id'].index('1010-mr')
             _dir = Path(f"data/output/{wandb.run.name}")
             _dir.mkdir(exist_ok=True)
+            if config.use_distance_map_localization:
+                save_input =  (b_input[idx] < 0.5).float()
+            else:
+                save_input =  b_input[idx]
+
             if 'hybrid' in config.model_type:
                 num_classes = len(label_tags)
-                save_input = b_input[idx].chunk(2,dim=0)
+                save_input = save_input.chunk(2,dim=0)
                 save_input = torch.cat([slc.argmax(0, keepdim=True) for slc in save_input], dim=0)
             else:
-                save_input = b_input[idx].argmax(0)
+                save_input = save_input.argmax(0)
             nib.save(nib.Nifti1Image(
                 save_input.int().detach().cpu().numpy(),
                 affine=np.eye(4)), _dir.joinpath(f"input_epx_{epx}.nii.gz"))
@@ -1300,7 +1305,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             cuts_mode='sa',
             reconstruction_target='from-dataloader',
             epochs=40,
-            soft_cut_std=0.125,
+            soft_cut_std=-999,
             train_affine_theta=True,
             do_output=True,
             __activate_fn__=optimize_sa_angles

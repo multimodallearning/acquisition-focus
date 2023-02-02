@@ -435,7 +435,7 @@ def load_data(self_attributes: dict):
         if not IMAGE_ID in trailing_name:
             label_data_3d[_3d_id] = tmp.long()
             oh = torch.nn.functional.one_hot(tmp.long()).permute(3,0,1,2)
-            additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool()).squeeze(0)
+            additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool(), mode='outer').squeeze(0)
 
         else:
             if self.do_normalize:  # Normalize image to zero mean and unit std
