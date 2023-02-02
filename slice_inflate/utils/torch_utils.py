@@ -9,6 +9,7 @@ import functools
 import copy
 import contextlib
 from scipy.ndimage import distance_transform_edt as distance
+import einops as eo
 
 MOD_GET_FN = lambda self, key: self[int(key)] if isinstance(self, nn.Sequential) \
                                               else getattr(self, key)
@@ -567,17 +568,29 @@ def get_test_func_all_parameters_updated():
 
 
 
-def calc_dist_map(binary_seg):
-    assert binary_seg.dtype == torch.bool
+def calc_dist_map(onehot_seg, mode='signed'):
+    assert mode in ['inner', 'outer', 'signed', 'unsigned']
+    assert onehot_seg.dim() == 5
+    B,C,D,H,W = onehot_seg.shape
+    assert onehot_seg.dtype == torch.bool
+    onehot_seg = eo.rearrange(onehot_seg, 'B C D H W -> (B C) D H W')
     # see https://github.com/LIVIAETS/boundary-loss
-    res = torch.zeros_like(binary_seg)
-    posmask = binary_seg.numpy()
-
-    if posmask.any():
+    dm = torch.zeros_like(onehot_seg, dtype=torch.float)
+    for idx, chan in enumerate(onehot_seg):
+        posmask = chan.numpy()
         negmask = ~posmask
-        res = torch.as_tensor(distance(negmask) * negmask - (distance(posmask) - 1) * posmask)
+        if posmask.any():
+            if mode == 'inner':
+                dm[idx] = -torch.as_tensor(distance(posmask))
+            elif mode == 'outer':
+                dm[idx] = torch.as_tensor(distance(negmask))
+            elif mode == 'signed':
+                dm[idx] = torch.as_tensor(distance(negmask) * negmask - (distance(posmask) - 1) * posmask)
+            elif mode == 'unsigned':
+                dm[idx] = torch.as_tensor(distance(negmask) * negmask + (distance(posmask) - 1) * posmask)
 
-    return res
+    dm = dm.view(B,C,D,H,W)
+    return dm
 
 
 def get_seg_boundary(binary_seg):
