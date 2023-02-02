@@ -1296,6 +1296,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
 
     sa_angle_only_stages = [
         Stage(
+            r_params=r_params,
             sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa',
