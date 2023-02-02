@@ -10,6 +10,7 @@
     "modality": "all",
     "train_affine_theta": false,
     "use_affine_theta": true,
+    "use_distance_map_localization": true,
     "reconstruction_target": "from-dataloader",
     "affine_theta_optim_method": "normal-vector",
     "soft_cut_std": -999,
