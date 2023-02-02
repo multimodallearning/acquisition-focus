@@ -22,8 +22,12 @@ import dill
 import einops as eo
 from datetime import datetime
 from git import Repo
+import joblib
 
-os.environ['MMWHS_CACHE_PATH'] = str(Path('.', '.cache'))
+from slice_inflate.utils.common_utils import get_script_dir
+THIS_SCRIPT_DIR = get_script_dir()
+
+os.environ['MMWHS_CACHE_PATH'] = str(Path(THIS_SCRIPT_DIR, '.cache'))
 
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
 os.environ.update(get_vars('*'))
@@ -49,7 +53,7 @@ from mdl_seg_class.metrics import dice3d, hausdorff3d
 
 from slice_inflate.losses.dice_loss import DC_and_CE_loss
 from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset, load_data, extract_2d_data
-from slice_inflate.utils.common_utils import DotDict, get_script_dir, in_notebook
+from slice_inflate.utils.common_utils import DotDict, in_notebook
 from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
     get_batch_dice_over_all, get_batch_score_per_label, save_model, \
     reduce_label_scores_epoch, get_test_func_all_parameters_updated, anomaly_hook
@@ -59,7 +63,6 @@ from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
 from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params, deactivate_r_params, Stage, StageIterator
 
 NOW_STR = datetime.now().strftime("%Y%m%d__%H_%M_%S")
-THIS_SCRIPT_DIR = get_script_dir()
 THIS_REPO = Repo(THIS_SCRIPT_DIR)
 PROJECT_NAME = "slice_inflate"
 
@@ -75,8 +78,8 @@ dirty_str = "!dirty-" if THIS_REPO.is_dirty() else ""
 config_dict['git_commit'] = f"{dirty_str}{THIS_REPO.commit().hexsha}"
 
 def prepare_data(config):
-    training_dataset = MMWHSDataset(
-        config.data_base_path,
+    args = [config.data_base_path]
+    kwargs = dict(
         state=config.state,
         load_func=load_data,
         extract_slice_func=extract_2d_data,
@@ -94,12 +97,24 @@ def prepare_data(config):
         max_load_3d_num=config.max_load_3d_num,
         soft_cut_std=config.soft_cut_std,
         augment_angle_std=5,
-
         device=config.device,
         debug=config.debug
     )
 
-    return training_dataset
+    arghash = joblib.hash(joblib.hash(args)+joblib.hash(kwargs))
+    cache_path = Path(os.environ['MMWHS_CACHE_PATH'], arghash, 'dataset.dil')
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if cache_path.is_file():
+        print("Loading dataset from cache:", cache_path)
+        with open(cache_path, 'rb') as file:
+            dataset = dill.load(file)
+    else:
+        dataset = MMWHSDataset(*args, **kwargs)
+        with open(cache_path, 'wb') as file:
+            dill.dump(dataset, file)
+
+    return dataset
 
 
 # %%

@@ -219,7 +219,7 @@ class MMWHSDataset(HybridIdDataset):
         return collate_closure
 
 
-# @cache.cache(verbose=True)
+
 def extract_2d_data(self_attributes: dict):
 
     # Use only specific attributes of a dict to have a cacheable function
@@ -312,7 +312,7 @@ def extract_2d_data(self_attributes: dict):
     )
 
 
-# @cache.cache(verbose=True)
+
 def load_data(self_attributes: dict):
     # Use only specific attributes of a dict to have a cacheable function
     self = DotDict(self_attributes)

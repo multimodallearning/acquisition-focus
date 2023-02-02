@@ -2,6 +2,7 @@
 **/__pycache__/**
 wandb/**
 *.so*
+.cache/**/*
 
 data/models
 data/MMWHS/*
