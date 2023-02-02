@@ -1317,6 +1317,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             epochs=config_dict['epochs'],
             soft_cut_std=-999,
             train_affine_theta=False,
+            use_distance_map_localization=False,
             __activate_fn__=deactivate_r_params
         ),
     ]
