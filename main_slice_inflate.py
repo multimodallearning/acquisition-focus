@@ -504,7 +504,7 @@ def get_transformed(label, soft_label, nifti_affine, augment_affine, atm, cut_mo
         _, soft_label, _ = crop_around_label_center(
             label, _3d_vox_size, soft_label)
 
-    label_slc = cut_module(label)
+    label_slc = cut_module(soft_label)
     image_slc = HardCutModule()(image)
 
     if crop_around_2d_label_center is not None:
