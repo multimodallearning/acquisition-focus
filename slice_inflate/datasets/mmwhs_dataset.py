@@ -14,7 +14,7 @@ import einops as eo
 from torch.utils.checkpoint import checkpoint
 
 from slice_inflate.utils.common_utils import DotDict, get_script_dir
-from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, get_rotation_matrix_3d_from_angles
+from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, get_rotation_matrix_3d_from_angles, calc_dist_map
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
 from slice_inflate.datasets.align_mmwhs import crop_around_label_center, cut_slice, soft_cut_slice
 
@@ -131,6 +131,8 @@ class MMWHSDataset(HybridIdDataset):
             additional_data['augment_affine'] = augment_affine.view(4, 4)
 
             D, H, W = label.shape
+
+        additional_data['label_distance_map'] = additional_data['label_distance_map'].to(device=self.device)
 
         return dict(
             dataset_idx=dataset_idx,
@@ -388,6 +390,8 @@ def load_data(self_attributes: dict):
     description = f"{len(img_paths)} images, {len(label_paths)} labels"
 
     for _3d_id, _file in tqdm(id_paths_to_load, desc=description):
+        additional_data_3d[_3d_id] = additional_data_3d.get(_3d_id, {})
+
         trailing_name = str(_file).split("/")[-1]
         is_label = not IMAGE_ID in trailing_name
         nib_tmp = nib.load(_file)
@@ -398,7 +402,7 @@ def load_data(self_attributes: dict):
         augment_affine = torch.from_numpy(np.loadtxt(align_affine_path))
         affine = torch.as_tensor(nib_tmp.affine)
 
-        additional_data_3d[_3d_id] = dict(nifti_affine=affine)
+        additional_data_3d[_3d_id]['nifti_affine'] = affine
 
         if is_label:
             resample_mode = 'nearest'
@@ -430,6 +434,8 @@ def load_data(self_attributes: dict):
 
         if not IMAGE_ID in trailing_name:
             label_data_3d[_3d_id] = tmp.long()
+            oh = torch.nn.functional.one_hot(tmp.long()).permute(3,0,1,2)
+            additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool()).squeeze(0)
 
         else:
             if self.do_normalize:  # Normalize image to zero mean and unit std

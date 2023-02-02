@@ -477,7 +477,7 @@ def get_transform_model(config, num_classes, this_script_dir, _path=None, sa_atm
 
 
 # %%
-def get_transformed(label, nifti_affine, augment_affine, atm, cut_module,
+def get_transformed(label, label_distance_map, nifti_affine, augment_affine, atm, cut_module,
     crop_around_3d_label_center, crop_around_2d_label_center, image=None):
 
     img_is_invalid = image is None or image.dim() == 0
@@ -490,7 +490,7 @@ def get_transformed(label, nifti_affine, augment_affine, atm, cut_module,
     # Transform  label with 'bilinear' interpolation to have gradients
     # label = label.float() # TODO Check, can this be removed?
     # label.requires_grad = True # TODO Check, can this be removed?
-    soft_label, _, _ = atm(label.view(B, num_classes, D, H, W), label.view(B, num_classes, D, H, W),
+    soft_label, _, _ = atm(label_distance_map.view(B, num_classes, D, H, W), None,
                             nifti_affine, augment_affine)
 
     image, label, affine = atm(image.view(B, 1, D, H, W), label.view(B, num_classes, D, H, W),
@@ -504,7 +504,7 @@ def get_transformed(label, nifti_affine, augment_affine, atm, cut_module,
         _, soft_label, _ = crop_around_label_center(
             label, _3d_vox_size, soft_label)
 
-    label_slc = cut_module(soft_label)
+    label_slc = cut_module(label)
     image_slc = HardCutModule()(image)
 
     if crop_around_2d_label_center is not None:
@@ -527,6 +527,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
 
     b_label = batch['label']
     b_image = batch['image']
+    b_label_distance_map = batch['additional_data']['label_distance_map']
     nifti_affine = batch['additional_data']['nifti_affine']
     augment_affine = batch['additional_data']['augment_affine']
 
@@ -540,6 +541,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
         get_transformed(
             b_label.view(B, NUM_CLASSES, D, H, W),
+            b_label_distance_map.view(B, NUM_CLASSES, D, H, W),
             nifti_affine, augment_affine,
             sa_atm, sa_cut_module,
             config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
@@ -548,6 +550,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
         get_transformed(
             b_label.view(B, NUM_CLASSES, D, H, W),
+            b_label_distance_map.view(B, NUM_CLASSES, D, H, W),
             nifti_affine, augment_affine,
             hla_atm, hla_cut_module,
             config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
