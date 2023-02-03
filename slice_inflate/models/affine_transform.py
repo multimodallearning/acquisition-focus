@@ -130,7 +130,7 @@ class AffineTransformModule(torch.nn.Module):
         theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict only this
 
         # theta_ap[:,1] = 0.0 # TODO remove that
-        # theta_tp[...] = 0.0 # TODO remove that
+        theta_tp[...] = 0.0 # TODO remove that
 
         if self.optim_method == 'angle-axis':
             theta_a = angle_axis_to_rotation_matrix(theta_ap.view(batch_size,3))
