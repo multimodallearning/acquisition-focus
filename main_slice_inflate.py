@@ -685,7 +685,7 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
         else:
             loss = get_ae_loss_value(y_hat, b_target.float(), class_weights)
 
-        if config.do_output and epx % 10 == 0 and '1010-mr' in batch['id']:
+        if (config.do_output and epx % 10 or epx+1 == config.epochs) == 0 and '1010-mr' in batch['id']:
             idx = batch['id'].index('1010-mr')
             _dir = Path(f"data/output/{wandb.run.name}")
             _dir.mkdir(exist_ok=True)
@@ -1438,7 +1438,6 @@ elif config_dict['sweep_type'] == 'stage_sweep':
         ),
         Stage(
             r_params=None,
-            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa>hla',
             reconstruction_target='from-dataloader',
