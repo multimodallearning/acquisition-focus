@@ -464,6 +464,8 @@ def get_transform_model(config, num_classes, this_script_dir, _path=None, sa_atm
 
     if config.cuts_mode == 'sa':
         transform_parameters = list(sa_atm.parameters())
+    elif config.cuts_mode == 'hla':
+        transform_parameters = list(hla_atm.parameters())
     elif config.cuts_mode == 'sa>hla':
         transform_parameters = list(hla_atm.parameters())
     elif config.cuts_mode == 'sa+hla':
@@ -578,6 +580,8 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
 
     if config.cuts_mode == 'sa':
         slices = [sa_label_slc, sa_label_slc]
+    elif config.cuts_mode == 'hla':
+        slices = [hla_label_slc, hla_label_slc]
     elif config.cuts_mode == 'sa>hla':
         slices = [sa_label_slc.detach(), hla_label_slc]
     elif config.cuts_mode == 'sa+hla':
@@ -1424,7 +1428,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
 
     all_params_stages = [
         Stage(
-            r_params=None,
+            r_params=r_params,
             sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa',
@@ -1434,10 +1438,9 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             use_distance_map_localization=True,
             train_affine_theta=True,
             do_output=True,
-            __activate_fn__=lambda stage: None
+            __activate_fn__=optimize_sa_angles
         ),
         Stage(
-            r_params=None,
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa>hla',
             reconstruction_target='from-dataloader',
@@ -1446,7 +1449,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             use_distance_map_localization=True,
             train_affine_theta=True,
             do_output=True,
-            __activate_fn__=lambda stage: None
+            __activate_fn__=optimize_hla_angles
         ),
         Stage(
             do_output=True,
@@ -1456,7 +1459,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             soft_cut_std=-999,
             train_affine_theta=False,
             use_distance_map_localization=False,
-            __activate_fn__=lambda stage: None
+            __activate_fn__=deactivate_r_params
         ),
     ]
 

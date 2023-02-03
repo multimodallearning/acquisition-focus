@@ -8,13 +8,13 @@
     "val_batch_size": 1,
     "do_augment": false,
     "modality": "all",
-    "train_affine_theta": true,
-    "use_affine_theta": true,
-    "use_distance_map_localization": true,
-    "reconstruction_target": "from-dataloader",
+    "train_affine_theta": false,
+    "use_affine_theta": false,
+    "use_distance_map_localization": false,
+    "reconstruction_target": "hla-oriented",
     "affine_theta_optim_method": "normal-vector",
     "soft_cut_std": -999,
-    "cuts_mode": "sa",
+    "cuts_mode": "hla",
     "use_2d_normal_to": null,
     "dataset": "mmwhs",
     "data_base_path": "./data/MMWHS",
@@ -42,12 +42,10 @@
     "mdl_save_prefix": "data/models",
     "debug": false,
     "wandb_mode": "online",
-    "sweep_type": "stage_sweep",
+    "sweep_type": null,
     "model_checkpoint_path": null,
     "transform_model_checkpoint_path": null,
     "do_output": true,
     "device": "cuda",
-    "use_autocast": true,
-
-    "fixed_slice_seed": 2
+    "use_autocast": true
 }
