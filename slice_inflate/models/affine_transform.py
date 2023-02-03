@@ -67,7 +67,7 @@ class LocalisationNet(torch.nn.Module):
         h = h.reshape(bsz, -1)
         theta_ap = self.fca(h)
         theta_tp = self.fct(h)
-        return theta_ap, 2.0*theta_tp.sigmoid()-1.0
+        return theta_ap, theta_tp
         # return theta_ap.atan(), 2.0*theta_tp.sigmoid()-1.0
 
 

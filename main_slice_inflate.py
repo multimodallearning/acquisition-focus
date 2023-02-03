@@ -685,7 +685,7 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
         else:
             loss = get_ae_loss_value(y_hat, b_target.float(), class_weights)
 
-        if (config.do_output and epx % 10 or epx+1 == config.epochs) == 0 and '1010-mr' in batch['id']:
+        if config.do_output and (epx % 10 == 0 or epx+1 == config.epochs)  and '1010-mr' in batch['id']:
             idx = batch['id'].index('1010-mr')
             _dir = Path(f"data/output/{wandb.run.name}")
             _dir.mkdir(exist_ok=True)
