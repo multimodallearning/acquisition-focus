@@ -1422,8 +1422,47 @@ elif config_dict['sweep_type'] == 'stage_sweep':
         ),
     ]
 
+    all_params_stages = [
+        Stage(
+            r_params=None,
+            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+            cuts_mode='sa',
+            reconstruction_target='from-dataloader',
+            epochs=40,
+            soft_cut_std=-999,
+            use_distance_map_localization=True,
+            train_affine_theta=True,
+            do_output=True,
+            __activate_fn__=lambda stage: None
+        ),
+        Stage(
+            r_params=None,
+            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+            cuts_mode='sa>hla',
+            reconstruction_target='from-dataloader',
+            epochs=40,
+            soft_cut_std=-999,
+            use_distance_map_localization=True,
+            train_affine_theta=True,
+            do_output=True,
+            __activate_fn__=lambda stage: None
+        ),
+        Stage(
+            do_output=True,
+            cuts_mode='sa+hla',
+            reconstruction_target='sa-oriented',
+            epochs=config_dict['epochs'],
+            soft_cut_std=-999,
+            train_affine_theta=False,
+            use_distance_map_localization=False,
+            __activate_fn__=lambda stage: None
+        ),
+    ]
 
-    selected_stages = sa_all_params_stages
+
+    selected_stages = all_params_stages
     stage_sweep_run(config_dict, StageIterator(selected_stages, verbose=True))
 
 else:
