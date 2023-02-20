@@ -141,19 +141,20 @@ class AffineTransformModule(torch.nn.Module):
         theta_ap = theta_ap + self.init_theta_ap.view(1,self.lspace).to(device)
         theta_tp = theta_tp + self.init_theta_tp.view(1,self.lspace).to(device)
 
-        if self.optim_method == 'angle-axis':
-            theta_ap[:,0] = 0.0 # [:,0] rotates in plane
-        theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict only this
-
-        # theta_ap[:,1] = 0.0 # TODO remove that
-        theta_tp[...] = 0.0 # TODO remove that
-
+        # Rotation matrix definition
         theta_ap = theta_ap.view(batch_size, self.lspace)
 
-        if self.optim_method == 'normal-vector':
+        if self.optim_method == 'angle-axis':
+            theta_ap[:,0] = 0.0 # [:,0] rotates in plane
+        elif self.optim_method == 'normal-vector':
             theta_ap = theta_ap/theta_ap.norm(dim=1).view(-1,1) # Normalize
-
+            
         theta_a = self.optim_function(theta_ap)
+
+        # Translation matrix definition
+        theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict only this
+        # theta_ap[:,1] = 0.0 # TODO remove that
+        theta_tp[...] = 0.0 # TODO remove that
 
         theta_t = torch.cat([theta_tp, torch.ones(batch_size, device=device).view(batch_size,1)], dim=1)
         theta_t = torch.cat([
