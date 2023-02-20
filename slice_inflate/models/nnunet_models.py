@@ -358,6 +358,9 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
 
             if not self.use_skip_connections:
                 n_features_after_tu_and_concat = n_features_after_tu_and_concat//2
+            elif self.use_skip_connections and self.is_hybrid:
+                n_features_after_tu_and_concat = n_features_after_tu_and_concat//2
+
             self.conv_blocks_localization.append(nn.Sequential(
                 StackedConvLayers(n_features_after_tu_and_concat, nfeatures_from_skip, num_conv_per_stage - 1,
                                   self.dec_conv_op, self.dec_conv_kwargs, self.dec_norm_op, self.dec_norm_op_kwargs, self.dec_dropout_op,
@@ -438,7 +441,14 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             x = self.tu[u](x)
             if self.use_skip_connections:
                 if self.encoder_mode == '2d' and self.decoder_mode == '3d':
-                    raise NotImplementedError()
+                    B,C,D,H,W = x.shape
+                    # skip = torch.zeros_like(x)
+                    # skip[...,W//2] = skips[-(u + 1)]
+                    # x_kspace = torch.fft.fftn(x, dim=(-3,-2,-1), s=(8,8,8))
+                    # skip_kspace = torch.fft.fftn(x, dim=(-3,-2,-1), s=(8,8,8))
+                    # x = torch.fft.ifftn(x_kspace+skip_kspace, dim=(-3,-2,-1), s=(8,8,8)).abs()
+                    x = x + skips[-(u + 1)].view(B,C,D,H,1)
+
                 else:
                     # Normal nnunet skip connections
                     x = torch.cat((x, skips[-(u + 1)]), dim=1)

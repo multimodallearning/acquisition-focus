@@ -272,7 +272,7 @@ def get_norms(model):
 def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, load_model_only=False, encoder_training_only=False):
 
     device = config.device
-    assert config.model_type in ['vae', 'ae', 'hybrid-ae', 'unet', 'unet-wo-skip', 'hybrid-unet-wo-skip']
+    assert config.model_type in ['vae', 'ae', 'hybrid-ae', 'unet', 'hybrid-unet', 'unet-wo-skip', 'hybrid-unet-wo-skip']
     if not _path is None:
         _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
@@ -670,7 +670,7 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
 
         if config.model_type == 'vae':
             y_hat, (z, mean, std) = model(b_input)
-        elif config.model_type in ['ae', 'unet', 'unet-wo-skip', 'hybrid-ae', 'hybrid-unet-wo-skip']:
+        elif config.model_type in ['ae', 'unet', 'hybrid-unet', 'unet-wo-skip', 'hybrid-ae', 'hybrid-unet-wo-skip']:
             y_hat, _ = model(b_input)
         else:
             raise ValueError
