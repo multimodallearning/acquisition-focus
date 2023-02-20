@@ -13,22 +13,22 @@ from slice_inflate.utils.common_utils import get_script_dir
 from pathlib import Path
 
 class ConvNet(torch.nn.Module):
-    def __init__(self, input_channels, kernel_size, inner_padding):
+    def __init__(self, input_channels, kernel_size, padding):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv3d(input_channels,32,kernel_size,padding=inner_padding), nn.BatchNorm3d(32), nn.LeakyReLU(),
+            nn.Conv3d(input_channels,32,kernel_size,padding=padding), nn.BatchNorm3d(32), nn.LeakyReLU(),
             nn.AvgPool3d(2),
-            nn.Conv3d(32,64,kernel_size,padding=inner_padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
-            nn.Conv3d(64,64,kernel_size,padding=inner_padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
+            nn.Conv3d(32,64,kernel_size,padding=padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
+            nn.Conv3d(64,64,kernel_size,padding=padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
             nn.AvgPool3d(2),
-            nn.Conv3d(64,64,kernel_size,padding=inner_padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
-            nn.Conv3d(64,64,kernel_size,padding=inner_padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
+            nn.Conv3d(64,64,kernel_size,padding=padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
+            nn.Conv3d(64,64,kernel_size,padding=padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
             nn.AvgPool3d(2),
-            nn.Conv3d(64,64,kernel_size,padding=inner_padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
-            nn.Conv3d(64,32,kernel_size,padding=inner_padding), nn.BatchNorm3d(32), nn.LeakyReLU(),
+            nn.Conv3d(64,64,kernel_size,padding=padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
+            nn.Conv3d(64,32,kernel_size,padding=padding), nn.BatchNorm3d(32), nn.LeakyReLU(),
             nn.AvgPool3d(2),
-            nn.Conv3d(32,32,kernel_size,padding=1), nn.BatchNorm3d(32), nn.LeakyReLU(),
-            nn.Conv3d(32,1,1,padding=1), nn.BatchNorm3d(1)
+            nn.Conv3d(32,32,kernel_size,padding=padding), nn.BatchNorm3d(32), nn.LeakyReLU(),
+            nn.Conv3d(32,1,1,padding=0), nn.BatchNorm3d(1)
         )
 
 
@@ -42,7 +42,7 @@ class LocalisationNet(torch.nn.Module):
         super().__init__()
 
         if True:
-            self.conv_net = ConvNet(input_channels=input_channels, kernel_size=5, inner_padding=2)
+            self.conv_net = ConvNet(input_channels=input_channels, kernel_size=5, padding=2)
             self.fc_in_num = 1*8**3
         else:
             init_dict_path = Path(get_script_dir(), "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
