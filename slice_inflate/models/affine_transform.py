@@ -87,15 +87,17 @@ class AffineTransformModule(torch.nn.Module):
         if optim_method == 'angle-axis':
             self.ap_space = 3
             self.optim_function = angle_axis_to_rotation_matrix
+            self.init_theta_ap = torch.nn.Parameter(torch.zeros(self.ap_space), requires_grad=False)
 
         elif optim_method == 'normal-vector':
             self.ap_space = 3
             self.optim_function = normal_to_rotation_matrix
+            self.init_theta_ap = torch.nn.Parameter(torch.zeros(self.ap_space), requires_grad=False)
 
         elif optim_method == 'R6-vector':
             self.ap_space = 6
             self.optim_function = compute_rotation_matrix_from_ortho6d
-
+            self.init_theta_ap = torch.nn.Parameter(torch.tensor([[1e-2,0,0,0,1e-2,0]]), requires_grad=False)
         else:
             raise ValueError()
 
@@ -105,15 +107,13 @@ class AffineTransformModule(torch.nn.Module):
         self.localisation_net = LocalisationNet(input_channels, self.ap_space)
 
         self.use_affine_theta = use_affine_theta
-
-        self.init_theta_ap = torch.nn.Parameter(torch.zeros(self.ap_space), requires_grad=False)
         self.init_theta_tp = torch.nn.Parameter(torch.zeros(3), requires_grad=False)
 
+        self.tag = tag
+        
         self.last_theta = None
         self.last_theta_a = None
         self.last_theta_t = None
-
-        self.tag = tag
 
     def set_init_theta_ap(self, init_theta_ap):
         self.init_theta_ap.data = init_theta_ap.data
