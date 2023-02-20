@@ -38,7 +38,7 @@ class ConvNet(torch.nn.Module):
 
 
 class LocalisationNet(torch.nn.Module):
-    def __init__(self, input_channels):
+    def __init__(self, input_channels, output_size):
         super().__init__()
 
         if True:
@@ -58,8 +58,8 @@ class LocalisationNet(torch.nn.Module):
             self.conv_net = nnunet_model
             self.fc_in_num = 256*16**3
 
-        self.fca = nn.Linear(self.fc_in_num, 3)
-        self.fct = nn.Linear(self.fc_in_num, 3)
+        self.fca = nn.Linear(self.fc_in_num, output_size)
+        self.fct = nn.Linear(self.fc_in_num, output_size)
 
     def forward(self, x):
         bsz = x.shape[0]
@@ -79,19 +79,35 @@ class AffineTransformModule(torch.nn.Module):
         optim_method='angle-axis', use_affine_theta=True, tag=None):
 
         super().__init__()
-        assert optim_method in ['angle-axis', 'normal-vector'], \
-            f"optim_method must be 'angle-axis' or 'normal-vector', not {optim_method}"
+        assert optim_method in ['angle-axis', 'normal-vector', 'R6-vector'], \
+            f"optim_method must be 'angle-axis', 'normal-vector' or 'R6-vector', not {optim_method}"
+
         self.optim_method = optim_method
+
+        if optim_method is 'angle-axis':
+            self.lspace = 3
+            self.optim_function = angle_axis_to_rotation_matrix
+
+        elif optim_method is 'normal-vector':
+            self.lspace = 3
+            self.optim_function = normal_to_rotation_matrix
+
+        elif optim_method is 'R6-vector':
+            self.lspace = 6
+            self.optim_function = rmat_from_R6_vector
+
+        else:
+            raise ValueError()
 
         self.fov_mm = fov_mm
         self.fov_vox = fov_vox
         self.view_affine = view_affine.view(1,4,4)
-        self.localisation_net = LocalisationNet(input_channels)
+        self.localisation_net = LocalisationNet(input_channels, self.lspace)
 
         self.use_affine_theta = use_affine_theta
 
-        self.init_theta_ap = torch.nn.Parameter(torch.zeros(3), requires_grad=False)
-        self.init_theta_tp = torch.nn.Parameter(torch.zeros(3), requires_grad=False)
+        self.init_theta_ap = torch.nn.Parameter(torch.zeros(self.lspace), requires_grad=False)
+        self.init_theta_tp = torch.nn.Parameter(torch.zeros(self.lspace), requires_grad=False)
 
         self.last_theta = None
         self.last_theta_a = None
@@ -108,7 +124,7 @@ class AffineTransformModule(torch.nn.Module):
     def get_init_affines(self):
         assert not self.init_theta_ap.requires_grad and not self.init_theta_tp.requires_grad
         device = self.init_theta_tp.device
-        theta_a = angle_axis_to_rotation_matrix(self.init_theta_ap.view(1,3))[0].view(1,4,4)
+        theta_a = self.optim_function(self.init_theta_ap.view(1,self.lspace))[0].view(1,4,4)
         theta_t = torch.cat([self.init_theta_tp, torch.tensor([1], device=device)])
         theta_t = torch.cat([torch.eye(4)[:4,:3].to(device), theta_t.view(4,1)], dim=1).view(1,4,4)
 
@@ -122,8 +138,8 @@ class AffineTransformModule(torch.nn.Module):
         device = theta_ap.device
 
         # Apply initial rotation
-        theta_ap = theta_ap + self.init_theta_ap.view(1,3).to(device)
-        theta_tp = theta_tp + self.init_theta_tp.view(1,3).to(device)
+        theta_ap = theta_ap + self.init_theta_ap.view(1,self.lspace).to(device)
+        theta_tp = theta_tp + self.init_theta_tp.view(1,self.lspace).to(device)
 
         if self.optim_method == 'angle-axis':
             theta_ap[:,0] = 0.0 # [:,0] rotates in plane
@@ -132,14 +148,12 @@ class AffineTransformModule(torch.nn.Module):
         # theta_ap[:,1] = 0.0 # TODO remove that
         theta_tp[...] = 0.0 # TODO remove that
 
-        if self.optim_method == 'angle-axis':
-            theta_a = angle_axis_to_rotation_matrix(theta_ap.view(batch_size,3))
+        theta_ap = theta_ap.view(batch_size, self.lspace)
 
-        elif self.optim_method == 'normal-vector':
+        if self.optim_method == 'normal-vector':
             theta_ap = theta_ap/theta_ap.norm(dim=1).view(-1,1) # Normalize
-            theta_a = normal_to_rotation_matrix(theta_ap.view(batch_size,3))
-        else:
-            raise ValueError()
+
+        theta_a = self.optim_function(theta_ap)
 
         theta_t = torch.cat([theta_tp, torch.ones(batch_size, device=device).view(batch_size,1)], dim=1)
         theta_t = torch.cat([
@@ -264,6 +278,20 @@ def get_random_angles(angle_std, seed=0):
     mean, std = torch.zeros(3), torch.ones(3) * angle_std
     angles = torch.normal(mean, std)
     return angles
+
+
+
+def compute_rotation_matrix_from_ortho6d(ortho):
+    # See https://github.com/papagina/RotationContinuity/blob/master/Inverse_Kinematics/code/tools.py
+    x_raw = ortho[:, 0:3]
+    y_raw = ortho[:, 3:6]
+
+    x = x_raw / x_raw.norm(dim=1, keepdim=True)
+    z = x.cross(y_raw)
+    z = z / z.norm(dim=1, keepdim=True)
+    y = z.cross(x)
+
+    return torch.stack([x, y, z], dim=-1)
 
 
 
