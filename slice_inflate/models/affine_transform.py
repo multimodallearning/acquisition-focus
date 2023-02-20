@@ -16,7 +16,7 @@ class ConvNet(torch.nn.Module):
     def __init__(self, input_channels, kernel_size, inner_padding):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv3d(input_channels,32,kernel_size,padding=1), nn.BatchNorm3d(32), nn.LeakyReLU(),
+            nn.Conv3d(input_channels,32,kernel_size,padding=inner_padding), nn.BatchNorm3d(32), nn.LeakyReLU(),
             nn.AvgPool3d(2),
             nn.Conv3d(32,64,kernel_size,padding=inner_padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
             nn.Conv3d(64,64,kernel_size,padding=inner_padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
@@ -38,12 +38,12 @@ class ConvNet(torch.nn.Module):
 
 
 class LocalisationNet(torch.nn.Module):
-    def __init__(self, input_channels, output_size):
+    def __init__(self, input_channels, ap_output_size):
         super().__init__()
 
         if True:
             self.conv_net = ConvNet(input_channels=input_channels, kernel_size=5, inner_padding=2)
-            self.fc_in_num = 1*7**3
+            self.fc_in_num = 1*8**3
         else:
             init_dict_path = Path(get_script_dir(), "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
             with open(init_dict_path, 'rb') as f:
@@ -58,8 +58,8 @@ class LocalisationNet(torch.nn.Module):
             self.conv_net = nnunet_model
             self.fc_in_num = 256*16**3
 
-        self.fca = nn.Linear(self.fc_in_num, output_size)
-        self.fct = nn.Linear(self.fc_in_num, output_size)
+        self.fca = nn.Linear(self.fc_in_num, ap_output_size)
+        self.fct = nn.Linear(self.fc_in_num, 3)
 
     def forward(self, x):
         bsz = x.shape[0]
@@ -84,17 +84,17 @@ class AffineTransformModule(torch.nn.Module):
 
         self.optim_method = optim_method
 
-        if optim_method is 'angle-axis':
-            self.lspace = 3
+        if optim_method == 'angle-axis':
+            self.ap_space = 3
             self.optim_function = angle_axis_to_rotation_matrix
 
-        elif optim_method is 'normal-vector':
-            self.lspace = 3
+        elif optim_method == 'normal-vector':
+            self.ap_space = 3
             self.optim_function = normal_to_rotation_matrix
 
-        elif optim_method is 'R6-vector':
-            self.lspace = 6
-            self.optim_function = rmat_from_R6_vector
+        elif optim_method == 'R6-vector':
+            self.ap_space = 6
+            self.optim_function = compute_rotation_matrix_from_ortho6d
 
         else:
             raise ValueError()
@@ -102,12 +102,12 @@ class AffineTransformModule(torch.nn.Module):
         self.fov_mm = fov_mm
         self.fov_vox = fov_vox
         self.view_affine = view_affine.view(1,4,4)
-        self.localisation_net = LocalisationNet(input_channels, self.lspace)
+        self.localisation_net = LocalisationNet(input_channels, self.ap_space)
 
         self.use_affine_theta = use_affine_theta
 
-        self.init_theta_ap = torch.nn.Parameter(torch.zeros(self.lspace), requires_grad=False)
-        self.init_theta_tp = torch.nn.Parameter(torch.zeros(self.lspace), requires_grad=False)
+        self.init_theta_ap = torch.nn.Parameter(torch.zeros(self.ap_space), requires_grad=False)
+        self.init_theta_tp = torch.nn.Parameter(torch.zeros(3), requires_grad=False)
 
         self.last_theta = None
         self.last_theta_a = None
@@ -124,7 +124,7 @@ class AffineTransformModule(torch.nn.Module):
     def get_init_affines(self):
         assert not self.init_theta_ap.requires_grad and not self.init_theta_tp.requires_grad
         device = self.init_theta_tp.device
-        theta_a = self.optim_function(self.init_theta_ap.view(1,self.lspace))[0].view(1,4,4)
+        theta_a = self.optim_function(self.init_theta_ap.view(1,self.ap_space))[0].view(1,4,4)
         theta_t = torch.cat([self.init_theta_tp, torch.tensor([1], device=device)])
         theta_t = torch.cat([torch.eye(4)[:4,:3].to(device), theta_t.view(4,1)], dim=1).view(1,4,4)
 
@@ -138,22 +138,21 @@ class AffineTransformModule(torch.nn.Module):
         device = theta_ap.device
 
         # Apply initial rotation
-        theta_ap = theta_ap + self.init_theta_ap.view(1,self.lspace).to(device)
-        theta_tp = theta_tp + self.init_theta_tp.view(1,self.lspace).to(device)
+        theta_ap = theta_ap + self.init_theta_ap.view(1,self.ap_space).to(device)
+        theta_tp = theta_tp + self.init_theta_tp.view(1,3).to(device)
 
         # Rotation matrix definition
-        theta_ap = theta_ap.view(batch_size, self.lspace)
+        theta_ap = theta_ap.view(batch_size, self.ap_space)
 
         if self.optim_method == 'angle-axis':
             theta_ap[:,0] = 0.0 # [:,0] rotates in plane
         elif self.optim_method == 'normal-vector':
             theta_ap = theta_ap/theta_ap.norm(dim=1).view(-1,1) # Normalize
-            
+
         theta_a = self.optim_function(theta_ap)
 
         # Translation matrix definition
         theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict only this
-        # theta_ap[:,1] = 0.0 # TODO remove that
         theta_tp[...] = 0.0 # TODO remove that
 
         theta_t = torch.cat([theta_tp, torch.ones(batch_size, device=device).view(batch_size,1)], dim=1)
@@ -176,8 +175,6 @@ class AffineTransformModule(torch.nn.Module):
         y_label = None
         device = x_label.device if not x_label_is_none else x_image.device
         B = x_label.shape[0] if not x_label_is_none else x_image.shape[0]
-
-        # theta_ai = self.get_init_affine().to(device=device)
 
         if theta_override is not None:
             theta = theta_override.detach() # Caution: this is a non-differentiable theta
@@ -283,7 +280,7 @@ def get_random_angles(angle_std, seed=0):
 
 
 def compute_rotation_matrix_from_ortho6d(ortho):
-    # See https://github.com/papagina/RotationContinuity/blob/master/Inverse_Kinematics/code/tools.py
+    # see https://github.com/papagina/RotationContinuity/blob/master/Inverse_Kinematics/code/tools.py
     x_raw = ortho[:, 0:3]
     y_raw = ortho[:, 3:6]
 
@@ -292,7 +289,28 @@ def compute_rotation_matrix_from_ortho6d(ortho):
     z = z / z.norm(dim=1, keepdim=True)
     y = z.cross(x)
 
-    return torch.stack([x, y, z], dim=-1)
+    # torch.stack([x, y, z], dim=-1)
+    r00 = x[:,0]
+    r01 = y[:,0]
+    r02 = z[:,0]
+    r10 = x[:,1]
+    r11 = y[:,1]
+    r12 = z[:,1]
+    r20 = x[:,2]
+    r21 = y[:,2]
+    r22 = z[:,2]
+    zer = torch.zeros_like(r00)
+    one = torch.ones_like(r00)
+
+    theta_r = torch.stack(
+        [r00, r01, r02, zer,
+         r10, r11, r12, zer,
+         r20, r21, r22, zer,
+         zer, zer, zer, one], dim=1)
+
+    theta_r = theta_r.view(-1,4,4)
+
+    return theta_r
 
 
 
