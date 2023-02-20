@@ -402,14 +402,18 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
 
         if self.is_hybrid:
             CHN = 4
+            SPAT = 8
             self.connector = nn.Sequential(
-                nn.Conv2d(480,CHN,1),
+                nn.Conv2d(Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D,CHN,1),
                 self.enc_norm_op(CHN),
                 torch.nn.Flatten(1,-1),
-                nn.Linear(CHN*16*16, CHN*8*16*16),
-                torch.nn.Unflatten(1, (CHN,8,16,16)),
+                nn.Linear(CHN*SPAT**2, CHN*SPAT**3),
+                torch.nn.Unflatten(1, (CHN,SPAT,SPAT,SPAT)),
                 self.dec_norm_op(CHN),
-                nn.ConvTranspose3d(CHN,320,1),
+                self.nonlin(**self.nonlin_kwargs),
+                nn.ConvTranspose3d(CHN,Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D,1),
+                self.dec_norm_op(CHN),
+                self.nonlin(**self.nonlin_kwargs)
             )
 
     def forward(self, x):
@@ -435,6 +439,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
 
         if self.is_hybrid:
             # x = x.unsqueeze(2).repeat(1,1,8,1,1) # TODO: automate calculation here
+            # x = torch.stack(8*[x],dim=-1)
             x = self.connector(x)
 
         for u in range(len(self.tu)):
@@ -547,7 +552,7 @@ def get_conv_op_config(conv_op, conv_kernel_sizes, pool_op_kernel_sizes, num_poo
         if conv_op == nn.Conv3d:
             max_num_features = Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D
         else:
-            max_num_features = Generic_UNet_Hybrid.MAX_FILTERS_2D
+            max_num_features = Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D
     else:
         max_num_features = max_num_features
 

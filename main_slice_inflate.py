@@ -301,6 +301,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
             dec_mode = '3d'
             init_dict['use_onehot_input'] = False
             init_dict['input_channels'] = num_classes*2
+            init_dict['pool_op_kernel_sizes'][-1] = [2,2,2]
             nnunet_model = Generic_UNet_Hybrid(**init_dict, use_skip_connections=use_skip_connections, encoder_mode=enc_mode, decoder_mode=dec_mode)
         else:
             enc_mode = '3d'

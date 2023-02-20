@@ -85,7 +85,7 @@ class AffineTransformModule(torch.nn.Module):
         self.optim_method = optim_method
 
         if optim_method == 'angle-axis':
-            self.ap_space = 2
+            self.ap_space = 3
             self.optim_function = angle_axis_to_rotation_matrix
             self.init_theta_ap = torch.nn.Parameter(torch.zeros(self.ap_space), requires_grad=False)
 
@@ -145,7 +145,7 @@ class AffineTransformModule(torch.nn.Module):
         theta_ap = theta_ap.view(batch_size, self.ap_space)
 
         if self.optim_method == 'angle-axis':
-            theta_ap = torch.cat([torch.zeros([batch_size,1], device=device), theta_ap], dim=1) # [:,0] rotates in plane
+            theta_ap[:,0] = 0.0 # [:,0] rotates in plane
         elif self.optim_method == 'normal-vector':
             theta_ap = theta_ap/theta_ap.norm(dim=1).view(-1,1) # Normalize
 
