@@ -93,6 +93,7 @@ def prepare_data(config):
         pre_interpolation_factor=1., # When getting the data, resize the data by this factor
         ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
         use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
+        use_binarized_labels=config.use_binarized_labels,
         crop_around_2d_label_center=config.crop_around_2d_label_center,
         max_load_3d_num=config.max_load_3d_num,
         soft_cut_std=config.soft_cut_std,
@@ -1428,7 +1429,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
     ]
 
     all_params_stages = [
-        Stage(
+        Stage( # Optimize SA
             r_params=r_params,
             sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
@@ -1437,28 +1438,42 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             epochs=40,
             soft_cut_std=-999,
             use_distance_map_localization=False,
+            use_affine_theta=True,
             train_affine_theta=True,
             do_output=True,
             __activate_fn__=lambda self: None
         ),
-        Stage(
+        Stage( # Optimize hla
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa>hla',
             reconstruction_target='hla-oriented',
             epochs=40,
             soft_cut_std=-999,
             use_distance_map_localization=False,
+            use_affine_theta=True,
             train_affine_theta=True,
             do_output=True,
             __activate_fn__=lambda self: None
         ),
-        Stage(
+        Stage( # Final optimized run
+            do_output=True,
+            cuts_mode='sa+hla',
+            reconstruction_target='hla-oriented',
+            epochs=config_dict['epochs'],
+            soft_cut_std=-999,
+            use_affine_theta=True,
+            train_affine_theta=False,
+            use_distance_map_localization=False,
+            __activate_fn__=lambda self: None
+        ),
+        Stage( # Reference run
             do_output=True,
             cuts_mode='sa+hla',
             reconstruction_target='hla-oriented',
             epochs=config_dict['epochs'],
             soft_cut_std=-999,
             train_affine_theta=False,
+            use_affine_theta=False,
             use_distance_map_localization=False,
             __activate_fn__=lambda self: None
         ),

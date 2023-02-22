@@ -45,6 +45,9 @@ class MMWHSDataset(HybridIdDataset):
                 "Static 2D data extraction for this dataset is skipped.")
             kwargs['use_2d_normal_to'] = None
 
+        if kwargs['use_binarized_labels']:
+            label_tags=("background", "foreground")
+
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
 
     def extract_3d_id(self, _input):
@@ -407,6 +410,8 @@ def load_data(self_attributes: dict):
         if is_label:
             resample_mode = 'nearest'
             tmp = replace_label_values(tmp)
+            if self.use_binarized_labels:
+                tmp[tmp>0] = 1.0
         else:
             resample_mode = 'trilinear'
 
