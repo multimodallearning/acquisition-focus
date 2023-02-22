@@ -20,7 +20,6 @@ joblib = "^1.1.0"
 ipywidgets = "^8.0.2"
 wandb = "^0.13.3"
 scikit-learn = "^1.1.2"
-mdl-seg-class = { git = "git@github.com:MDL-UzL/SegmentationClassification.git" }
 meidic-vtach-utils = { git = "git@github.com:MDL-UzL/meidic_vtach_utils.git" }
 nnunet = { git = "git@github.com:chr-wei/nnUNet.git" }
 scikit-image = "^0.19.3"
@@ -29,6 +28,7 @@ einops = "^0.5.0"
 dill = "^0.3.5.1"
 autopep8 = "^2.0.0"
 torchvision = "^0.14.0"
+monai = "^1.1.0"
 
 [build-system]
 requires = ["poetry-core"]

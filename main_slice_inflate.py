@@ -49,7 +49,7 @@ from slice_inflate.datasets.align_mmwhs import cut_slice
 from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, log_oa_metrics
 from sklearn.model_selection import KFold
 import numpy as np
-from mdl_seg_class.metrics import dice3d, hausdorff3d
+import monai
 
 from slice_inflate.losses.dice_loss import DC_and_CE_loss
 from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset, load_data, extract_2d_data
@@ -787,23 +787,30 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
         # Taken from nibabel nifti1.py
         rzs = sa_atm.last_resampled_affine[0,:3,:3]
-        nifti_zooms = (rzs[:3,:3]*rzs[:3,:3]).sum(1).sqrt().detach().cpu().numpy()
+        nifti_zooms = (rzs[:3,:3]*rzs[:3,:3]).sum(1).sqrt().detach().cpu()
 
         # Calculate fast dice score
-        b_dice = dice3d(
-            eo.rearrange(torch.nn.functional.one_hot(pred_seg, len(training_dataset.label_tags)), 'b d h w oh -> b oh d h w'),
-            b_target,
-            one_hot_torch_style=False
-        )
+        pred_seg_oh = eo.rearrange(torch.nn.functional.one_hot(pred_seg, len(training_dataset.label_tags)), 'b d h w oh -> b oh d h w')
+
+        b_dice = monai.metrics.compute_dice(pred_seg_oh, b_target)
+
         label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'dice',
             b_dice, training_dataset.label_tags, exclude_bg=True)
 
-        if epx % 20 == 0 and epx > 0 and False:
-            b_hd = hausdorff3d(b_input, b_target, spacing_mm=tuple(nifti_zooms), percent=100)
+        if (epx % 20 == 0 and epx > 0) or (epx+1 == config.epochs) or config.debug:
+            b_sz = pred_seg_oh.shape[0]
+
+            b_iou = monai.metrics.compute_iou(pred_seg_oh, b_target)
+            label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'iou',
+                b_iou, training_dataset.label_tags, exclude_bg=True)
+
+            b_hd = monai.metrics.compute_hausdorff_distance(pred_seg_oh, b_target) * nifti_zooms.norm()
+            b_hd = torch.cat([torch.zeros(b_sz,1), b_hd], dim=1) # Add zero score for background
             label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd',
                 b_hd, training_dataset.label_tags, exclude_bg=True)
 
-            b_hd95 = hausdorff3d(b_input, b_target, spacing_mm=tuple(nifti_zooms), percent=95)
+            b_hd95 = monai.metrics.compute_hausdorff_distance(pred_seg_oh, b_target, percentile=95) * nifti_zooms.norm()
+            b_hd95 = torch.cat([torch.zeros(b_sz,1), b_hd95], dim=1) # Add zero score for background
             label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd95',
                 b_hd95, training_dataset.label_tags, exclude_bg=True)
 
@@ -830,16 +837,16 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     print(f'losses/{phase}_loss{fold_postfix}', log_val)
 
     log_label_metrics(f"scores/{phase}_mean", fold_postfix, seg_metrics_nanmean, global_idx,
-        logger_selected_metrics=('dice', 'hd', 'hd95'), print_selected_metrics=('dice'))
+        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=('dice'))
 
     log_label_metrics(f"scores/{phase}_std", fold_postfix, seg_metrics_std, global_idx,
-        logger_selected_metrics=('dice', 'hd', 'hd95'), print_selected_metrics=())
+        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=())
 
     log_oa_metrics(f"scores/{phase}_mean_oa_exclude_bg", fold_postfix, seg_metrics_nanmean_oa, global_idx,
-        logger_selected_metrics=('dice', 'hd', 'hd95'), print_selected_metrics=('dice', 'hd', 'hd95'))
+        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=('dice', 'iou', 'hd', 'hd95'))
 
     log_oa_metrics(f"scores/{phase}_std_oa_exclude_bg", fold_postfix, seg_metrics_std_oa, global_idx,
-        logger_selected_metrics=('dice', 'hd', 'hd95'), print_selected_metrics=())
+        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=())
 
     print()
 
