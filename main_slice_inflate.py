@@ -46,7 +46,7 @@ import nibabel as nib
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
 from slice_inflate.datasets.align_mmwhs import cut_slice
-from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, log_oa_metrics
+from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, log_oa_metrics, log_affine_param_stats
 from sklearn.model_selection import KFold
 import numpy as np
 import monai
@@ -720,8 +720,10 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
 
     epx_losses = []
-    epx_sa_thetas = []
-    epx_hla_thetas = []
+    epx_sa_theta_aps = []
+    epx_hla_theta_aps = []
+    epx_sa_theta_tps = []
+    epx_hla_theta_tps = []
     label_scores_epoch = {}
     seg_metrics_nanmean = {}
     seg_metrics_std = {}
@@ -780,8 +782,10 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                     dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
 
         epx_losses.append(loss.item())
-        epx_sa_thetas.append(sa_atm.last_theta)
-        epx_hla_thetas.append(hla_atm.last_theta)
+        epx_sa_theta_aps.append(sa_atm.last_theta_ap)
+        epx_hla_theta_aps.append(hla_atm.last_theta_ap)
+        epx_sa_theta_tps.append(sa_atm.last_theta_tp)
+        epx_hla_theta_tps.append(hla_atm.last_theta_tp)
 
         pred_seg = y_hat.argmax(1)
 
@@ -852,65 +856,39 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
     mean_transform_dict = dict()
 
-    if epx_sa_thetas:
-        print("theta SA rotation param stats are:")
-        epx_sa_thetas = torch.cat(epx_sa_thetas).cpu().detach()[:, :3]
-        sa_angles = get_theta_params(epx_sa_thetas)[0]
-        sa_angles_mean = sa_angles.mean(0)
-        sa_angles_std = sa_angles.std(0)
-
-        sa_offsets = get_theta_params(epx_sa_thetas)[1]
-        sa_offsets_mean = sa_offsets.mean(0)
-        sa_offsets_std = sa_offsets.std(0)
-        print("Angles", "mean=", sa_angles_mean, "std=", sa_angles_std)
-        print("Offsets", "mean=", sa_offsets_mean, "std=", sa_offsets_std)
-
-        wandb.log({f"orientations/{phase}_sa_angle_mean[0]": sa_angles_mean[0]}, step=global_idx)
-        wandb.log({f"orientations/{phase}_sa_angle_std[0]": sa_angles_std[0]}, step=global_idx)
-        wandb.log({f"orientations/{phase}_sa_angle_mean[1]": sa_angles_mean[1]}, step=global_idx)
-        wandb.log({f"orientations/{phase}_sa_angle_std[1]": sa_angles_std[1]}, step=global_idx)
-        wandb.log({f"orientations/{phase}_sa_angle_mean[2]": sa_angles_mean[2]}, step=global_idx)
-        wandb.log({f"orientations/{phase}_sa_angle_std[2]": sa_angles_std[2]}, step=global_idx)
-
-        wandb.log({f"orientations/{phase}_sa_offset_mean[0]": sa_offsets_mean[0]}, step=global_idx)
-        wandb.log({f"orientations/{phase}_sa_offset_std[0]": sa_offsets_std[0]}, step=global_idx)
+    if epx_sa_theta_aps:
+        ornt_log_prefix = f"orientations/{phase}_sa_"
+        sa_param_dict = dict(
+            theta_ap=epx_sa_theta_aps,
+            theta_tp=epx_sa_theta_tps
+        )
+        sa_theta_ap_mean, sa_theta_tp_mean = \
+            log_affine_param_stats(ornt_log_prefix, fold_postfix, sa_param_dict, global_idx,
+                logger_selected_metrics=('mean', 'std'), print_selected_metrics=('mean', 'std'))
         print()
 
         mean_transform_dict.update(
             dict(
-                epoch_sa_angles_mean=sa_angles_mean,
-                epoch_sa_offsets_mean=sa_offsets_mean,
+                epoch_sa_theta_ap_mean=sa_theta_ap_mean,
+                epoch_sa_theta_tp_mean=sa_theta_tp_mean,
             )
         )
 
-    if epx_hla_thetas:
-        print("theta HLA rotation param stats are:")
-        epx_hla_thetas = torch.cat(epx_hla_thetas).cpu().detach()[:, :3]
-        hla_angles = get_theta_params(epx_hla_thetas)[0]
-        hla_angles_mean = hla_angles.mean(0)
-        hla_angles_std = hla_angles.std(0)
-
-        hla_offsets = get_theta_params(epx_hla_thetas)[1]
-        hla_offsets_mean = hla_offsets.mean(0)
-        hla_offsets_std = hla_offsets.std(0)
-        print("Angles", "mean=", hla_angles_mean, "std=", hla_angles_std)
-        print("Offsets", "mean=", hla_offsets_mean, "std=", hla_offsets_std)
-
-        # wandb.log({f"orientations/{phase}_hla_angle_mean[0]": hla_angles_mean[0]}, step=global_idx)
-        # wandb.log({f"orientations/{phase}_hla_angle_std[0]": hla_angles_std[0]}, step=global_idx)
-        wandb.log({f"orientations/{phase}_hla_angle_mean[1]": hla_angles_mean[1]}, step=global_idx)
-        wandb.log({f"orientations/{phase}_hla_angle_std[1]": hla_angles_std[1]}, step=global_idx)
-        wandb.log({f"orientations/{phase}_hla_angle_mean[2]": hla_angles_mean[2]}, step=global_idx)
-        wandb.log({f"orientations/{phase}_hla_angle_std[2]": hla_angles_std[2]}, step=global_idx)
-
-        wandb.log({f"orientations/{phase}_hla_offset_mean[0]": hla_offsets_mean[0]}, step=global_idx)
-        wandb.log({f"orientations/{phase}_hla_offset_std[0]": hla_offsets_std[0]}, step=global_idx)
+    if epx_hla_theta_aps:
+        ornt_log_prefix = f"orientations/{phase}_hla_"
+        hla_param_dict = dict(
+            theta_ap=epx_hla_theta_aps,
+            theta_tp=epx_hla_theta_tps
+        )
+        hla_theta_ap_mean, hla_theta_tp_mean = \
+            log_affine_param_stats(ornt_log_prefix, fold_postfix, hla_param_dict, global_idx,
+                logger_selected_metrics=('mean', 'std'), print_selected_metrics=('mean', 'std'))
         print()
 
         mean_transform_dict.update(
             dict(
-                epoch_hla_angles_mean=hla_angles_mean,
-                epoch_hla_offsets_mean=hla_offsets_mean
+                epoch_hla_theta_ap_mean=hla_theta_ap_mean,
+                epoch_hla_theta_tp_mean=hla_theta_tp_mean,
             )
         )
     print(f"### END {phase.upper()}")

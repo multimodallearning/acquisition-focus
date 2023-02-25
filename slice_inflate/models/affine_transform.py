@@ -111,9 +111,12 @@ class AffineTransformModule(torch.nn.Module):
 
         self.tag = tag
 
-        self.last_theta = None
+        self.last_theta_ap = None
+        self.last_theta_tp = None
         self.last_theta_a = None
         self.last_theta_t = None
+        self.last_theta = None
+        self.last_resampled_affine = None
 
     def set_init_theta_ap(self, init_theta_ap):
         self.init_theta_ap.data = init_theta_ap.data
@@ -162,6 +165,12 @@ class AffineTransformModule(torch.nn.Module):
         ], dim=-1)
 
         assert theta_a.shape == theta_t.shape == (batch_size, 4, 4)
+
+        self.last_theta_ap = theta_ap
+        self.last_theta_tp = theta_tp
+        self.last_theta_a = theta_a
+        self.last_theta_t = theta_t
+
         return theta_a, theta_t
 
     def forward(self, x_image, x_label, nifti_affine, augment_affine, theta_override=None):
@@ -188,8 +197,6 @@ class AffineTransformModule(torch.nn.Module):
             theta = theta_a @ theta_t
 
             self.last_theta = theta
-            self.last_theta_a = theta_a
-            self.last_theta_t = theta_t
 
         # Gef affines:
         # theta_a : Affine for learnt rotation and initialization of affine module
