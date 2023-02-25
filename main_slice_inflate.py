@@ -691,6 +691,9 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
         else:
             loss = get_ae_loss_value(y_hat, b_target.float(), class_weights)
 
+        # if config.do_output:
+        #     raise NotImplementedError()
+
         if config.do_output and (epx % 10 == 0 or epx+1 == config.epochs)  and '1010-mr' in batch['id']:
             idx = batch['id'].index('1010-mr')
             _dir = Path(f"data/output/{wandb.run.name}")
@@ -720,10 +723,13 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
 
     epx_losses = []
-    epx_sa_theta_aps = []
-    epx_hla_theta_aps = []
-    epx_sa_theta_tps = []
-    epx_hla_theta_tps = []
+
+    epx_sa_theta_aps = {}
+    epx_hla_theta_aps = {}
+    epx_sa_theta_tps = {}
+    epx_hla_theta_tps = {}
+    epx_slices = {}
+
     label_scores_epoch = {}
     seg_metrics_nanmean = {}
     seg_metrics_std = {}
@@ -782,10 +788,10 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                     dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
 
         epx_losses.append(loss.item())
-        epx_sa_theta_aps.append(sa_atm.last_theta_ap)
-        epx_hla_theta_aps.append(hla_atm.last_theta_ap)
-        epx_sa_theta_tps.append(sa_atm.last_theta_tp)
-        epx_hla_theta_tps.append(hla_atm.last_theta_tp)
+        epx_sa_theta_aps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_ap)})
+        epx_sa_theta_tps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_tp)})
+        epx_hla_theta_aps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_ap)})
+        epx_hla_theta_tps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_tp)})
 
         pred_seg = y_hat.argmax(1)
 
@@ -859,8 +865,8 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     if epx_sa_theta_aps:
         ornt_log_prefix = f"orientations/{phase}_sa_"
         sa_param_dict = dict(
-            theta_ap=epx_sa_theta_aps,
-            theta_tp=epx_sa_theta_tps
+            theta_ap=epx_sa_theta_aps.values(),
+            theta_tp=epx_sa_theta_tps.values()
         )
         sa_theta_ap_mean, sa_theta_tp_mean = \
             log_affine_param_stats(ornt_log_prefix, fold_postfix, sa_param_dict, global_idx,
@@ -877,8 +883,8 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     if epx_hla_theta_aps:
         ornt_log_prefix = f"orientations/{phase}_hla_"
         hla_param_dict = dict(
-            theta_ap=epx_hla_theta_aps,
-            theta_tp=epx_hla_theta_tps
+            theta_ap=epx_hla_theta_aps.values(),
+            theta_tp=epx_hla_theta_tps.values()
         )
         hla_theta_ap_mean, hla_theta_tp_mean = \
             log_affine_param_stats(ornt_log_prefix, fold_postfix, hla_param_dict, global_idx,
@@ -987,7 +993,7 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
             # Log the epoch idx per fold - so we can recover the diagram by setting
             # ref_epoch_idx as x-axis in wandb interface
-            print(f"### Log epoch {epx}/{config.epochs}")
+            print( f"### Log epoch {epx}/{config.epochs}")
             wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
             if not run_test_once_only:
