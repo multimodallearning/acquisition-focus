@@ -46,7 +46,8 @@ import nibabel as nib
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
 from slice_inflate.datasets.align_mmwhs import cut_slice
-from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, log_oa_metrics, log_affine_param_stats
+from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, \
+    log_oa_metrics, log_affine_param_stats, log_frameless_image
 from sklearn.model_selection import KFold
 import numpy as np
 import monai
@@ -691,29 +692,7 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
         else:
             loss = get_ae_loss_value(y_hat, b_target.float(), class_weights)
 
-        # if config.do_output:
-        #     raise NotImplementedError()
-
-        if config.do_output and (epx % 10 == 0 or epx+1 == config.epochs)  and '1010-mr' in batch['id']:
-            idx = batch['id'].index('1010-mr')
-            _dir = Path(f"data/output/{wandb.run.name}")
-            _dir.mkdir(exist_ok=True)
-            if config.use_distance_map_localization:
-                save_input =  (b_input[idx] < 0.5).float()
-            else:
-                save_input =  b_input[idx]
-
-            if 'hybrid' in config.model_type:
-                num_classes = len(label_tags)
-                save_input = save_input.chunk(2,dim=0)
-                save_input = torch.cat([slc.argmax(0, keepdim=True) for slc in save_input], dim=0)
-            else:
-                save_input = save_input.argmax(0)
-            nib.save(nib.Nifti1Image(
-                save_input.int().detach().cpu().numpy(),
-                affine=np.eye(4)), _dir.joinpath(f"input_epx_{epx}.nii.gz"))
-
-    return y_hat, b_target, loss
+    return y_hat, b_target, loss, b_input
 
 
 
@@ -728,7 +707,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     epx_hla_theta_aps = {}
     epx_sa_theta_tps = {}
     epx_hla_theta_tps = {}
-    epx_slices = {}
+    epx_input = {}
 
     label_scores_epoch = {}
     seg_metrics_nanmean = {}
@@ -755,7 +734,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             for opt in all_optimizers.values():
                 opt.zero_grad()
 
-            y_hat, b_target, loss = model_step(
+            y_hat, b_target, loss, b_input = model_step(
                 config, epx,
                 model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
                 batch,
@@ -781,17 +760,24 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
         else:
             with torch.no_grad():
-                y_hat, b_target, loss = model_step(
+                y_hat, b_target, loss, b_input = model_step(
                     config, epx,
                     model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
                     batch,
                     dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
 
         epx_losses.append(loss.item())
-        epx_sa_theta_aps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_ap)})
-        epx_sa_theta_tps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_tp)})
-        epx_hla_theta_aps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_ap)})
-        epx_hla_theta_tps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_tp)})
+
+        epx_input.update({k:v for k,v in zip(batch['id'], b_input)})
+
+        if sa_atm.last_theta_ap is not None:
+            epx_sa_theta_aps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_ap)})
+        if sa_atm.last_theta_tp is not None:
+            epx_sa_theta_tps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_tp)})
+        if hla_atm.last_theta_ap is not None:
+            epx_hla_theta_aps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_ap)})
+        if hla_atm.last_theta_tp is not None:
+            epx_hla_theta_tps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_tp)})
 
         pred_seg = y_hat.argmax(1)
 
@@ -897,11 +883,36 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 epoch_hla_theta_tp_mean=hla_theta_tp_mean,
             )
         )
+
+    if config.do_output:
+        # Store the slice model input
+        save_input = torch.stack(list(epx_input.values()))
+
+        _dir = Path(f"data/output/{wandb.run.name}")
+        _dir.mkdir(exist_ok=True)
+
+        if config.use_distance_map_localization:
+            save_input =  (save_input < 0.5).float()
+
+        if 'hybrid' in config.model_type:
+            num_classes = len(training_dataset.label_tags)
+            save_input = save_input.chunk(2,dim=1)
+            save_input = torch.cat([slc.argmax(1, keepdim=True) for slc in save_input], dim=1)
+
+        else:
+            save_input = save_input.argmax(0)
+
+        save_input = save_input.cpu()
+        BI, DI, HI, WI = save_input.shape
+        img_input = eo.rearrange(save_input, 'BI DI HI WI -> (DI WI) (BI HI)')
+        log_frameless_image(img_input.numpy(), _dir / f"input_{phase}_epx_{epx}.png", dpi=150, cmap='gray')
+
+        lean_dct = {k:v for k,v in zip(epx_input.keys(), save_input.short())}
+        torch.save(lean_dct, _dir / f"input_{phase}_epx_{epx}.pt")
+
     print(f"### END {phase.upper()}")
     print()
     print()
-
-
 
     return loss_mean, mean_transform_dict
 
@@ -997,7 +1008,7 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
             wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
             if not run_test_once_only:
-                train_loss, mean_transform_dict = epoch_iter(
+                train_loss, mean_transform_dict, b_input = epoch_iter(
                     epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
                     training_dataset, train_dataloader, class_weights, fold_postfix,
                     phase='train', autocast_enabled=autocast_enabled,

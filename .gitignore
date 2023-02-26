@@ -10,6 +10,8 @@ data/MNIST/*
 !data/MMWHS/mmwhs_io_normalisation_values.pth
 *.nii.gz
 *.pth
+*.pt
+*.png
 
 **/.ipynb_checkpoints/**
 **/.DS_Store

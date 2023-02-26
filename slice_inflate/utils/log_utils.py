@@ -1,6 +1,7 @@
 import wandb
 import numpy as np
 import torch
+from matplotlib import pyplot as plt
 
 def get_global_idx(fold_idx, epoch_idx, max_epochs):
     # Get global index e.g. 2250 for fold_idx=2, epoch_idx=250 @ max_epochs<1000
@@ -41,7 +42,7 @@ def log_affine_param_stats(log_prefix, log_postfix, affine_params_dct, log_idx,
 
     for param_name, param in affine_params_dct.items():
         stats = {}
-        stackk = torch.cat(param, dim=0)
+        stackk = torch.stack(list(param), dim=0)
         stats['mean'] = stackk.mean(0)
         stats['std'] = stackk.std(0)
         means[param_name] = stats['mean']
@@ -59,3 +60,17 @@ def log_affine_param_stats(log_prefix, log_postfix, affine_params_dct, log_idx,
                 print(log_path, ' '.join([f"{p:.3f}" for p in stats[tag].tolist()]))
 
     return means['theta_ap'], means['theta_tp']
+
+
+
+def log_frameless_image(image, _path, dpi=150, cmap='gray'):
+    fig = plt.figure(frameon=False)
+    img_size = np.array(image.shape)/dpi
+    fig.set_size_inches(img_size[1], img_size[0])
+
+    ax = plt.Axes(fig, [0., 0., 1., 1.])
+    ax.set_axis_off()
+    fig.add_axes(ax)
+
+    ax.imshow(image, aspect='auto', cmap=cmap)
+    fig.savefig(_path, dpi=dpi)
