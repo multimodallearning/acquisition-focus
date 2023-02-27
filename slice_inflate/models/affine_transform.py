@@ -98,6 +98,7 @@ class AffineTransformModule(torch.nn.Module):
             self.ap_space = 6
             self.optim_function = compute_rotation_matrix_from_ortho6d
             self.init_theta_ap = torch.nn.Parameter(torch.tensor([[1e-2,0,0,0,1e-2,0]]), requires_grad=False)
+            
         else:
             raise ValueError()
 

@@ -43,6 +43,7 @@ from tqdm import tqdm
 import wandb
 import nibabel as nib
 
+import contextlib
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
 from slice_inflate.datasets.align_mmwhs import cut_slice
@@ -508,8 +509,6 @@ def get_transformed(label, soft_label, nifti_affine, augment_affine, atm, cut_mo
         image = torch.zeros(B,1,D,H,W, device=label.device)
 
     # Transform  label with 'bilinear' interpolation to have gradients
-    # label = label.float() # TODO Check, can this be removed?
-    # label.requires_grad = True # TODO Check, can this be removed?
     soft_label, _, _ = atm(soft_label.view(B, num_classes, D, H, W), None,
                             nifti_affine, augment_affine)
 
@@ -564,14 +563,17 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     hla_atm.use_affine_theta = config.use_affine_theta
 
     if 'sa' in config.cuts_mode:
-        sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
-            get_transformed(
-                b_label.view(B, NUM_CLASSES, D, H, W),
-                b_soft_label.view(B, NUM_CLASSES, D, H, W),
-                nifti_affine, augment_affine,
-                sa_atm, sa_cut_module,
-                config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
-                image=None)
+        ctx = torch.no_grad \
+            if config.cuts_mode == 'sa>hla' else contextlib.nullcontext # Do not use gradients when just inferring from SA view
+        with ctx():
+            sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
+                get_transformed(
+                    b_label.view(B, NUM_CLASSES, D, H, W),
+                    b_soft_label.view(B, NUM_CLASSES, D, H, W),
+                    nifti_affine, augment_affine,
+                    sa_atm, sa_cut_module,
+                    config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
+                    image=None)
 
     if 'hla' in config.cuts_mode:
         hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
@@ -1252,57 +1254,57 @@ elif config_dict['sweep_type'] == 'stage_sweep':
             'sa_offsets',
         ], lambda_r=0.01)
 
-    std_stages = [
-        Stage(
-            r_params=r_params,
-            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-            do_output=True,
-            cuts_mode='sa',
-            reconstruction_target='sa-oriented',
-            epochs=config_dict['epochs'],
-            soft_cut_std=-999,
-            train_affine_theta=False,
-            __activate_fn__=deactivate_r_params
-        ),
-        Stage(
-            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-            cuts_mode='sa',
-            reconstruction_target='from-dataloader',
-            epochs=40,
-            soft_cut_std=0.125,
-            train_affine_theta=True,
-            do_output=True,
-            __activate_fn__=optimize_sa_angles
-        ),
-        Stage(
-            do_output=True,
-            cuts_mode='sa',
-            reconstruction_target='sa-oriented',
-            epochs=config_dict['epochs'],
-            soft_cut_std=-999,
-            train_affine_theta=False,
-            __activate_fn__=deactivate_r_params
-        ),
-        Stage(
-            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-            cuts_mode='sa',
-            reconstruction_target='from-dataloader',
-            epochs=40,
-            soft_cut_std=0.125,
-            do_output=True,
-            train_affine_theta=True,
-            __activate_fn__=optimize_sa_angles
-        ),
-        Stage(
-            do_output=True,
-            cuts_mode='sa',
-            reconstruction_target='sa-oriented',
-            epochs=config_dict['epochs'],
-            soft_cut_std=-999,
-            train_affine_theta=False,
-            __activate_fn__=deactivate_r_params
-        ),
+    # std_stages = [
+    #     Stage(
+    #         r_params=r_params,
+    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+    #         hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+    #         do_output=True,
+    #         cuts_mode='sa',
+    #         reconstruction_target='sa-oriented',
+    #         epochs=config_dict['epochs'],
+    #         soft_cut_std=-999,
+    #         train_affine_theta=False,
+    #         __activate_fn__=deactivate_r_params
+    #     ),
+    #     Stage(
+    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+    #         cuts_mode='sa',
+    #         reconstruction_target='from-dataloader',
+    #         epochs=40,
+    #         soft_cut_std=0.125,
+    #         train_affine_theta=True,
+    #         do_output=True,
+    #         __activate_fn__=optimize_sa_angles
+    #     ),
+    #     Stage(
+    #         do_output=True,
+    #         cuts_mode='sa',
+    #         reconstruction_target='sa-oriented',
+    #         epochs=config_dict['epochs'],
+    #         soft_cut_std=-999,
+    #         train_affine_theta=False,
+    #         __activate_fn__=deactivate_r_params
+    #     ),
+    #     Stage(
+    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+    #         cuts_mode='sa',
+    #         reconstruction_target='from-dataloader',
+    #         epochs=40,
+    #         soft_cut_std=0.125,
+    #         do_output=True,
+    #         train_affine_theta=True,
+    #         __activate_fn__=optimize_sa_angles
+    #     ),
+    #     Stage(
+    #         do_output=True,
+    #         cuts_mode='sa',
+    #         reconstruction_target='sa-oriented',
+    #         epochs=config_dict['epochs'],
+    #         soft_cut_std=-999,
+    #         train_affine_theta=False,
+    #         __activate_fn__=deactivate_r_params
+    #     ),
         # Stage(
         #     sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
         #     do_output=True,
@@ -1324,7 +1326,7 @@ elif config_dict['sweep_type'] == 'stage_sweep':
         #     do_output=True,
         #     __activate_fn__=optimize_hla_offsets
         # ),
-    ]
+    # ]
 
     # sa_angle_only_stages = [
     #     Stage(
