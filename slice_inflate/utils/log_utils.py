@@ -74,3 +74,9 @@ def log_frameless_image(image, _path, dpi=150, cmap='gray'):
 
     ax.imshow(image, aspect='auto', cmap=cmap)
     fig.savefig(_path, dpi=dpi)
+
+
+
+def get_cuda_mem_info_str(device=0):
+    free, total = torch.cuda.mem_get_info(device=device)
+    return f"CUDA memory used: {(total-free)/1024**3:.2f}/{total/1024**3:.2f} GB ({(total-free)/total*100:.1f}%)"

@@ -47,7 +47,7 @@ from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
 from slice_inflate.datasets.align_mmwhs import cut_slice
 from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, \
-    log_oa_metrics, log_affine_param_stats, log_frameless_image
+    log_oa_metrics, log_affine_param_stats, log_frameless_image, get_cuda_mem_info_str
 from sklearn.model_selection import KFold
 import numpy as np
 import monai
@@ -563,23 +563,25 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     sa_atm.use_affine_theta = config.use_affine_theta
     hla_atm.use_affine_theta = config.use_affine_theta
 
-    sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
-        get_transformed(
-            b_label.view(B, NUM_CLASSES, D, H, W),
-            b_soft_label.view(B, NUM_CLASSES, D, H, W),
-            nifti_affine, augment_affine,
-            sa_atm, sa_cut_module,
-            config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
-            image=None)
+    if 'sa' in config.cuts_mode:
+        sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
+            get_transformed(
+                b_label.view(B, NUM_CLASSES, D, H, W),
+                b_soft_label.view(B, NUM_CLASSES, D, H, W),
+                nifti_affine, augment_affine,
+                sa_atm, sa_cut_module,
+                config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
+                image=None)
 
-    hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
-        get_transformed(
-            b_label.view(B, NUM_CLASSES, D, H, W),
-            b_soft_label.view(B, NUM_CLASSES, D, H, W),
-            nifti_affine, augment_affine,
-            hla_atm, hla_cut_module,
-            config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
-            image=None)
+    if 'hla' in config.cuts_mode:
+        hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
+            get_transformed(
+                b_label.view(B, NUM_CLASSES, D, H, W),
+                b_soft_label.view(B, NUM_CLASSES, D, H, W),
+                nifti_affine, augment_affine,
+                hla_atm, hla_cut_module,
+                config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
+                image=None)
 
     if config.cuts_mode == 'sa':
         slices = [sa_label_slc, sa_label_slc]
@@ -729,7 +731,10 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     if isinstance(model, BlendowskiVAE):
         model.set_epoch(epx)
 
-    for batch_idx, batch in tqdm(enumerate(dataloader), desc=phase, total=len(dataloader)):
+    bbar = tqdm(enumerate(dataloader), desc=phase, total=len(dataloader))
+    lst_mem = {}
+    for batch_idx, batch in bbar:
+        bbar.set_description(f"{phase}, {get_cuda_mem_info_str()}")
         if phase == 'train':
             for opt in all_optimizers.values():
                 opt.zero_grad()
@@ -768,16 +773,16 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
         epx_losses.append(loss.item())
 
-        epx_input.update({k:v for k,v in zip(batch['id'], b_input)})
+        epx_input.update({k:v for k,v in zip(batch['id'], b_input.cpu())})
 
         if sa_atm.last_theta_ap is not None:
-            epx_sa_theta_aps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_ap)})
+            epx_sa_theta_aps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_ap.cpu())})
         if sa_atm.last_theta_tp is not None:
-            epx_sa_theta_tps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_tp)})
+            epx_sa_theta_tps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_tp.cpu())})
         if hla_atm.last_theta_ap is not None:
-            epx_hla_theta_aps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_ap)})
+            epx_hla_theta_aps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_ap.cpu())})
         if hla_atm.last_theta_tp is not None:
-            epx_hla_theta_tps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_tp)})
+            epx_hla_theta_tps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_tp.cpu())})
 
         pred_seg = y_hat.argmax(1)
 
@@ -884,7 +889,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             )
         )
 
-    if config.do_output:
+    if config.do_output and epx_input:
         # Store the slice model input
         save_input = torch.stack(list(epx_input.values()))
 
@@ -902,10 +907,12 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         else:
             save_input = save_input.argmax(0)
 
-        save_input = save_input.cpu()
         BI, DI, HI, WI = save_input.shape
         img_input = eo.rearrange(save_input, 'BI DI HI WI -> (DI WI) (BI HI)')
         log_frameless_image(img_input.numpy(), _dir / f"input_{phase}_epx_{epx}.png", dpi=150, cmap='gray')
+
+        focus_img_input = eo.rearrange(save_input.sum(0), 'DI HI WI -> (DI WI) HI')
+        log_frameless_image(focus_img_input.numpy(), _dir / f"input_{phase}_epx_{epx}_focus.png", dpi=150, cmap='magma')
 
         lean_dct = {k:v for k,v in zip(epx_input.keys(), save_input.short())}
         torch.save(lean_dct, _dir / f"input_{phase}_epx_{epx}.pt")
@@ -1008,7 +1015,7 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
             wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
             if not run_test_once_only:
-                train_loss, mean_transform_dict, b_input = epoch_iter(
+                train_loss, mean_transform_dict = epoch_iter(
                     epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
                     training_dataset, train_dataloader, class_weights, fold_postfix,
                     phase='train', autocast_enabled=autocast_enabled,
@@ -1187,8 +1194,7 @@ def stage_sweep_run(config_dict, all_stages):
             run_dl(run.name, config, training_dataset, test_dataset, stage)
         wandb.finish()
         torch.cuda.empty_cache()
-        free, total = torch.cuda.mem_get_info(device=0)
-        print(f"CUDA memory used: {(total-free)/1024**3:.2f}/{total/1024**3:.2f} GB ({(total-free)/total*100:.2}%)")
+        print(get_cuda_mem_info_str())
 
 
 
@@ -1320,115 +1326,115 @@ elif config_dict['sweep_type'] == 'stage_sweep':
         # ),
     ]
 
-    sa_angle_only_stages = [
-        Stage(
-            r_params=r_params,
-            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-            cuts_mode='sa',
-            reconstruction_target='from-dataloader',
-            epochs=40,
-            soft_cut_std=-999,
-            train_affine_theta=True,
-            do_output=True,
-            __activate_fn__=optimize_sa_angles
-        ),
-        Stage(
-            do_output=True,
-            cuts_mode='sa',
-            reconstruction_target='sa-oriented',
-            epochs=config_dict['epochs'],
-            soft_cut_std=-999,
-            train_affine_theta=False,
-            use_distance_map_localization=False,
-            __activate_fn__=deactivate_r_params
-        ),
-    ]
+    # sa_angle_only_stages = [
+    #     Stage(
+    #         r_params=r_params,
+    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+    #         hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+    #         cuts_mode='sa',
+    #         reconstruction_target='from-dataloader',
+    #         epochs=40,
+    #         soft_cut_std=-999,
+    #         train_affine_theta=True,
+    #         do_output=True,
+    #         __activate_fn__=optimize_sa_angles
+    #     ),
+    #     Stage(
+    #         do_output=True,
+    #         cuts_mode='sa',
+    #         reconstruction_target='sa-oriented',
+    #         epochs=config_dict['epochs'],
+    #         soft_cut_std=-999,
+    #         train_affine_theta=False,
+    #         use_distance_map_localization=False,
+    #         __activate_fn__=deactivate_r_params
+    #     ),
+    # ]
 
-    sa_offset_only_stages = [
-        Stage(
-            r_params=r_params,
-            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-            do_output=True,
-            cuts_mode='sa',
-            reconstruction_target='from-dataloader',
-            epochs=40,
-            soft_cut_std=-999,
-            train_affine_theta=True,
-            __activate_fn__=optimize_sa_offsets
-        ),
-        Stage(
-            do_output=True,
-            cuts_mode='sa',
-            reconstruction_target='sa-oriented',
-            epochs=config_dict['epochs'],
-            soft_cut_std=-999,
-            train_affine_theta=False,
-            __activate_fn__=deactivate_r_params
-        ),
-    ]
+    # sa_offset_only_stages = [
+    #     Stage(
+    #         r_params=r_params,
+    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+    #         hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+    #         do_output=True,
+    #         cuts_mode='sa',
+    #         reconstruction_target='from-dataloader',
+    #         epochs=40,
+    #         soft_cut_std=-999,
+    #         train_affine_theta=True,
+    #         __activate_fn__=optimize_sa_offsets
+    #     ),
+    #     Stage(
+    #         do_output=True,
+    #         cuts_mode='sa',
+    #         reconstruction_target='sa-oriented',
+    #         epochs=config_dict['epochs'],
+    #         soft_cut_std=-999,
+    #         train_affine_theta=False,
+    #         __activate_fn__=deactivate_r_params
+    #     ),
+    # ]
 
-    sa_angle_offset_stages = [
-        Stage(
-            r_params=r_params,
-            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-            cuts_mode='sa',
-            reconstruction_target='from-dataloader',
-            epochs=50,
-            soft_cut_std=-999,
-            train_affine_theta=True,
-            do_output=True,
-            __activate_fn__=optimize_sa_angles
-        ),
-        Stage(
-            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-            do_output=True,
-            cuts_mode='sa',
-            reconstruction_target='from-dataloader',
-            epochs=50,
-            soft_cut_std=-999,
-            train_affine_theta=True,
-            __activate_fn__=optimize_sa_offsets
-        ),
-        Stage(
-            do_output=True,
-            cuts_mode='sa',
-            reconstruction_target='sa-oriented',
-            epochs=config_dict['epochs'],
-            soft_cut_std=-999,
-            train_affine_theta=False,
-            __activate_fn__=deactivate_r_params
-        ),
-    ]
+    # sa_angle_offset_stages = [
+    #     Stage(
+    #         r_params=r_params,
+    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+    #         hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+    #         cuts_mode='sa',
+    #         reconstruction_target='from-dataloader',
+    #         epochs=50,
+    #         soft_cut_std=-999,
+    #         train_affine_theta=True,
+    #         do_output=True,
+    #         __activate_fn__=optimize_sa_angles
+    #     ),
+    #     Stage(
+    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+    #         hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+    #         do_output=True,
+    #         cuts_mode='sa',
+    #         reconstruction_target='from-dataloader',
+    #         epochs=50,
+    #         soft_cut_std=-999,
+    #         train_affine_theta=True,
+    #         __activate_fn__=optimize_sa_offsets
+    #     ),
+    #     Stage(
+    #         do_output=True,
+    #         cuts_mode='sa',
+    #         reconstruction_target='sa-oriented',
+    #         epochs=config_dict['epochs'],
+    #         soft_cut_std=-999,
+    #         train_affine_theta=False,
+    #         __activate_fn__=deactivate_r_params
+    #     ),
+    # ]
 
-    sa_all_params_stages = [
-        Stage(
-            r_params=None,
-            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-            cuts_mode='sa',
-            reconstruction_target='from-dataloader',
-            epochs=40,
-            soft_cut_std=-999,
-            use_distance_map_localization=True,
-            train_affine_theta=True,
-            do_output=True,
-            __activate_fn__=lambda stage: None
-        ),
-        Stage(
-            do_output=True,
-            cuts_mode='sa',
-            reconstruction_target='sa-oriented',
-            epochs=config_dict['epochs'],
-            soft_cut_std=-999,
-            train_affine_theta=False,
-            use_distance_map_localization=False,
-            __activate_fn__=lambda stage: None
-        ),
-    ]
+    # sa_all_params_stages = [
+    #     Stage(
+    #         r_params=None,
+    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
+    #         hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+    #         cuts_mode='sa',
+    #         reconstruction_target='from-dataloader',
+    #         epochs=40,
+    #         soft_cut_std=-999,
+    #         use_distance_map_localization=True,
+    #         train_affine_theta=True,
+    #         do_output=True,
+    #         __activate_fn__=lambda stage: None
+    #     ),
+    #     Stage(
+    #         do_output=True,
+    #         cuts_mode='sa',
+    #         reconstruction_target='sa-oriented',
+    #         epochs=config_dict['epochs'],
+    #         soft_cut_std=-999,
+    #         train_affine_theta=False,
+    #         use_distance_map_localization=False,
+    #         __activate_fn__=lambda stage: None
+    #     ),
+    # ]
 
     all_params_stages = [
         Stage( # Optimize SA

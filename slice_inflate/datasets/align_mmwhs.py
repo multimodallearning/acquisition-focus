@@ -159,7 +159,6 @@ def crop_around_label_center(b_image, b_label, vox_size):
 
 def get_crop_affine(affine, vox_offset):
     mm_offset = affine[:-1,:-1] @ vox_offset.to(affine)
-    crop_affine = affine.clone()
     crop_affine[:-1,-1] = affine[:-1,-1] + mm_offset
     return crop_affine
 

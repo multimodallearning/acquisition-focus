@@ -10,6 +10,8 @@ import copy
 import contextlib
 from scipy.ndimage import distance_transform_edt as distance
 import einops as eo
+import gc
+from collections import defaultdict
 
 MOD_GET_FN = lambda self, key: self[int(key)] if isinstance(self, nn.Sequential) \
                                               else getattr(self, key)
@@ -631,3 +633,34 @@ def anomaly_hook(self, _input, output):
             nan_mask = torch.isnan(out)
             inf_mask = torch.isinf(out)
             raise RuntimeError(f"Found nan/inf in output")
+
+
+
+def print_torch_memory_vars(last_mem_dict=None, show_leaves=True, show_cpu=True, show_empty=False):
+    mem_dict = defaultdict(lambda: 0)
+    torch.cuda.empty_cache()
+
+    for obj in gc.get_objects():
+        try:
+            if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+                if not obj.is_leaf and str(obj.device) == 'cuda:0':
+                    mem_dict[obj.size()] +=1
+                    # type(obj), obj.size(), obj.is_leaf, obj.device
+        except:
+            pass
+
+    if last_mem_dict is not None:
+        print("Torch memory footprint diff")
+
+        for size_key in set(list(last_mem_dict.keys()) + list(mem_dict.keys())):
+            num = mem_dict[size_key]
+            if key in last_mem_dict:
+                print(size_key, num, f"({num - last_mem_dict[size_key]:+})")
+            elif key in mem_dict:
+                print(size_key, num, f"({num:+})")
+    else:
+        print("Torch memory footprint")
+        for size_key, num in mem_dict.items():
+            print(size_key, f"#{num}")
+    print()
+    return mem_dict
