@@ -13,22 +13,22 @@ from slice_inflate.utils.common_utils import get_script_dir
 from pathlib import Path
 
 class ConvNet(torch.nn.Module):
-    def __init__(self, input_channels, kernel_size, padding):
+    def __init__(self, input_channels, kernel_size, padding, norm_op=nn.InstanceNorm3d):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv3d(input_channels,32,kernel_size,padding=padding), nn.BatchNorm3d(32), nn.LeakyReLU(),
+            nn.Conv3d(input_channels,32,kernel_size,padding=padding), norm_op(32), nn.LeakyReLU(),
             nn.AvgPool3d(2),
-            nn.Conv3d(32,64,kernel_size,padding=padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
-            nn.Conv3d(64,64,kernel_size,padding=padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
+            nn.Conv3d(32,64,kernel_size,padding=padding), norm_op(64), nn.LeakyReLU(),
+            nn.Conv3d(64,64,kernel_size,padding=padding), norm_op(64), nn.LeakyReLU(),
             nn.AvgPool3d(2),
-            nn.Conv3d(64,64,kernel_size,padding=padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
-            nn.Conv3d(64,64,kernel_size,padding=padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
+            nn.Conv3d(64,64,kernel_size,padding=padding), norm_op(64), nn.LeakyReLU(),
+            nn.Conv3d(64,64,kernel_size,padding=padding), norm_op(64), nn.LeakyReLU(),
             nn.AvgPool3d(2),
-            nn.Conv3d(64,64,kernel_size,padding=padding), nn.BatchNorm3d(64), nn.LeakyReLU(),
-            nn.Conv3d(64,32,kernel_size,padding=padding), nn.BatchNorm3d(32), nn.LeakyReLU(),
+            nn.Conv3d(64,64,kernel_size,padding=padding), norm_op(64), nn.LeakyReLU(),
+            nn.Conv3d(64,32,kernel_size,padding=padding), norm_op(32), nn.LeakyReLU(),
             nn.AvgPool3d(2),
-            nn.Conv3d(32,32,kernel_size,padding=padding), nn.BatchNorm3d(32), nn.LeakyReLU(),
-            nn.Conv3d(32,1,1,padding=0), nn.BatchNorm3d(1)
+            nn.Conv3d(32,32,kernel_size,padding=padding), norm_op(32), nn.LeakyReLU(),
+            nn.Conv3d(32,1,1,padding=0), norm_op(1)
         )
 
 
@@ -41,22 +41,8 @@ class LocalisationNet(torch.nn.Module):
     def __init__(self, input_channels, ap_output_size):
         super().__init__()
 
-        if True:
-            self.conv_net = ConvNet(input_channels=input_channels, kernel_size=5, padding=2)
-            self.fc_in_num = 1*8**3
-        else:
-            init_dict_path = Path(get_script_dir(), "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
-            with open(init_dict_path, 'rb') as f:
-                init_dict = dill.load(f)
-            init_dict['num_classes'] = input_channels
-            init_dict['deep_supervision'] = False
-            init_dict['final_nonlin'] = torch.nn.Identity()
-            use_skip_connections = False
-            init_dict['norm_op'] = nn.BatchNorm3d
-            init_dict['norm_op_kwargs'] = None
-            nnunet_model = Generic_UNet(**init_dict, use_skip_connections=use_skip_connections, use_onehot_input=True)
-            self.conv_net = nnunet_model
-            self.fc_in_num = 256*16**3
+        self.conv_net = ConvNet(input_channels=input_channels, kernel_size=5, padding=2)
+        self.fc_in_num = 1*8**3
 
         self.fca = nn.Linear(self.fc_in_num, ap_output_size)
         self.fct = nn.Linear(self.fc_in_num, 3)
@@ -67,8 +53,8 @@ class LocalisationNet(torch.nn.Module):
         h = h.reshape(bsz, -1)
         theta_ap = self.fca(h)
         theta_tp = self.fct(h)
+        
         return theta_ap, theta_tp
-        # return theta_ap.atan(), 2.0*theta_tp.sigmoid()-1.0
 
 
 
@@ -98,7 +84,7 @@ class AffineTransformModule(torch.nn.Module):
             self.ap_space = 6
             self.optim_function = compute_rotation_matrix_from_ortho6d
             self.init_theta_ap = torch.nn.Parameter(torch.tensor([[1e-2,0,0,0,1e-2,0]]), requires_grad=False)
-            
+
         else:
             raise ValueError()
 
