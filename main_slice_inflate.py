@@ -414,6 +414,9 @@ def get_atm(config, num_classes, view, this_script_dir, _path=None):
         "slice_inflate/preprocessing",
         "mmwhs_1002_HLA_red_slice_to_ras.mat"
     )
+
+    affine_path = "slice_inflate/preprocessing/mmwhs_registered_lowres_green_slice_to_ras.mat" # experiment 1
+
     # Add atm models
     atm = AffineTransformModule(num_classes,
         torch.tensor(config['fov_mm']),
@@ -964,7 +967,7 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
 
         if not run_test_once_only:
             train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
-                sampler=train_subsampler, pin_memory=False, drop_last=False,
+                sampler=train_subsampler, pin_memory=False, drop_last=True, # TODO Determine, why last batch is not transformed correctly
                 collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
             )
             training_dataset.set_augment_at_collate(False) # CAUTION: THIS INTERFERES WITH GRADIENT COMPUTATION IN AFFINE MODULES
