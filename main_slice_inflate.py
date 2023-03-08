@@ -587,12 +587,16 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
 
     if config.cuts_mode == 'sa':
         slices = [sa_label_slc, sa_label_slc]
+        grid_affines = [sa_grid_affine, sa_grid_affine]
     elif config.cuts_mode == 'hla':
         slices = [hla_label_slc, hla_label_slc]
+        grid_affines = [hla_grid_affine, hla_grid_affine]
     elif config.cuts_mode == 'sa>hla':
         slices = [sa_label_slc.detach(), hla_label_slc]
+        grid_affines = [sa_grid_affine.detach(), hla_grid_affine]
     elif config.cuts_mode == 'sa+hla':
         slices = [sa_label_slc, hla_label_slc]
+        grid_affines = [sa_grid_affine, hla_grid_affine]
     else:
         raise ValueError()
 
@@ -609,15 +613,17 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
         b_target = b_label
     elif config.reconstruction_target == 'sa-oriented':
         b_target = sa_label
+        raise ValueError("With hybrid network and its grid-sample skip-connections, currently sa-oriented output is not implemented.")
     elif config.reconstruction_target == 'hla-oriented':
         b_target = hla_label
+        raise ValueError("With hybrid network and its grid-sample skip-connections, currently hla-oriented output is not implemented.")
     else:
         raise ValueError()
 
     b_input = b_input.to(device=config.device)
     b_target = b_target.to(device=config.device)
 
-    return b_input.float(), b_target, sa_grid_affine, hla_grid_affine
+    return b_input.float(), b_target, grid_affines
 
 
 
@@ -670,13 +676,13 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
 
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
-        b_input, b_target, b_sa_affines, b_hla_affines = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
+        b_input, b_target, b_grid_affines = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
 
         # from slice_inflate.models.nnunet_models import SkipConnector
-        # nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_sa_affines, b_hla_affines)[0,:6].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sa.nii.gz")
-        # nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_sa_affines, b_hla_affines)[0,6:].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_hla.nii.gz")
+        # nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sa.nii.gz")
+        # nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_hla.nii.gz")
         # nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_target.nii.gz")
-        # nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_sa_affines, b_hla_affines)[0,6:].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sum.nii.gz")
+        # nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sum.nii.gz")
 
         wanted_input_dim = 4 if 'hybrid' in config.model_type else 5
         assert b_input.dim() == wanted_input_dim, \
@@ -689,7 +695,7 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
         elif config.model_type in ['unet', 'unet-wo-skip', 'hybrid-unet-wo-skip']:
             y_hat = model(b_input)
         elif config.model_type == 'hybrid-unet':
-            y_hat = model(b_input, b_sa_affines, b_hla_affines)
+            y_hat = model(b_input, b_grid_affines)
         else:
             raise ValueError
         # Reverse normalisation to outputs

@@ -30,12 +30,12 @@ class SkipConnector(torch.nn.Module):
         assert mode in ['repeat', 'fill-sparse']
         self.mode = mode
 
-    def forward(self, x, sa_grid_affines, hla_grid_affines):
+    def forward(self, x, b_grid_affines):
         B,C,SPAT,_ = x.shape
         C_HALF = C//2
         target_shape = torch.Size([B,C_HALF,SPAT,SPAT,SPAT])
 
-        # Prepare: Repeat on last spatial dimension and chunk
+        # Prepare: Repeat slice / fill slice into zeros on last spatial dimension and chunk
         if self.mode == 'repeat':
             x = torch.stack([x]*SPAT, dim=-1)
         elif self.mode == 'fill-sparse':
@@ -46,17 +46,17 @@ class SkipConnector(torch.nn.Module):
             raise ValueError()
         x_sa, x_hla = torch.chunk(x, 2, dim=1)
 
-        # Grid sample first channel chunk with inverse sa_grid_affines
+        # Grid sample first channel chunk with inverse SA affines
         sa_grid = torch.nn.functional.affine_grid(
-            sa_grid_affines.inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
+            b_grid_affines[0].inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
         )
         transformed_sa = checkpoint(torch.nn.functional.grid_sample,
             x_sa, sa_grid.to(x_sa), 'bilinear', 'border', False
         )
 
-        # Grid sample second channel chunk with inverse hla_grid_affines
+        # Grid sample second channel chunk with inverse HLA affines
         hla_grid = torch.nn.functional.affine_grid(
-            hla_grid_affines.inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
+            b_grid_affines[1].inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
         )
         transformed_hla = checkpoint(torch.nn.functional.grid_sample,
             x_hla, hla_grid.to(x_hla), 'bilinear', 'border', False
@@ -464,7 +464,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             # self.apply(print_module_training_status)
 
 
-    def forward(self, x, sa_grid_affines=None, hla_grid_affines=None):
+    def forward(self, x, b_grid_affines=None):
         skips = []
         seg_outputs = []
         for d in range(len(self.conv_blocks_context) - 1):
@@ -488,7 +488,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
         if self.is_hybrid:
             # x = x.unsqueeze(2).repeat(1,1,8,1,1) # TODO: automate calculation here
             # x = torch.stack(8*[x],dim=-1)
-            x = SkipConnector()(x, sa_grid_affines, hla_grid_affines)
+            x = SkipConnector()(x, b_grid_affines)
 
         for u in range(len(self.tu)):
             x = self.tu[u](x)
@@ -496,8 +496,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             if self.use_skip_connections:
                 if self.is_hybrid:
                     skip_2d = skips[-(u + 1)]
-                    sa_grid_affines, hla_grid_affines
-                    skip_3d = SkipConnector()(skip_2d, sa_grid_affines, hla_grid_affines)
+                    skip_3d = SkipConnector()(skip_2d, b_grid_affines)
 
                     x = torch.cat((x, skip_3d), dim=1)
 
