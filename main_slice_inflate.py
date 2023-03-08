@@ -948,7 +948,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
 
 def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
-    reset_determinism()
+    # reset_determinism()
 
     # Configure folds
     if config.num_folds < 1:
