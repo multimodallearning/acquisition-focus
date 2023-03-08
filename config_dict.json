@@ -6,7 +6,7 @@
     "test_only_and_output_to": null,
     "batch_size": 5,
     "val_batch_size": 1,
-    "do_augment": true,
+    "do_augment": false,
     "sample_augment_strength": 0.2,
     "modality": "mr",
     "train_affine_theta": false,
