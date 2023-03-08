@@ -74,6 +74,8 @@ def log_frameless_image(image, _path, dpi=150, cmap='gray'):
 
     ax.imshow(image, aspect='auto', cmap=cmap)
     fig.savefig(_path, dpi=dpi)
+    plt.close(fig)
+
 
 
 

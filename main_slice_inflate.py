@@ -1262,7 +1262,7 @@ elif config_dict['sweep_type'] == 'wandb_sweep':
     sweep_id = wandb.sweep(merged_sweep_config_dict, project=PROJECT_NAME)
     wandb.agent(sweep_id, function=wandb_sweep_run)
 
-elif config_dict['sweep_type'] == 'stage_sweep':
+elif config_dict['sweep_type'] == 'stage-sweep':
     r_params = init_regularization_params(
         [
             'hla_angles',
