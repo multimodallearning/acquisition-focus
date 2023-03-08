@@ -305,6 +305,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
             init_dict['use_onehot_input'] = False
             init_dict['input_channels'] = num_classes*2
             init_dict['pool_op_kernel_sizes'][-1] = [2,2,2]
+            init_dict['norm_op'] = nn.BatchNorm3d
             nnunet_model = Generic_UNet_Hybrid(**init_dict, use_skip_connections=use_skip_connections, encoder_mode=enc_mode, decoder_mode=dec_mode)
         else:
             enc_mode = '3d'
@@ -1288,7 +1289,7 @@ elif config_dict['sweep_type'] == 'stage-sweep':
             sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa',
-            epochs=40,
+            epochs=250,
             soft_cut_std=-999,
             use_distance_map_localization=False,
             use_affine_theta=True,
@@ -1299,7 +1300,7 @@ elif config_dict['sweep_type'] == 'stage-sweep':
         Stage( # Optimize hla
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa>hla',
-            epochs=40,
+            epochs=250,
             soft_cut_std=-999,
             use_distance_map_localization=False,
             use_affine_theta=True,
