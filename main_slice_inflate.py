@@ -415,8 +415,6 @@ def get_atm(config, num_classes, view, this_script_dir, _path=None):
         "mmwhs_1002_HLA_red_slice_to_ras.mat"
     )
 
-    affine_path = "slice_inflate/preprocessing/mmwhs_registered_lowres_green_slice_to_ras.mat" # experiment 1
-
     # Add atm models
     atm = AffineTransformModule(num_classes,
         torch.tensor(config['fov_mm']),
