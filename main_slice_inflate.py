@@ -587,16 +587,16 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
 
     if config.cuts_mode == 'sa':
         slices = [sa_label_slc, sa_label_slc]
-        grid_affines = [sa_grid_affine.detach().clone(), sa_grid_affine.detach().clone()]
+        grid_affines = [sa_grid_affine, sa_grid_affine]
     elif config.cuts_mode == 'hla':
         slices = [hla_label_slc, hla_label_slc]
-        grid_affines = [hla_grid_affine.detach().clone(), hla_grid_affine.detach().clone()]
+        grid_affines = [hla_grid_affine, hla_grid_affine]
     elif config.cuts_mode == 'sa>hla':
         slices = [sa_label_slc.detach(), hla_label_slc]
-        grid_affines = [sa_grid_affine.detach().clone(), hla_grid_affine.detach().clone()]
+        grid_affines = [sa_grid_affine, hla_grid_affine]
     elif config.cuts_mode == 'sa+hla':
         slices = [sa_label_slc, hla_label_slc]
-        grid_affines = [sa_grid_affine.detach().clone(), hla_grid_affine.detach().clone()]
+        grid_affines = [sa_grid_affine, hla_grid_affine]
     else:
         raise ValueError()
 
