@@ -323,12 +323,12 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
                 super().__init__()
                 self.nnunet_model = nnunet_model
 
-            def forward(self, x):
-                y_hat = self.nnunet_model(x)
+            def forward(self, *args, **kwargs):
+                y_hat = self.nnunet_model(*args, **kwargs)
                 if isinstance(y_hat, tuple):
-                    return y_hat[0], None
+                    return y_hat[0]
                 else:
-                    return y_hat, None
+                    return y_hat
 
         model = InterfaceModel(nnunet_model)
 
@@ -510,10 +510,10 @@ def get_transformed(label, soft_label, nifti_affine, augment_affine, atm, cut_mo
         image = torch.zeros(B,1,D,H,W, device=label.device)
 
     # Transform  label with 'bilinear' interpolation to have gradients
-    soft_label, _, _ = atm(soft_label.view(B, num_classes, D, H, W), None,
+    soft_label, _, grid_affine, _ = atm(soft_label.view(B, num_classes, D, H, W), None,
                             nifti_affine, augment_affine)
 
-    image, label, affine = atm(image.view(B, 1, D, H, W), label.view(B, num_classes, D, H, W),
+    image, label, _, _ = atm(image.view(B, 1, D, H, W), label.view(B, num_classes, D, H, W),
                                 nifti_affine, augment_affine, theta_override=atm.last_theta)
 
     if crop_around_3d_label_center is not None:
@@ -536,14 +536,13 @@ def get_transformed(label, soft_label, nifti_affine, augment_affine, atm, cut_mo
     if img_is_invalid:
         image = torch.empty([])
         image_slc = torch.empty([])
-        # Do not set label_slc to .int() here, since we (may) need the gradients
-    return image, label.int(), image_slc, label_slc, affine.float()
+
+    # Do not set label_slc to .int() here, since we (may) need the gradients
+    return image, label.int(), image_slc, label_slc, grid_affine
 
 
 
 def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, hla_cut_module):
-
-    W_TARGET_LEN = 128 # TODO remove this parameter
 
     b_label = batch['label']
     b_image = batch['image']
@@ -567,7 +566,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
         ctx = torch.no_grad \
             if config.cuts_mode == 'sa>hla' else contextlib.nullcontext # Do not use gradients when just inferring from SA view
         with ctx():
-            sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
+            sa_image, sa_label, sa_image_slc, sa_label_slc, sa_grid_affine = \
                 get_transformed(
                     b_label.view(B, NUM_CLASSES, D, H, W),
                     b_soft_label.view(B, NUM_CLASSES, D, H, W),
@@ -577,7 +576,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
                     image=None)
 
     if 'hla' in config.cuts_mode:
-        hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
+        hla_image, hla_label, hla_image_slc, hla_label_slc, hla_grid_affine = \
             get_transformed(
                 b_label.view(B, NUM_CLASSES, D, H, W),
                 b_soft_label.view(B, NUM_CLASSES, D, H, W),
@@ -597,12 +596,14 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     else:
         raise ValueError()
 
+    SPAT = sa_label.shape[-1]
+
     if 'hybrid' in config.model_type:
         b_input = torch.cat(slices, dim=1)
-        b_input = b_input.view(-1, NUM_CLASSES*2, W_TARGET_LEN, W_TARGET_LEN)
+        b_input = b_input.view(-1, NUM_CLASSES*2, SPAT, SPAT)
     else:
         b_input = torch.cat(slices, dim=-1)
-        b_input = torch.cat([b_input] * int(W_TARGET_LEN/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
+        b_input = torch.cat([b_input] * int(SPAT/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
 
     if config.reconstruction_target == 'from-dataloader':
         b_target = b_label
@@ -616,8 +617,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     b_input = b_input.to(device=config.device)
     b_target = b_target.to(device=config.device)
 
-    return b_input.float(), b_target, sa_affine
-
+    return b_input.float(), b_target, sa_grid_affine, hla_grid_affine
 
 
 
@@ -670,7 +670,12 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
 
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
-        b_input, b_target, _ = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
+        b_input, b_target, b_sa_affines, b_hla_affines = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
+
+        from slice_inflate.models.nnunet_models import SkipConnector
+        nib.save(nib.Nifti1Image(SkipConnector()(b_input, b_sa_affines, b_hla_affines)[0,:6].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sa.nii.gz")
+        nib.save(nib.Nifti1Image(SkipConnector()(b_input, b_sa_affines, b_hla_affines)[0,6:].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_hla.nii.gz")
+        nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_target.nii.gz")
 
         wanted_input_dim = 4 if 'hybrid' in config.model_type else 5
         assert b_input.dim() == wanted_input_dim, \
@@ -678,8 +683,12 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
 
         if config.model_type == 'vae':
             y_hat, (z, mean, std) = model(b_input)
-        elif config.model_type in ['ae', 'unet', 'hybrid-unet', 'unet-wo-skip', 'hybrid-ae', 'hybrid-unet-wo-skip']:
+        elif config.model_type in ['ae', 'hybrid-ae']:
             y_hat, _ = model(b_input)
+        elif config.model_type in ['unet', 'unet-wo-skip', 'hybrid-unet-wo-skip']:
+            y_hat = model(b_input)
+        elif config.model_type == 'hybrid-unet':
+            y_hat = model(b_input, b_sa_affines, b_hla_affines)
         else:
             raise ValueError
         # Reverse normalisation to outputs
@@ -790,7 +799,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         pred_seg = y_hat.argmax(1)
 
         # Taken from nibabel nifti1.py
-        rzs = sa_atm.last_resampled_affine[0,:3,:3]
+        rzs = sa_atm.last_transformed_nii_affine[0,:3,:3]
         nifti_zooms = (rzs[:3,:3]*rzs[:3,:3]).sum(1).sqrt().detach().cpu()
 
         # Calculate fast dice score

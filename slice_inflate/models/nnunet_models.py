@@ -23,6 +23,37 @@ from nnunet.network_architecture.neural_network import SegmentationNetwork
 import torch.nn.functional
 from torch.utils.checkpoint import checkpoint_sequential, checkpoint
 
+class SkipConnector(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, sa_grid_affines, hla_grid_affines):
+        B,C,SPAT,_ = x.shape
+        C_HALF = C//2
+        target_shape = torch.Size([B,C_HALF,SPAT,SPAT,SPAT])
+
+        # Prepare: Repeat on last spatial dimension and chunk
+        x = torch.stack([x]*SPAT, dim=-1)
+        x_sa, x_hla = torch.chunk(x, 2, dim=1)
+
+        # Grid sample first channel chunk with inverse sa_grid_affines
+        sa_grid = torch.nn.functional.affine_grid(
+            sa_grid_affines.inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
+        )
+        transformed_sa = checkpoint(torch.nn.functional.grid_sample,
+            x_sa, sa_grid.to(x_sa), 'bilinear', 'border', False
+        )
+
+        # Grid sample second channel chunk with inverse hla_grid_affines
+        hla_grid = torch.nn.functional.affine_grid(
+            hla_grid_affines.inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
+        )
+        transformed_hla = checkpoint(torch.nn.functional.grid_sample,
+            x_hla, hla_grid.to(x_hla), 'bilinear', 'border', False
+        )
+
+        skip_out = torch.cat([transformed_sa, transformed_hla], dim=1)
+        return skip_out
 
 class ConvDropoutNormNonlin(nn.Module):
     """
@@ -171,13 +202,13 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
     SPACING_FACTOR_BETWEEN_STAGES = 2
     BASE_NUM_FEATURES_3D = 30
     MAX_NUMPOOL_3D = 999
-    MAX_NUM_FILTERS_3D = 320
+    MAX_NUM_FILTERS_3D = 512
 
     DEFAULT_PATCH_SIZE_2D = (256, 256)
     BASE_NUM_FEATURES_2D = 30
     DEFAULT_BATCH_SIZE_2D = 50
     MAX_NUMPOOL_2D = 999
-    MAX_FILTERS_2D = 480
+    MAX_FILTERS_2D = 512
 
     use_this_for_batch_size_computation_2D = 19739648
     use_this_for_batch_size_computation_3D = 520000000  # 505789440
@@ -213,7 +244,8 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
         if norm_op_kwargs is None:
             norm_op_kwargs = {'eps': 1e-5, 'affine': True, 'momentum': 0.1}
 
-        self.enc_conv_kwargs = self.dec_conv_kwargs = {'stride': 1, 'dilation': 1, 'bias': True}
+        self.enc_conv_kwargs = {'stride': 1, 'dilation': 1, 'bias': True}
+        self.dec_conv_kwargs = self.enc_conv_kwargs.copy()
         self.enc_dropout_op_kwargs = self.dec_dropout_op_kwargs = dropout_op_kwargs
         self.enc_norm_op_kwargs = self.dec_norm_op_kwargs = norm_op_kwargs
 
@@ -256,13 +288,19 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
         self.conv_blocks_localization = []
         self.td = []
         self.tu = []
+        self.tskip = []
         self.seg_outputs = []
 
         output_features = base_num_features
+
         if use_onehot_input:
             input_features = num_classes
         else:
             input_features = input_channels
+
+        if self.is_hybrid:
+            output_features = output_features * 2
+            self.enc_conv_kwargs['groups'] = 2
 
         for d in range(num_pool):
             # determine the first stride
@@ -337,6 +375,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             nfeatures_from_down = min(final_num_features, self.dec_max_num_features)
             nfeatures_from_skip = self.conv_blocks_context[
                 -(2 + u)].output_channels  # self.conv_blocks_context[-1] is bottleneck, so start with -2
+            nfeatures_from_skip = nfeatures_from_skip // 2
             n_features_after_tu_and_concat = nfeatures_from_skip * 2
 
             # the first conv reduces the number of features to match those of skip
@@ -346,6 +385,10 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
                 final_num_features = self.conv_blocks_context[-(3 + u)].output_channels
             else:
                 final_num_features = nfeatures_from_skip
+
+            # Clip channels values
+            nfeatures_from_skip = min(nfeatures_from_skip, Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D)
+            n_features_after_tu_and_concat = min(n_features_after_tu_and_concat, Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D)
 
             if not self.convolutional_upsampling:
                 self.tu.append(Upsample(scale_factor=self.dec_pool_op_kernel_sizes[-(u + 1)], mode=upsample_mode))
@@ -359,7 +402,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             if not self.use_skip_connections:
                 n_features_after_tu_and_concat = n_features_after_tu_and_concat//2
             elif self.use_skip_connections and self.is_hybrid:
-                n_features_after_tu_and_concat = n_features_after_tu_and_concat//2
+                n_features_after_tu_and_concat = int(n_features_after_tu_and_concat*1.5)
 
             self.conv_blocks_localization.append(nn.Sequential(
                 StackedConvLayers(n_features_after_tu_and_concat, nfeatures_from_skip, num_conv_per_stage - 1,
@@ -369,6 +412,15 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
                                   self.dec_norm_op, self.dec_norm_op_kwargs, self.dec_dropout_op, self.dec_dropout_op_kwargs,
                                   self.nonlin, self.nonlin_kwargs, basic_block=basic_block)
             ))
+
+        # for s in range(num_pool):
+        #     dec_skip_nfeat = self.conv_blocks_context[s].output_channels
+        #     enc_skip_nfeat = base_num_features*(s+1)
+
+        #     self.tskip.append(
+        #         self.dec_transpconv(enc_skip_nfeat, dec_skip_nfeat, self.dec_pool_op_kernel_sizes[-(s + 1)],
+        #             self.dec_pool_op_kernel_sizes[-(s + 1)], bias=False)
+        #     )
 
         for ds in range(len(self.conv_blocks_localization)):
             self.seg_outputs.append(conv_op(self.conv_blocks_localization[ds][-1].output_channels, num_classes,
@@ -391,6 +443,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
         self.conv_blocks_context = nn.ModuleList(self.conv_blocks_context)
         self.td = nn.ModuleList(self.td)
         self.tu = nn.ModuleList(self.tu)
+        # self.tskip = nn.ModuleList(self.tskip)
         self.seg_outputs = nn.ModuleList(self.seg_outputs)
         if self.upscale_logits:
             self.upscale_logits_ops = nn.ModuleList(
@@ -400,23 +453,8 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             self.apply(self.weightInitializer)
             # self.apply(print_module_training_status)
 
-        if self.is_hybrid:
-            CHN = 4
-            SPAT = 8
-            self.connector = nn.Sequential(
-                nn.Conv2d(Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D,CHN,1),
-                self.enc_norm_op(CHN),
-                torch.nn.Flatten(1,-1),
-                nn.Linear(CHN*SPAT**2, CHN*SPAT**3),
-                torch.nn.Unflatten(1, (CHN,SPAT,SPAT,SPAT)),
-                self.dec_norm_op(CHN),
-                self.nonlin(**self.nonlin_kwargs),
-                nn.ConvTranspose3d(CHN,Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D,1),
-                self.dec_norm_op(CHN),
-                self.nonlin(**self.nonlin_kwargs)
-            )
 
-    def forward(self, x, sa_affines=None, hla_affines=None):
+    def forward(self, x, sa_grid_affines=None, hla_grid_affines=None):
         skips = []
         seg_outputs = []
         for d in range(len(self.conv_blocks_context) - 1):
@@ -440,16 +478,18 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
         if self.is_hybrid:
             # x = x.unsqueeze(2).repeat(1,1,8,1,1) # TODO: automate calculation here
             # x = torch.stack(8*[x],dim=-1)
-            x = self.connector(x)
+            x = SkipConnector()(x, sa_grid_affines, hla_grid_affines)
 
         for u in range(len(self.tu)):
             x = self.tu[u](x)
+
             if self.use_skip_connections:
                 if self.is_hybrid:
-                    B,C,D,H,W = x.shape
-                    raise NotImplementedError()
-                    sa_affines, hla_affines
-                    x = x + skips[-(u + 1)].view(B,C,D,H,1)
+                    skip_2d = skips[-(u + 1)]
+                    sa_grid_affines, hla_grid_affines
+                    skip_3d = SkipConnector()(skip_2d, sa_grid_affines, hla_grid_affines)
+
+                    x = torch.cat((x, skip_3d), dim=1)
 
                 else:
                     # Normal nnunet skip connections
@@ -549,7 +589,7 @@ def get_conv_op_config(conv_op, conv_kernel_sizes, pool_op_kernel_sizes, num_poo
         if conv_op == nn.Conv3d:
             max_num_features = Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D
         else:
-            max_num_features = Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D
+            max_num_features = Generic_UNet_Hybrid.MAX_FILTERS_2D
     else:
         max_num_features = max_num_features
 

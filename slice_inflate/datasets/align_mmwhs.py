@@ -145,10 +145,12 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
     transformed = transformed.view(target_shape)
 
     # Rebuild affine
-    transformed_affine = get_transformed_affine_from_grid_affine(grid_affine,
+    grid_affine_cloned = grid_affine.clone().detach()
+
+    transformed_nii_affine = get_transformed_affine_from_grid_affine(grid_affine_cloned,
         volume_affine, ras_affine_mat, volume_shape, fov_vox)
 
-    return transformed, transformed_affine
+    return transformed, grid_affine, transformed_nii_affine
 
 
 

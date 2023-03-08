@@ -53,7 +53,7 @@ class LocalisationNet(torch.nn.Module):
         h = h.reshape(bsz, -1)
         theta_ap = self.fca(h)
         theta_tp = self.fct(h)
-        
+
         return theta_ap, theta_tp
 
 
@@ -103,7 +103,8 @@ class AffineTransformModule(torch.nn.Module):
         self.last_theta_a = None
         self.last_theta_t = None
         self.last_theta = None
-        self.last_resampled_affine = None
+        self.last_grid_affine = None
+        self.last_transformed_nii_affine = None
 
     def set_init_theta_ap(self, init_theta_ap):
         self.init_theta_ap.data = init_theta_ap.data
@@ -195,19 +196,20 @@ class AffineTransformModule(torch.nn.Module):
 
         if not x_image_is_none:
             # nifti_affine is the affine of the original volume
-            y_image, resampled_affine = nifti_transform(x_image, nifti_affine, global_prelocate_affine,
+            y_image, grid_affine, transformed_nii_affine = nifti_transform(x_image, nifti_affine, global_prelocate_affine,
                                         fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=False,
                                         pre_grid_sample_affine=theta)
 
         if not x_label_is_none:
             # nifti_affine is the affine of the original volume
-            y_label, resampled_affine = nifti_transform(x_label, nifti_affine, global_prelocate_affine,
+            y_label, grid_affine, transformed_nii_affine = nifti_transform(x_label, nifti_affine, global_prelocate_affine,
                                         fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=True,
                                         pre_grid_sample_affine=theta)
 
-        self.last_resampled_affine = resampled_affine
+        self.last_grid_affine = grid_affine
+        self.last_transformed_nii_affine = transformed_nii_affine
 
-        return y_image, y_label, resampled_affine
+        return y_image, y_label, grid_affine, transformed_nii_affine
 
 
 
