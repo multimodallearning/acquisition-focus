@@ -173,7 +173,7 @@ if False:
     print("do_augment", training_dataset.do_augment)
 
     train_dataloader = DataLoader(training_dataset, batch_size=config_dict.batch_size,
-        pin_memory=False, drop_last=False,
+        pin_memory=False, drop_last=True,
         collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
     )
     training_dataset.set_augment_at_collate(False)
