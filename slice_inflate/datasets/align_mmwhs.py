@@ -103,8 +103,8 @@ def get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape
 def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_mat: torch.Tensor, fov_mm, fov_vox,
     is_label=False, pre_grid_sample_affine=None, pre_grid_sample_augment_affine=None, dtype=torch.float32):
 
-    assert volume_affine.dim() == ras_affine_mat.dim() == 3 # B,4,4
-    assert volume.shape[0] == volume_affine.shape[0] == ras_affine_mat.shape[0]
+    assert volume_affine.dim() == ras_affine_mat.dim() == pre_grid_sample_affine.dim() == pre_grid_sample_augment_affine.dim() == 3 # B,4,4
+    assert volume.shape[0] == volume_affine.shape[0] == ras_affine_mat.shape[0] == pre_grid_sample_affine.shape[0] == pre_grid_sample_augment_affine.shape[0]
 
     device = volume.device
     fov_mm = fov_mm.to(device)

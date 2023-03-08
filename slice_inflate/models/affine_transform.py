@@ -191,7 +191,7 @@ class AffineTransformModule(torch.nn.Module):
         # globabl_prelocate_affine : Affine for prelocating the volume (slice orientation and augmentation)
         # theta   : Affine for the learnt transformation
 
-        global_prelocate_affine = self.view_affine.to(device)
+        global_prelocate_affine = self.view_affine.repeat(B,1,1).to(device)
 
         if not x_image_is_none:
             # nifti_affine is the affine of the original volume
