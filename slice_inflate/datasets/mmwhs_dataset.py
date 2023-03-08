@@ -14,7 +14,8 @@ import einops as eo
 from torch.utils.checkpoint import checkpoint
 
 from slice_inflate.utils.common_utils import DotDict, get_script_dir
-from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, get_rotation_matrix_3d_from_angles, calc_dist_map
+from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, calc_dist_map
+from slice_inflate.models.affine_transform import get_random_affine
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
 from slice_inflate.datasets.align_mmwhs import crop_around_label_center, cut_slice, soft_cut_slice
 
@@ -125,13 +126,10 @@ class MMWHSDataset(HybridIdDataset):
             augment_affine = torch.eye(4)
 
             if self.do_augment:
-                augment_angle_std = self.self_attributes['augment_angle_std']
-                deg_angles = torch.normal(
-                    mean=0, std=augment_angle_std*torch.ones(3))
-                augment_affine[:3, :3] = get_rotation_matrix_3d_from_angles(
-                    deg_angles)
+                sample_augment_strength = self.self_attributes['sample_augment_strength']
+                augment_affine = get_random_affine(sample_augment_strength)
 
-            additional_data['augment_affine'] = augment_affine.view(4, 4)
+            additional_data['augment_affine'] = augment_affine.view(4,4)
 
             D, H, W = label.shape
 

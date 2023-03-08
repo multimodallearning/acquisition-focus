@@ -101,7 +101,7 @@ def get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape
 
 
 def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_mat: torch.Tensor, fov_mm, fov_vox,
-    is_label=False, pre_grid_sample_affine=None, dtype=torch.float32):
+    is_label=False, pre_grid_sample_affine=None, pre_grid_sample_augment_affine=None, dtype=torch.float32):
 
     assert volume_affine.dim() == ras_affine_mat.dim() == 3 # B,4,4
     assert volume.shape[0] == volume_affine.shape[0] == ras_affine_mat.shape[0]
@@ -115,6 +115,9 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
     if pre_grid_sample_affine is not None:
         pre_grid_sample_affine = pre_grid_sample_affine.to(volume_affine)
 
+    if pre_grid_sample_augment_affine is not None:
+        pre_grid_sample_augment_affine = pre_grid_sample_augment_affine.to(volume_affine)
+
     # Prepare volume
     B,C,D,H,W = volume.shape
     volume_shape = torch.tensor([D,H,W], device=device)
@@ -122,11 +125,11 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
 
     # Get the affine for torch grid resampling from RAS space
     grid_affine = get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape, fov_mm, pre_grid_sample_affine)
-
     target_shape = torch.Size([B,C] + fov_vox.tolist())
 
+    augmented_grid_affine = (grid_affine @ pre_grid_sample_augment_affine)
     grid = torch.nn.functional.affine_grid(
-        grid_affine[:,:3,:].view(B,3,4), target_shape, align_corners=False
+        augmented_grid_affine[:,:3,:].view(B,3,4), target_shape, align_corners=False
     ).to(device=volume.device)
 
     if is_label:
@@ -147,6 +150,7 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
     # Rebuild affine
     grid_affine_cloned = grid_affine.clone().detach()
 
+    # This will only be for nifti output, no gradients here.
     transformed_nii_affine = get_transformed_affine_from_grid_affine(grid_affine_cloned,
         volume_affine, ras_affine_mat, volume_shape, fov_vox)
 

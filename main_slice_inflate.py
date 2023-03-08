@@ -60,7 +60,7 @@ from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
     get_batch_dice_over_all, get_batch_score_per_label, save_model, \
     reduce_label_scores_epoch, get_test_func_all_parameters_updated, anomaly_hook
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
-from slice_inflate.models.affine_transform import AffineTransformModule, get_random_angles, SoftCutModule, HardCutModule, get_theta_params
+from slice_inflate.models.affine_transform import AffineTransformModule, SoftCutModule, HardCutModule, get_theta_params
 from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
 from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params, deactivate_r_params, Stage, StageIterator
 
@@ -99,7 +99,7 @@ def prepare_data(config):
         crop_around_2d_label_center=config.crop_around_2d_label_center,
         max_load_3d_num=config.max_load_3d_num,
         soft_cut_std=config.soft_cut_std,
-        augment_angle_std=5,
+        sample_augment_strength=config.sample_augment_strength,
         device=config.device,
         debug=config.debug
     )
@@ -372,8 +372,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
     scaler = amp.GradScaler()
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', patience=20, threshold=0.01, threshold_mode='rel')
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.995)
+
 
 
     if _path and not load_model_only:
@@ -483,8 +483,10 @@ def get_transform_model(config, num_classes, this_script_dir, _path=None, sa_atm
 
     if config.train_affine_theta:
         transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=0.001)
+        transform_scheduler = torch.optim.lr_scheduler.ExponentialLR(transform_optimizer, gamma=0.995)
     else:
         transform_optimizer = NoneOptimizer()
+        transform_scheduler = None
 
     if _path and config.train_affine_theta:
         assert Path(_path).is_dir()
@@ -494,12 +496,12 @@ def get_transform_model(config, num_classes, this_script_dir, _path=None, sa_atm
     else:
         print(f"Generated fresh transform optimizer.")
 
-    return (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer
+    return (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer, transform_scheduler
 
 
 
 # %%
-def get_transformed(label, soft_label, nifti_affine, augment_affine, atm, cut_module,
+def get_transformed(label, soft_label, nifti_affine, hidden_sample_augment_affine, atm, cut_module,
     crop_around_3d_label_center, crop_around_2d_label_center, image=None):
 
     img_is_invalid = image is None or image.dim() == 0
@@ -511,10 +513,10 @@ def get_transformed(label, soft_label, nifti_affine, augment_affine, atm, cut_mo
 
     # Transform  label with 'bilinear' interpolation to have gradients
     soft_label, _, grid_affine, _ = atm(soft_label.view(B, num_classes, D, H, W), None,
-                            nifti_affine, augment_affine)
+                            nifti_affine, hidden_sample_augment_affine)
 
     image, label, _, _ = atm(image.view(B, 1, D, H, W), label.view(B, num_classes, D, H, W),
-                                nifti_affine, augment_affine, theta_override=atm.last_theta)
+                                nifti_affine, hidden_sample_augment_affine, theta_override=atm.last_theta)
 
     if crop_around_3d_label_center is not None:
         _3d_vox_size = torch.as_tensor(
@@ -557,7 +559,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
         b_soft_label = b_label
 
     nifti_affine = batch['additional_data']['nifti_affine']
-    augment_affine = batch['additional_data']['augment_affine']
+    hidden_sample_augment_affine = batch['additional_data']['augment_affine']
 
     sa_atm.use_affine_theta = config.use_affine_theta
     hla_atm.use_affine_theta = config.use_affine_theta
@@ -570,7 +572,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
                 get_transformed(
                     b_label.view(B, NUM_CLASSES, D, H, W),
                     b_soft_label.view(B, NUM_CLASSES, D, H, W),
-                    nifti_affine, augment_affine,
+                    nifti_affine, hidden_sample_augment_affine,
                     sa_atm, sa_cut_module,
                     config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
                     image=None)
@@ -580,7 +582,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
             get_transformed(
                 b_label.view(B, NUM_CLASSES, D, H, W),
                 b_soft_label.view(B, NUM_CLASSES, D, H, W),
-                nifti_affine, augment_affine,
+                nifti_affine, hidden_sample_augment_affine,
                 hla_atm, hla_cut_module,
                 config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
                 image=None)
@@ -1012,11 +1014,13 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
         sa_atm_override = stage['sa_atm'] if stage is not None and 'sa_atm' in stage else None
         hla_atm_override = stage['hla_atm'] if stage is not None and 'hla_atm' in stage else None
 
-        (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer = get_transform_model(
+        (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer, transform_scheduler = get_transform_model(
             config, len(training_dataset.label_tags), THIS_SCRIPT_DIR, _path=transform_mdl_chk_path,
             sa_atm_override=sa_atm_override, hla_atm_override=hla_atm_override)
 
         all_optimizers = dict(optimizer=optimizer, transform_optimizer=transform_optimizer)
+        all_schedulers = dict(scheduler=scheduler, transform_scheduler=transform_scheduler)
+
         r_params = stage['r_params'] if stage is not None and 'r_params' in stage else None
         # all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
 
@@ -1060,7 +1064,9 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
 
             ###  Scheduler management ###
             if config.use_scheduling:
-                scheduler.step(quality_metric)
+                for shd_name, shd in all_schedulers.items():
+                    if shd is not None:
+                        shd.step()
 
             wandb.log({f'training/scheduler_lr': scheduler.optimizer.param_groups[0]['lr']}, step=global_idx)
             print()
