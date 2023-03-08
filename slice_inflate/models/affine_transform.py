@@ -40,7 +40,7 @@ class LocalisationNet(torch.nn.Module):
     def __init__(self, input_channels, ap_output_size):
         super().__init__()
 
-        self.conv_net = ConvNet(input_channels=input_channels, kernel_size=5, padding=2)
+        self.conv_net = ConvNet(input_channels=input_channels, kernel_size=5, padding=2, norm_op=nn.BatchNorm3d)
         self.fc_in_num = 1*8**3
 
         self.fca = nn.Linear(self.fc_in_num, ap_output_size)
