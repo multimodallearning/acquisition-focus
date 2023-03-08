@@ -12,7 +12,7 @@
     "train_affine_theta": false,
     "use_affine_theta": false,
     "use_distance_map_localization": false,
-    "reconstruction_target": "from-dataloader",
+    "reconstruction_target": "sa-oriented",
     "affine_theta_optim_method": "R6-vector",
     "soft_cut_std": -999,
     "cuts_mode": "sa+hla",
