@@ -416,7 +416,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
                 self.nonlin(**self.nonlin_kwargs)
             )
 
-    def forward(self, x):
+    def forward(self, x, sa_affines=None, hla_affines=None):
         skips = []
         seg_outputs = []
         for d in range(len(self.conv_blocks_context) - 1):
@@ -445,13 +445,10 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
         for u in range(len(self.tu)):
             x = self.tu[u](x)
             if self.use_skip_connections:
-                if self.encoder_mode == '2d' and self.decoder_mode == '3d':
+                if self.is_hybrid:
                     B,C,D,H,W = x.shape
-                    # skip = torch.zeros_like(x)
-                    # skip[...,W//2] = skips[-(u + 1)]
-                    # x_kspace = torch.fft.fftn(x, dim=(-3,-2,-1), s=(8,8,8))
-                    # skip_kspace = torch.fft.fftn(x, dim=(-3,-2,-1), s=(8,8,8))
-                    # x = torch.fft.ifftn(x_kspace+skip_kspace, dim=(-3,-2,-1), s=(8,8,8)).abs()
+                    raise NotImplementedError()
+                    sa_affines, hla_affines
                     x = x + skips[-(u + 1)].view(B,C,D,H,1)
 
                 else:
