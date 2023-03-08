@@ -24,8 +24,11 @@ import torch.nn.functional
 from torch.utils.checkpoint import checkpoint_sequential, checkpoint
 
 class SkipConnector(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, mode='repeat'):
         super().__init__()
+
+        assert mode in ['repeat', 'fill-sparse']
+        self.mode = mode
 
     def forward(self, x, sa_grid_affines, hla_grid_affines):
         B,C,SPAT,_ = x.shape
@@ -33,7 +36,14 @@ class SkipConnector(torch.nn.Module):
         target_shape = torch.Size([B,C_HALF,SPAT,SPAT,SPAT])
 
         # Prepare: Repeat on last spatial dimension and chunk
-        x = torch.stack([x]*SPAT, dim=-1)
+        if self.mode == 'repeat':
+            x = torch.stack([x]*SPAT, dim=-1)
+        elif self.mode == 'fill-sparse':
+            zer = torch.zeros(B,C,SPAT,SPAT,SPAT)
+            zer[..., SPAT//2] = x
+            x = zer
+        else:
+            raise ValueError()
         x_sa, x_hla = torch.chunk(x, 2, dim=1)
 
         # Grid sample first channel chunk with inverse sa_grid_affines

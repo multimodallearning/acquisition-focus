@@ -592,7 +592,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     elif config.cuts_mode == 'sa>hla':
         slices = [sa_label_slc.detach(), hla_label_slc]
     elif config.cuts_mode == 'sa+hla':
-        slices = [hla_label_slc, sa_label_slc]
+        slices = [sa_label_slc, hla_label_slc]
     else:
         raise ValueError()
 
@@ -672,10 +672,11 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
     with amp.autocast(enabled=autocast_enabled):
         b_input, b_target, b_sa_affines, b_hla_affines = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
 
-        from slice_inflate.models.nnunet_models import SkipConnector
-        nib.save(nib.Nifti1Image(SkipConnector()(b_input, b_sa_affines, b_hla_affines)[0,:6].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sa.nii.gz")
-        nib.save(nib.Nifti1Image(SkipConnector()(b_input, b_sa_affines, b_hla_affines)[0,6:].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_hla.nii.gz")
-        nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_target.nii.gz")
+        # from slice_inflate.models.nnunet_models import SkipConnector
+        # nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_sa_affines, b_hla_affines)[0,:6].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sa.nii.gz")
+        # nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_sa_affines, b_hla_affines)[0,6:].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_hla.nii.gz")
+        # nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_target.nii.gz")
+        # nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_sa_affines, b_hla_affines)[0,6:].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sum.nii.gz")
 
         wanted_input_dim = 4 if 'hybrid' in config.model_type else 5
         assert b_input.dim() == wanted_input_dim, \
