@@ -1476,7 +1476,7 @@ elif config_dict['sweep_type'] == 'stage-sweep':
         Stage( # Optimize hla
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa>hla',
-            reconstruction_target='from-dataloader',
+            reconstruction_target='sa-oriented',
             epochs=40,
             soft_cut_std=-999,
             use_distance_map_localization=False,
@@ -1488,7 +1488,7 @@ elif config_dict['sweep_type'] == 'stage-sweep':
         Stage( # Final optimized run
             do_output=True,
             cuts_mode='sa+hla',
-            reconstruction_target='from-dataloader',
+            reconstruction_target='sa-oriented',
             epochs=config_dict['epochs'],
             soft_cut_std=-999,
             use_affine_theta=True,
@@ -1499,7 +1499,7 @@ elif config_dict['sweep_type'] == 'stage-sweep':
         Stage( # Reference run
             do_output=True,
             cuts_mode='sa+hla',
-            reconstruction_target='from-dataloader',
+            reconstruction_target='sa-oriented',
             epochs=config_dict['epochs'],
             soft_cut_std=-999,
             train_affine_theta=False,
