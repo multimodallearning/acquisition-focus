@@ -180,6 +180,7 @@ class AffineTransformModule(torch.nn.Module):
             else:
                 theta_a, theta_t = self.get_init_affines()
                 theta_a, theta_t = theta_a.to(device), theta_t.to(device)
+                theta_a, theta_t = theta_a.repeat(B,1,1), theta_t.repeat(B,1,1)
 
             theta = theta_a @ theta_t
 
