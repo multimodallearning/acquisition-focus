@@ -5,7 +5,6 @@ import torch.cuda.amp as amp
 import numpy as np
 import einops as eo
 from slice_inflate.datasets.align_mmwhs import nifti_transform
-from slice_inflate.utils.torch_utils import get_rotation_matrix_3d_from_angles
 
 import dill
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
@@ -257,21 +256,11 @@ class SoftCutModule(torch.nn.Module):
 
 
 
-def get_random_affine(angle_std, seed=0):
-    angles = get_random_angles(angle_std, seed)
-    theta_m = get_rotation_matrix_3d_from_angles(angles)
-
-    theta = torch.eye(4)
-    theta[:3,:3] = theta_m
-    return theta
-
-
-
-def get_random_angles(angle_std, seed=0):
-    torch.random.manual_seed(seed)
-    mean, std = torch.zeros(3), torch.ones(3) * angle_std
-    angles = torch.normal(mean, std)
-    return angles
+def get_random_affine(strength=0.2):
+    params = torch.tensor([[1.,0.,0., 0.,1.,0.]])
+    randn = torch.rand_like(params) * strength - strength/2
+    rand_theta = compute_rotation_matrix_from_ortho6d(params+randn)
+    return rand_theta
 
 
 

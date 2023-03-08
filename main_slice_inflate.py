@@ -698,6 +698,8 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
         elif config.model_type in ['unet', 'unet-wo-skip', 'hybrid-unet-wo-skip']:
             y_hat = model(b_input)
         elif config.model_type == 'hybrid-unet':
+            if 'stage-1' in wandb.run.name or 'stage-2' in wandb.run.name:
+                b_grid_affines[0], b_grid_affines[1] = b_grid_affines[0].detach(), b_grid_affines[1].detach()
             y_hat = model(b_input, b_grid_affines)
         else:
             raise ValueError
@@ -1274,197 +1276,13 @@ elif config_dict['sweep_type'] == 'stage-sweep':
             'sa_offsets',
         ], lambda_r=0.01)
 
-    # std_stages = [
-    #     Stage(
-    #         r_params=r_params,
-    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-    #         hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-    #         do_output=True,
-    #         cuts_mode='sa',
-    #         reconstruction_target='sa-oriented',
-    #         epochs=config_dict['epochs'],
-    #         soft_cut_std=-999,
-    #         train_affine_theta=False,
-    #         __activate_fn__=deactivate_r_params
-    #     ),
-    #     Stage(
-    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-    #         cuts_mode='sa',
-    #         reconstruction_target='from-dataloader',
-    #         epochs=40,
-    #         soft_cut_std=0.125,
-    #         train_affine_theta=True,
-    #         do_output=True,
-    #         __activate_fn__=optimize_sa_angles
-    #     ),
-    #     Stage(
-    #         do_output=True,
-    #         cuts_mode='sa',
-    #         reconstruction_target='sa-oriented',
-    #         epochs=config_dict['epochs'],
-    #         soft_cut_std=-999,
-    #         train_affine_theta=False,
-    #         __activate_fn__=deactivate_r_params
-    #     ),
-    #     Stage(
-    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-    #         cuts_mode='sa',
-    #         reconstruction_target='from-dataloader',
-    #         epochs=40,
-    #         soft_cut_std=0.125,
-    #         do_output=True,
-    #         train_affine_theta=True,
-    #         __activate_fn__=optimize_sa_angles
-    #     ),
-    #     Stage(
-    #         do_output=True,
-    #         cuts_mode='sa',
-    #         reconstruction_target='sa-oriented',
-    #         epochs=config_dict['epochs'],
-    #         soft_cut_std=-999,
-    #         train_affine_theta=False,
-    #         __activate_fn__=deactivate_r_params
-    #     ),
-        # Stage(
-        #     sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-        #     do_output=True,
-        #     __activate_fn__=optimize_sa_offsets
-        # ),
-        # Stage(
-        #     hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-        #     cuts_mode='sa>hla',
-        #     do_output=True,
-        #     __activate_fn__=optimize_hla_angles
-        # ),
-        # Stage(
-        #     hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-        #     do_output=True,
-        #     __activate_fn__=optimize_hla_angles
-        # ),
-        # Stage(
-        #     hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-        #     do_output=True,
-        #     __activate_fn__=optimize_hla_offsets
-        # ),
-    # ]
-
-    # sa_angle_only_stages = [
-    #     Stage(
-    #         r_params=r_params,
-    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-    #         hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-    #         cuts_mode='sa',
-    #         reconstruction_target='from-dataloader',
-    #         epochs=40,
-    #         soft_cut_std=-999,
-    #         train_affine_theta=True,
-    #         do_output=True,
-    #         __activate_fn__=optimize_sa_angles
-    #     ),
-    #     Stage(
-    #         do_output=True,
-    #         cuts_mode='sa',
-    #         reconstruction_target='sa-oriented',
-    #         epochs=config_dict['epochs'],
-    #         soft_cut_std=-999,
-    #         train_affine_theta=False,
-    #         use_distance_map_localization=False,
-    #         __activate_fn__=deactivate_r_params
-    #     ),
-    # ]
-
-    # sa_offset_only_stages = [
-    #     Stage(
-    #         r_params=r_params,
-    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-    #         hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-    #         do_output=True,
-    #         cuts_mode='sa',
-    #         reconstruction_target='from-dataloader',
-    #         epochs=40,
-    #         soft_cut_std=-999,
-    #         train_affine_theta=True,
-    #         __activate_fn__=optimize_sa_offsets
-    #     ),
-    #     Stage(
-    #         do_output=True,
-    #         cuts_mode='sa',
-    #         reconstruction_target='sa-oriented',
-    #         epochs=config_dict['epochs'],
-    #         soft_cut_std=-999,
-    #         train_affine_theta=False,
-    #         __activate_fn__=deactivate_r_params
-    #     ),
-    # ]
-
-    # sa_angle_offset_stages = [
-    #     Stage(
-    #         r_params=r_params,
-    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-    #         hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-    #         cuts_mode='sa',
-    #         reconstruction_target='from-dataloader',
-    #         epochs=50,
-    #         soft_cut_std=-999,
-    #         train_affine_theta=True,
-    #         do_output=True,
-    #         __activate_fn__=optimize_sa_angles
-    #     ),
-    #     Stage(
-    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-    #         hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-    #         do_output=True,
-    #         cuts_mode='sa',
-    #         reconstruction_target='from-dataloader',
-    #         epochs=50,
-    #         soft_cut_std=-999,
-    #         train_affine_theta=True,
-    #         __activate_fn__=optimize_sa_offsets
-    #     ),
-    #     Stage(
-    #         do_output=True,
-    #         cuts_mode='sa',
-    #         reconstruction_target='sa-oriented',
-    #         epochs=config_dict['epochs'],
-    #         soft_cut_std=-999,
-    #         train_affine_theta=False,
-    #         __activate_fn__=deactivate_r_params
-    #     ),
-    # ]
-
-    # sa_all_params_stages = [
-    #     Stage(
-    #         r_params=None,
-    #         sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-    #         hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
-    #         cuts_mode='sa',
-    #         reconstruction_target='from-dataloader',
-    #         epochs=40,
-    #         soft_cut_std=-999,
-    #         use_distance_map_localization=True,
-    #         train_affine_theta=True,
-    #         do_output=True,
-    #         __activate_fn__=lambda stage: None
-    #     ),
-    #     Stage(
-    #         do_output=True,
-    #         cuts_mode='sa',
-    #         reconstruction_target='sa-oriented',
-    #         epochs=config_dict['epochs'],
-    #         soft_cut_std=-999,
-    #         train_affine_theta=False,
-    #         use_distance_map_localization=False,
-    #         __activate_fn__=lambda stage: None
-    #     ),
-    # ]
-
     all_params_stages = [
         Stage( # Optimize SA
             r_params=r_params,
             sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa',
-            reconstruction_target='from-dataloader',
+            reconstruction_target='sa-oriented',
             epochs=40,
             soft_cut_std=-999,
             use_distance_map_localization=False,
@@ -1496,17 +1314,17 @@ elif config_dict['sweep_type'] == 'stage-sweep':
             use_distance_map_localization=False,
             __activate_fn__=lambda self: None
         ),
-        Stage( # Reference run
-            do_output=True,
-            cuts_mode='sa+hla',
-            reconstruction_target='sa-oriented',
-            epochs=config_dict['epochs'],
-            soft_cut_std=-999,
-            train_affine_theta=False,
-            use_affine_theta=False,
-            use_distance_map_localization=False,
-            __activate_fn__=lambda self: None
-        ),
+        # Stage( # Reference run
+        #     do_output=True,
+        #     cuts_mode='sa+hla',
+        #     reconstruction_target='sa-oriented',
+        #     epochs=config_dict['epochs'],
+        #     soft_cut_std=-999,
+        #     train_affine_theta=False,
+        #     use_affine_theta=False,
+        #     use_distance_map_localization=False,
+        #     __activate_fn__=lambda self: None
+        # ),
     ]
 
 
