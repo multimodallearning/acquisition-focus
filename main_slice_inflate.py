@@ -1289,7 +1289,7 @@ elif config_dict['sweep_type'] == 'stage-sweep':
             sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa',
-            epochs=250,
+            epochs=40,
             soft_cut_std=-999,
             use_distance_map_localization=False,
             use_affine_theta=True,
@@ -1300,7 +1300,7 @@ elif config_dict['sweep_type'] == 'stage-sweep':
         Stage( # Optimize hla
             hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa>hla',
-            epochs=250,
+            epochs=40,
             soft_cut_std=-999,
             use_distance_map_localization=False,
             use_affine_theta=True,
@@ -1318,16 +1318,16 @@ elif config_dict['sweep_type'] == 'stage-sweep':
             use_distance_map_localization=False,
             __activate_fn__=lambda self: None
         ),
-        Stage( # Reference run
-            do_output=True,
-            cuts_mode='sa+hla',
-            epochs=config_dict['epochs'],
-            soft_cut_std=-999,
-            train_affine_theta=False,
-            use_affine_theta=False,
-            use_distance_map_localization=False,
-            __activate_fn__=lambda self: None
-        ),
+        # Stage( # Reference run
+        #     do_output=True,
+        #     cuts_mode='sa+hla',
+        #     epochs=config_dict['epochs'],
+        #     soft_cut_std=-999,
+        #     train_affine_theta=False,
+        #     use_affine_theta=False,
+        #     use_distance_map_localization=False,
+        #     __activate_fn__=lambda self: None
+        # ),
     ]
 
     selected_stages = all_params_stages

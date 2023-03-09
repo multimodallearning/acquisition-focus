@@ -55,7 +55,7 @@ class LocalisationNet(torch.nn.Module):
         theta_ap = self.fca(h)
         theta_tp = self.fct(h)
 
-        return theta_ap, theta_tp
+        return theta_ap, theta_tp.tanh()
 
 
 
@@ -145,7 +145,7 @@ class AffineTransformModule(torch.nn.Module):
 
         # Translation matrix definition
         theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict only this
-        theta_tp[...] = 0.0 # TODO remove that
+        # theta_tp[...] = 0.0 # TODO remove that
 
         theta_t = torch.cat([theta_tp, torch.ones(batch_size, device=device).view(batch_size,1)], dim=1)
         theta_t = torch.cat([
