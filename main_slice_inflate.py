@@ -60,7 +60,7 @@ from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
     get_batch_dice_over_all, get_batch_score_per_label, save_model, \
     reduce_label_scores_epoch, get_test_func_all_parameters_updated, anomaly_hook
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
-from slice_inflate.models.affine_transform import AffineTransformModule, SoftCutModule, HardCutModule, get_theta_params
+from slice_inflate.models.affine_transform import AffineTransformModule, SoftCutModule, HardCutModule, LearnCutModule, get_theta_params
 from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
 from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params, deactivate_r_params, Stage, StageIterator
 
@@ -338,18 +338,6 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
 
     model.to(device)
 
-
-    if config['soft_cut_std'] > 0:
-        sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
-        hla_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
-    else:
-        sa_cut_module = HardCutModule()
-        hla_cut_module = HardCutModule()
-
-    sa_cut_module.to(device)
-    hla_cut_module.to(device)
-
-
     if _path:
         assert Path(_path).is_dir()
         model_dict = torch.load(Path(_path).joinpath('model.pth'), map_location=device)
@@ -460,8 +448,8 @@ def get_transform_model(config, num_classes, this_script_dir, _path=None, sa_atm
         sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
         hla_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
     else:
-        sa_cut_module = HardCutModule()
-        hla_cut_module = HardCutModule()
+        sa_cut_module = LearnCutModule(num_classes, config['fov_vox'], align_corners=False)
+        hla_cut_module = LearnCutModule(num_classes, config['fov_vox'], align_corners=False)
 
     sa_atm.to(device)
     hla_atm.to(device)
@@ -469,13 +457,18 @@ def get_transform_model(config, num_classes, this_script_dir, _path=None, sa_atm
     hla_cut_module.to(device)
 
     if config.cuts_mode == 'sa':
-        transform_parameters = list(sa_atm.parameters())
+        transform_parameters = list(sa_atm.parameters()) + list(sa_cut_module.parameters())
     elif config.cuts_mode == 'hla':
-        transform_parameters = list(hla_atm.parameters())
+        transform_parameters = list(hla_atm.parameters()) + list(hla_cut_module.parameters())
     elif config.cuts_mode == 'sa>hla':
-        transform_parameters = list(hla_atm.parameters())
+        transform_parameters = list(hla_atm.parameters()) + list(hla_cut_module.parameters())
     elif config.cuts_mode == 'sa+hla':
-       transform_parameters = list(sa_atm.parameters()) + list(hla_atm.parameters())
+       transform_parameters = (
+            list(sa_atm.parameters())
+            + list(hla_atm.parameters())
+            + list(sa_cut_module.parameters())
+            + list(hla_cut_module.parameters())
+        )
     else:
         raise ValueError()
 
@@ -517,7 +510,7 @@ def get_transformed(label, soft_label, nifti_affine, hidden_sample_augment_affin
                             nifti_affine, hidden_sample_augment_affine)
 
     image, label, _, _ = atm(image.view(B, 1, D, H, W), label.view(B, num_classes, D, H, W),
-                                nifti_affine, hidden_sample_augment_affine, theta_override=atm.last_theta)
+                                nifti_affine, hidden_sample_augment_affine, theta_override=grid_affine)
 
     if crop_around_3d_label_center is not None:
         _3d_vox_size = torch.as_tensor(
@@ -527,8 +520,10 @@ def get_transformed(label, soft_label, nifti_affine, hidden_sample_augment_affin
         _, soft_label, _ = crop_around_label_center(
             label, _3d_vox_size, soft_label)
 
-    label_slc = cut_module(soft_label)
-    image_slc = HardCutModule()(image)
+    label_slc, slice_pos , gs_space_affine = cut_module(soft_label)
+    grid_affine = grid_affine @ gs_space_affine.to(grid_affine)
+
+    image_slc, *_ = cut_module(image, slice_pos_override=slice_pos)
 
     if crop_around_2d_label_center is not None:
         _2d_vox_size = torch.as_tensor(
@@ -683,12 +678,12 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
     with amp.autocast(enabled=autocast_enabled):
         b_input, b_target, b_grid_affines = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
 
-        # from slice_inflate.models.nnunet_models import SkipConnector
-        # nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sa.nii.gz")
-        # nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_hla.nii.gz")
-        # nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_target.nii.gz")
-        # nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sum_sa.nii.gz")
-        # nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sum_hla.nii.gz")
+        from slice_inflate.models.nnunet_models import SkipConnector
+        nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sa.nii.gz")
+        nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_hla.nii.gz")
+        nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_target.nii.gz")
+        nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sum_sa.nii.gz")
+        nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sum_hla.nii.gz")
 
         wanted_input_dim = 4 if 'hybrid' in config.model_type else 5
         assert b_input.dim() == wanted_input_dim, \

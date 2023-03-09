@@ -5,6 +5,7 @@ import torch.cuda.amp as amp
 import numpy as np
 import einops as eo
 from slice_inflate.datasets.align_mmwhs import nifti_transform
+from slice_inflate.utils.torch_utils import determine_network_output_size
 
 import dill
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
@@ -16,19 +17,19 @@ class ConvNet(torch.nn.Module):
     def __init__(self, input_channels, kernel_size, padding, norm_op=nn.InstanceNorm3d):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv3d(input_channels,32,kernel_size,padding=padding), norm_op(32), nn.LeakyReLU(),
+            nn.Conv3d(input_channels, 32, kernel_size, padding=padding), norm_op(32), nn.LeakyReLU(),
             nn.AvgPool3d(2),
-            nn.Conv3d(32,64,kernel_size,padding=padding), norm_op(64), nn.LeakyReLU(),
-            nn.Conv3d(64,64,kernel_size,padding=padding), norm_op(64), nn.LeakyReLU(),
+            nn.Conv3d(32, 64, kernel_size, padding=padding), norm_op(64), nn.LeakyReLU(),
+            nn.Conv3d(64, 64, kernel_size, padding=padding), norm_op(64), nn.LeakyReLU(),
             nn.AvgPool3d(2),
-            nn.Conv3d(64,64,kernel_size,padding=padding), norm_op(64), nn.LeakyReLU(),
-            nn.Conv3d(64,64,kernel_size,padding=padding), norm_op(64), nn.LeakyReLU(),
+            nn.Conv3d(64, 64, kernel_size, padding=padding), norm_op(64), nn.LeakyReLU(),
+            nn.Conv3d(64, 64, kernel_size, padding=padding), norm_op(64), nn.LeakyReLU(),
             nn.AvgPool3d(2),
-            nn.Conv3d(64,64,kernel_size,padding=padding), norm_op(64), nn.LeakyReLU(),
-            nn.Conv3d(64,32,kernel_size,padding=padding), norm_op(32), nn.LeakyReLU(),
+            nn.Conv3d(64, 64, kernel_size, padding=padding), norm_op(64), nn.LeakyReLU(),
+            nn.Conv3d(64, 32, kernel_size, padding=padding), norm_op(32), nn.LeakyReLU(),
             nn.AvgPool3d(2),
-            nn.Conv3d(32,32,kernel_size,padding=padding), norm_op(32), nn.LeakyReLU(),
-            nn.Conv3d(32,1,1,padding=0), norm_op(1)
+            nn.Conv3d(32, 32, kernel_size, padding=padding), norm_op(32), nn.LeakyReLU(),
+            nn.Conv3d(32, 1, 1, padding=0), norm_op(1)
         )
 
 
@@ -38,25 +39,28 @@ class ConvNet(torch.nn.Module):
 
 
 class LocalisationNet(torch.nn.Module):
-    def __init__(self, input_channels, ap_output_size):
+    def __init__(self, input_channels, output_size, size_3d):
         super().__init__()
 
-        self.conv_net = ConvNet(input_channels=input_channels, kernel_size=5, padding=2,
+        self.conv_net = ConvNet(
+            input_channels=input_channels,
+            kernel_size=5,
+            padding=2,
             # norm_op=nn.BatchNorm3d
         )
-        self.fc_in_num = 1*8**3
-
-        self.fca = nn.Linear(self.fc_in_num, ap_output_size)
-        self.fct = nn.Linear(self.fc_in_num, 3)
+        sz = determine_network_output_size(
+            self.conv_net,
+            torch.zeros([1,input_channels, *size_3d])
+        )
+        self.fc_in_num = torch.tensor(sz).prod().int().item()
+        self.fc = nn.Linear(self.fc_in_num, output_size)
 
     def forward(self, x):
         bsz = x.shape[0]
         h = self.conv_net(x, encoder_only=True)
         h = h.reshape(bsz, -1)
-        theta_ap = self.fca(h)
-        theta_tp = self.fct(h)
-
-        return theta_ap, theta_tp.tanh()
+        h = self.fc(h)
+        return h
 
 
 
@@ -93,7 +97,11 @@ class AffineTransformModule(torch.nn.Module):
         self.fov_mm = fov_mm
         self.fov_vox = fov_vox
         self.view_affine = view_affine.view(1,4,4)
-        self.localisation_net = LocalisationNet(input_channels, self.ap_space)
+        self.localisation_net = LocalisationNet(
+            input_channels,
+            self.ap_space+3, # 3 for translational parameters
+            size_3d=fov_vox.tolist()
+        )
 
         self.use_affine_theta = use_affine_theta
         self.init_theta_tp = torch.nn.Parameter(torch.zeros(3), requires_grad=False)
@@ -127,8 +135,10 @@ class AffineTransformModule(torch.nn.Module):
     def get_batch_affines(self, x):
         batch_size = x.shape[0]
 
-        theta_ap, theta_tp = self.localisation_net(x.float())
-        device = theta_ap.device
+        theta_at_p = self.localisation_net(x.float())
+        device = theta_at_p.device
+        theta_ap = theta_at_p[:,:self.ap_space]
+        theta_tp = theta_at_p[:,self.ap_space:]
 
         # Apply initial rotation
         theta_ap = theta_ap + self.init_theta_ap.view(1,self.ap_space).to(device)
@@ -229,6 +239,57 @@ class HardCutModule(torch.nn.Module):
         cut = b_volume[center:center+1, ...]
         return eo.rearrange(cut, ' W B C D H -> B C D H W')
 
+
+
+class LearnCutModule(torch.nn.Module):
+
+    def __init__(self, input_channels, size_3d, align_corners=False):
+        super().__init__()
+
+        self.localisation_net = LocalisationNet(
+            input_channels,
+            size_3d[-1],
+            size_3d=size_3d)
+        self.size_3d = size_3d
+        self.arra = torch.arange(0, size_3d[-1])
+        self.align_corners = align_corners
+
+    def forward(self, b_volume, slice_pos_override=None):
+        assert b_volume.dim() == 5
+        B,C,D,H,W = b_volume.shape
+        assert W == self.size_3d[-1]
+
+        if slice_pos_override is None:
+            b_slice_selector = self.localisation_net(b_volume)
+            slice_pos = (
+                torch.nn.functional.softmax(b_slice_selector)
+                * self.arra.to(b_volume)
+            ).sum().clamp(0,W-1)
+        else:
+            slice_pos = slice_pos_override
+
+        slice_pos = torch.tensor([64.]).to(b_volume) # TODO remove!
+        slice_lower_pos = slice_pos.floor().clamp(0,W-1)
+        slice_upper_pos = (slice_lower_pos+1).clamp(0,W-1)
+        upper_factor = slice_pos - slice_lower_pos
+        lower_factor = 1.0 - upper_factor
+
+        # Gradient flows through slice interpolation factors
+        interpolated_slice = (
+            lower_factor * b_volume[..., slice_lower_pos.long()]
+            + upper_factor * b_volume[..., slice_upper_pos.long()]
+        )
+        gs_space_affine = torch.eye(4).repeat(B,1,1).to(b_volume)
+
+        if self.align_corners:
+            # see https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/GridSampler.h
+            gs_offset = 2./(W-1)*slice_pos - 1.0
+        else:
+            gs_offset = (2.0*slice_pos + 1.0)/W - 1.0
+
+        gs_space_affine[:,2,-1] = gs_offset
+
+        return interpolated_slice.view(B,C,D,H,1), slice_pos, gs_space_affine
 
 
 class SoftCutModule(torch.nn.Module):

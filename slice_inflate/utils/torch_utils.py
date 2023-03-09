@@ -666,3 +666,9 @@ def print_torch_memory_vars(last_mem_dict=None, show_leaves=True, show_cpu=True,
             print(size_key, f"#{num}")
     print()
     return mem_dict
+
+
+
+def determine_network_output_size(net, _input):
+    with torch.no_grad():
+        return net(_input).shape
