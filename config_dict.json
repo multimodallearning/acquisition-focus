@@ -37,7 +37,7 @@
 
     "max_load_3d_num": null,
     "lr": 0.001,
-    "use_scheduling": false,
+    "use_scheduling": true,
     "model_type": "hybrid-unet",
     "encoder_training_only": false,
     "save_every": "best",
