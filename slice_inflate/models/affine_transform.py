@@ -9,6 +9,7 @@ from slice_inflate.datasets.align_mmwhs import nifti_transform
 import dill
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.utils.common_utils import get_script_dir
+from slice_inflate.utils.torch_utils import torch_manual_seeded
 from pathlib import Path
 
 class ConvNet(torch.nn.Module):
@@ -259,9 +260,11 @@ class SoftCutModule(torch.nn.Module):
 
 
 
-def get_random_affine(strength=0.2):
+def get_random_affine(strength=0.2, seed=None):
     params = torch.tensor([[1.,0.,0., 0.,1.,0.]])
-    randn = torch.rand_like(params) * strength - strength/2
+    with torch_manual_seeded(seed):
+        randn = torch.rand_like(params) * strength - strength/2
+
     rand_theta = compute_rotation_matrix_from_ortho6d(params+randn)
     return rand_theta
 
