@@ -67,10 +67,11 @@ class LocalisationNet(torch.nn.Module):
 class AffineTransformModule(torch.nn.Module):
     def __init__(self, input_channels,
         fov_mm, fov_vox, view_affine,
-        init_theta_ap=None, init_theta_tp=None,
-        optim_method='angle-axis', use_affine_theta=True, tag=None):
+        init_theta_ap=None, init_theta_t_offsets=None,
+        optim_method='angle-axis', use_affine_theta=True, tag=None, align_corners=False):
 
         super().__init__()
+        assert fov_vox[0] == fov_vox[1] == fov_vox[2]
         assert optim_method in ['angle-axis', 'normal-vector', 'R6-vector'], \
             f"optim_method must be 'angle-axis', 'normal-vector' or 'R6-vector', not {optim_method}"
 
@@ -99,17 +100,20 @@ class AffineTransformModule(torch.nn.Module):
         self.view_affine = view_affine.view(1,4,4)
         self.localisation_net = LocalisationNet(
             input_channels,
-            self.ap_space+3, # 3 for translational parameters
+            self.ap_space+3*int(fov_vox[-1]), # 3*spatial dimension for translational parameters
             size_3d=fov_vox.tolist()
         )
 
         self.use_affine_theta = use_affine_theta
-        self.init_theta_tp = torch.nn.Parameter(torch.zeros(3), requires_grad=False)
+        self.init_theta_t_offsets = torch.nn.Parameter(torch.zeros([3,int(fov_vox[-1])]), requires_grad=False)
 
         self.tag = tag
+        self.align_corners = align_corners
+
+        self.arra = torch.arange(0, fov_vox[-1])
 
         self.last_theta_ap = None
-        self.last_theta_tp = None
+        self.last_theta_t_offsets = None
         self.last_theta_a = None
         self.last_theta_t = None
         self.last_theta = None
@@ -119,21 +123,37 @@ class AffineTransformModule(torch.nn.Module):
     def set_init_theta_ap(self, init_theta_ap):
         self.init_theta_ap.data = init_theta_ap.data
 
-    def set_init_theta_tp(self, init_theta_tp):
-        self.init_theta_tp.data = init_theta_tp.data
+    def set_init_theta_t_offsets(self, init_theta_t_offsets):
+        self.init_theta_t_offsets.data = init_theta_t_offsets.data
 
     def get_init_affines(self):
-        assert not self.init_theta_ap.requires_grad and not self.init_theta_tp.requires_grad
-        device = self.init_theta_tp.device
+        assert not self.init_theta_ap.requires_grad and not self.init_theta_t_offsets.requires_grad
+        device = self.init_theta_t_offsets.device
         theta_a = self.optim_function(self.init_theta_ap.view(1,self.ap_space))[0].view(1,4,4)
-        theta_t = torch.cat([self.init_theta_tp, torch.tensor([1], device=device)])
+        theta_t = torch.cat([self.init_theta_t_offsets, torch.tensor([1], device=device)])
         theta_t = torch.cat([torch.eye(4)[:4,:3].to(device), theta_t.view(4,1)], dim=1).view(1,4,4)
 
         assert theta_a.shape == theta_t.shape == (1,4,4)
         return theta_a.to(torch.float32), theta_t.to(torch.float32)
 
+    def get_gs_offsets_from_theta_tp(self, theta_tp):
+        SPAT = int(self.fov_vox[-1])
+        theta_tp = theta_tp.view(-1,3,SPAT)
+        slice_posxs = (
+            torch.nn.functional.softmax(theta_tp, dim=2)
+            * self.arra.to(theta_tp).view(1,1,SPAT)
+        ).sum(-1)
+
+        if self.align_corners:
+            # see https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/GridSampler.h
+            gs_offsets = 2./(SPAT-1)*slice_posxs - 1.0
+        else:
+            gs_offsets = (2.0*slice_posxs + 1.0)/SPAT - 1.0
+
+        return gs_offsets
+
     def get_batch_affines(self, x):
-        batch_size = x.shape[0]
+        B,C,D,H,W = x.shape
 
         theta_at_p = self.localisation_net(x.float())
         device = theta_at_p.device
@@ -142,10 +162,9 @@ class AffineTransformModule(torch.nn.Module):
 
         # Apply initial rotation
         theta_ap = theta_ap + self.init_theta_ap.view(1,self.ap_space).to(device)
-        theta_tp = theta_tp + self.init_theta_tp.view(1,3).to(device)
 
         # Rotation matrix definition
-        theta_ap = theta_ap.view(batch_size, self.ap_space)
+        theta_ap = theta_ap.view(B, self.ap_space)
 
         if self.optim_method == 'angle-axis':
             theta_ap[:,0] = 0.0 # [:,0] rotates in plane
@@ -155,19 +174,21 @@ class AffineTransformModule(torch.nn.Module):
         theta_a = self.optim_function(theta_ap)
 
         # Translation matrix definition
-        theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict only this
-        theta_tp[...] = 0.0 # TODO remove that
+        # theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict only this
+        # theta_tp[...] = 0.0 # TODO remove that
 
-        theta_t = torch.cat([theta_tp, torch.ones(batch_size, device=device).view(batch_size,1)], dim=1)
+        theta_t_offsets = self.get_gs_offsets_from_theta_tp(theta_tp)
+
+        theta_t = torch.cat([theta_t_offsets, torch.ones(B, device=device).view(B,1)], dim=1)
         theta_t = torch.cat([
-            torch.eye(4, device=device)[:4,:3].view(1,4,3).repeat(batch_size,1,1),
-            theta_t.view(batch_size,4,1)
+            torch.eye(4, device=device)[:4,:3].view(1,4,3).repeat(B,1,1),
+            theta_t.view(B,4,1)
         ], dim=-1)
 
-        assert theta_a.shape == theta_t.shape == (batch_size, 4, 4)
+        assert theta_a.shape == theta_t.shape == (B, 4, 4)
 
         self.last_theta_ap = theta_ap
-        self.last_theta_tp = theta_tp
+        self.last_theta_t_offsets = theta_t_offsets
         self.last_theta_a = theta_a
         self.last_theta_t = theta_t
 
@@ -186,7 +207,7 @@ class AffineTransformModule(torch.nn.Module):
         B = x_label.shape[0] if not x_label_is_none else x_image.shape[0]
 
         if theta_override is not None:
-            theta = theta_override.detach() # Caution: this is a non-differentiable theta
+            theta = theta_override.detach().clone() # Caution: this is a non-differentiable theta
         else:
             if self.use_affine_theta:
                 theta_a, theta_t = self.get_batch_affines(x_image) # Initial parameters are applied here as well
@@ -243,53 +264,81 @@ class HardCutModule(torch.nn.Module):
 
 class LearnCutModule(torch.nn.Module):
 
-    def __init__(self, input_channels, size_3d, align_corners=False):
+    def __init__(self, input_channels, size_3d, align_corners=False, mode='linear'):
         super().__init__()
-
+        assert mode in ['linear', 'nearest']
+        assert size_3d[0] == size_3d[1] == size_3d[2]
         self.localisation_net = LocalisationNet(
             input_channels,
             size_3d[-1],
-            size_3d=size_3d)
+            size_3d=size_3d[-1]*3) # 3 for three translational parameters
         self.size_3d = size_3d
         self.arra = torch.arange(0, size_3d[-1])
         self.align_corners = align_corners
+        self.mode = mode
 
-    def forward(self, b_volume, slice_pos_override=None):
+    def forward(self, b_volume, slice_posxs_override=None):
         assert b_volume.dim() == 5
         B,C,D,H,W = b_volume.shape
+        assert D == H == W
         assert W == self.size_3d[-1]
 
         if slice_pos_override is None:
-            b_slice_selector = self.localisation_net(b_volume)
-            slice_pos = (
-                torch.nn.functional.softmax(b_slice_selector)
-                * self.arra.to(b_volume)
-            ).sum().clamp(0,W-1)
+            b_slice_selector = self.localisation_net(b_volume).view(B,3,W)
+            slice_posxs = (
+                torch.nn.functional.softmax(b_slice_selector, dim=2)
+                * self.arra.to(b_volume).view(1,1,W)
+            ).sum(-1)
         else:
-            slice_pos = slice_pos_override
+            slice_posxs = slice_posxs_override
 
-        slice_pos = torch.tensor([64.]).to(b_volume) # TODO remove!
-        slice_lower_pos = slice_pos.floor().clamp(0,W-1)
-        slice_upper_pos = (slice_lower_pos+1).clamp(0,W-1)
-        upper_factor = slice_pos - slice_lower_pos
-        lower_factor = 1.0 - upper_factor
+        slice_posxs[:,0] = slice_posxs[:,0].clamp(0,W-1)
+        slice_posxs[:,1] = slice_posxs[:,1].clamp(0,W-1)
+        slice_posxs[:,2] = slice_posxs[:,2].clamp(0,W-1)
 
-        # Gradient flows through slice interpolation factors
-        interpolated_slice = (
-            lower_factor * b_volume[..., slice_lower_pos.long()]
-            + upper_factor * b_volume[..., slice_upper_pos.long()]
-        )
+        slice_posxs = torch.tensor([0, 0, 80.]).to(b_volume) # TODO remove!
+
         gs_space_affine = torch.eye(4).repeat(B,1,1).to(b_volume)
 
         if self.align_corners:
             # see https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/GridSampler.h
-            gs_offset = 2./(W-1)*slice_pos - 1.0
+            gs_offsets = 2./(W-1)*slice_posxs - 1.0
         else:
-            gs_offset = (2.0*slice_pos + 1.0)/W - 1.0
+            gs_offsets = (2.0*slice_posxs + 1.0)/W - 1.0
 
-        gs_space_affine[:,2,-1] = gs_offset
+        gs_space_affine[:,:3,-1] = gs_offsets # Caution: W is at row index 0
 
-        return interpolated_slice.view(B,C,D,H,1), slice_pos, gs_space_affine
+        grid = torch.nn.functional.affine_grid(
+            gs_space_affine[:,:3,:].view(B,3,4), (B,C,D,H,1), align_corners=self.align_corners
+        ).to(device=volume.device)
+
+        cut_slice = checkpoint(
+            torch.nn.functional.grid_sample,
+            volume.to(dtype=dtype), grid.to(dtype=dtype), self.mode, 'zeros', align_corners=self.align_corners
+        )
+
+        # slice_lower_posxs = slice_posxs.floor().clamp(0,W-1)
+        # slice_upper_posxs = (slice_lower_posxs+1).clamp(0,W-1)
+        # upper_factor = slice_posxs - slice_lower_posxs
+        # lower_factor = 1.0 - upper_factor
+
+        # if self.mode == 'nearest':
+        #     if lower_factor >= upper_factor:
+        #         slice_upper_posxs = slice_lower_posxs
+        #     else:
+        #         slice_lower_posxs = slice_upper_posxs
+        #     lower_factor = upper_factor = 0.5
+
+        # # Gradient flows through slice interpolation factors
+        # slice_lower_posxs = slice_lower_posxs.long()
+        # slice_upper_posxs = slice_upper_posxs.long()
+
+        # interpolated_slice = (
+        #     lower_factor * b_volume[..., slice_lower_posxs[2]]
+        #     + upper_factor * b_volume[..., slice_upper_posxs[2]]
+        # )
+
+        return cut_slice, gs_space_affine
 
 
 class SoftCutModule(torch.nn.Module):
@@ -477,9 +526,9 @@ def angle_axis_to_rotation_matrix(angle_axis, eps=1e-6):
     mask_neg = (mask == False).type_as(theta2)  # noqa
 
     # create output pose matrix
-    batch_size = angle_axis.shape[0]
+    B = angle_axis.shape[0]
     rotation_matrix = torch.eye(4).to(angle_axis.device).type_as(angle_axis)
-    rotation_matrix = rotation_matrix.view(1, 4, 4).repeat(batch_size, 1, 1)
+    rotation_matrix = rotation_matrix.view(1, 4, 4).repeat(B, 1, 1)
     # fill output matrix with masked values
     rotation_matrix[..., :3, :3] = \
         mask_pos * rotation_matrix_normal + mask_neg * rotation_matrix_taylor
@@ -667,14 +716,14 @@ def get_theta_params(b_theta):
 
 
 
-def get_mean_theta(b_theta, as_batch_size=False):
+def get_mean_theta(b_theta, as_B=False):
     bsz = b_theta.shape[0]
     theta_a, theta_t = get_theta_params(b_theta)
     mean_theta_a, mean_theta_t = theta_a.mean(0, keepdim=True), theta_t.mean(0, keepdim=True)
     mean_theta = angle_axis_to_rotation_matrix(mean_theta_a)
     mean_theta[:,:3,-1] = mean_theta_t
 
-    if as_batch_size:
+    if as_B:
         mean_theta = mean_theta.view(1,4,4).repeat(bsz,1,1)
 
     return mean_theta

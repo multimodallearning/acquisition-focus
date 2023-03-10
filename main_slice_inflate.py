@@ -448,8 +448,8 @@ def get_transform_model(config, num_classes, this_script_dir, _path=None, sa_atm
         sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
         hla_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
     else:
-        sa_cut_module = LearnCutModule(num_classes, config['fov_vox'], align_corners=False)
-        hla_cut_module = LearnCutModule(num_classes, config['fov_vox'], align_corners=False)
+        sa_cut_module = HardCutModule()
+        hla_cut_module = HardCutModule()
 
     sa_atm.to(device)
     hla_atm.to(device)
@@ -506,11 +506,11 @@ def get_transformed(label, soft_label, nifti_affine, hidden_sample_augment_affin
         image = torch.zeros(B,1,D,H,W, device=label.device)
 
     # Transform  label with 'bilinear' interpolation to have gradients
-    soft_label, _, grid_affine, _ = atm(soft_label.view(B, num_classes, D, H, W), None,
-                            nifti_affine, hidden_sample_augment_affine)
+    soft_label, label, grid_affine, _ = atm(soft_label.view(B, num_classes, D, H, W), label.view(B, num_classes, D, H, W),
+        nifti_affine, hidden_sample_augment_affine)
 
-    image, label, _, _ = atm(image.view(B, 1, D, H, W), label.view(B, num_classes, D, H, W),
-                                nifti_affine, hidden_sample_augment_affine, theta_override=grid_affine)
+    image, _, _, _ = atm(image.view(B, 1, D, H, W), None,
+        nifti_affine, hidden_sample_augment_affine, theta_override=atm.last_theta)
 
     if crop_around_3d_label_center is not None:
         _3d_vox_size = torch.as_tensor(
@@ -520,10 +520,12 @@ def get_transformed(label, soft_label, nifti_affine, hidden_sample_augment_affin
         _, soft_label, _ = crop_around_label_center(
             label, _3d_vox_size, soft_label)
 
-    label_slc, slice_pos , gs_space_affine = cut_module(soft_label)
-    grid_affine = grid_affine @ gs_space_affine.to(grid_affine)
+    # label_slc, slice_pos , gs_space_affine = cut_module(soft_label)
+    # grid_affine = grid_affine @ gs_space_affine.to(grid_affine)
+    # image_slc, *_ = cut_module(image, slice_pos_override=slice_pos)
 
-    image_slc, *_ = cut_module(image, slice_pos_override=slice_pos)
+    label_slc = cut_module(soft_label)
+    image_slc = cut_module(image)
 
     if crop_around_2d_label_center is not None:
         _2d_vox_size = torch.as_tensor(
@@ -610,10 +612,12 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     if config.reconstruction_target == 'from-dataloader':
         b_target = b_label
     elif config.reconstruction_target == 'sa-oriented':
+        # raise ValueError("Currently not working together with LearnCutModule")
         b_target = sa_label
         grid_affines[0] = sa_grid_affine.inverse() @ grid_affines[0]
         grid_affines[1] = sa_grid_affine.inverse() @ grid_affines[1]
     elif config.reconstruction_target == 'hla-oriented':
+        # raise ValueError("Currently not working together with LearnCutModule")
         b_target = hla_label
         grid_affines[0] = hla_grid_affine.inverse() @ grid_affines[0]
         grid_affines[1] = hla_grid_affine.inverse() @ grid_affines[1]
@@ -679,11 +683,11 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
         b_input, b_target, b_grid_affines = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
 
         from slice_inflate.models.nnunet_models import SkipConnector
-        nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sa.nii.gz")
-        nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_hla.nii.gz")
-        nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_target.nii.gz")
-        nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sum_sa.nii.gz")
-        nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).cpu().numpy(), affine=np.eye(4)), "out_sum_hla.nii.gz")
+        nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_sa.nii.gz")
+        nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_hla.nii.gz")
+        nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_target.nii.gz")
+        nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().int().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_sum_sa.nii.gz")
+        nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().int().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_sum_hla.nii.gz")
 
         wanted_input_dim = 4 if 'hybrid' in config.model_type else 5
         assert b_input.dim() == wanted_input_dim, \
@@ -729,8 +733,8 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
     epx_sa_theta_aps = {}
     epx_hla_theta_aps = {}
-    epx_sa_theta_tps = {}
-    epx_hla_theta_tps = {}
+    epx_sa_theta_t_offsets = {}
+    epx_hla_theta_t_offsets = {}
     epx_input = {}
 
     label_scores_epoch = {}
@@ -799,12 +803,12 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
         if sa_atm.last_theta_ap is not None:
             epx_sa_theta_aps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_ap.cpu())})
-        if sa_atm.last_theta_tp is not None:
-            epx_sa_theta_tps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_tp.cpu())})
+        if sa_atm.last_theta_t_offsets is not None:
+            epx_sa_theta_t_offsets.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_t_offsets.cpu())})
         if hla_atm.last_theta_ap is not None:
             epx_hla_theta_aps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_ap.cpu())})
-        if hla_atm.last_theta_tp is not None:
-            epx_hla_theta_tps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_tp.cpu())})
+        if hla_atm.last_theta_t_offsets is not None:
+            epx_hla_theta_t_offsets.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_t_offsets.cpu())})
 
         pred_seg = y_hat.argmax(1)
 
@@ -879,9 +883,9 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         ornt_log_prefix = f"orientations/{phase}_sa_"
         sa_param_dict = dict(
             theta_ap=epx_sa_theta_aps.values(),
-            theta_tp=epx_sa_theta_tps.values()
+            theta_tp=epx_sa_theta_t_offsets.values()
         )
-        sa_theta_ap_mean, sa_theta_tp_mean = \
+        sa_theta_ap_mean, sa_theta_t_offsets_mean = \
             log_affine_param_stats(ornt_log_prefix, fold_postfix, sa_param_dict, global_idx,
                 logger_selected_metrics=('mean', 'std'), print_selected_metrics=('mean', 'std'))
         print()
@@ -889,7 +893,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         mean_transform_dict.update(
             dict(
                 epoch_sa_theta_ap_mean=sa_theta_ap_mean,
-                epoch_sa_theta_tp_mean=sa_theta_tp_mean,
+                epoch_sa_theta_t_offsets_mean=sa_theta_t_offsets_mean,
             )
         )
 
@@ -897,7 +901,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         ornt_log_prefix = f"orientations/{phase}_hla_"
         hla_param_dict = dict(
             theta_ap=epx_hla_theta_aps.values(),
-            theta_tp=epx_hla_theta_tps.values()
+            theta_tp=epx_hla_theta_t_offsets.values()
         )
         hla_theta_ap_mean, hla_theta_tp_mean = \
             log_affine_param_stats(ornt_log_prefix, fold_postfix, hla_param_dict, global_idx,
