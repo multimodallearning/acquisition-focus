@@ -733,6 +733,8 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
     epx_sa_theta_aps = {}
     epx_hla_theta_aps = {}
+    epx_sa_theta_zps = {}
+    epx_hla_theta_zps = {}
     epx_sa_theta_t_offsets = {}
     epx_hla_theta_t_offsets = {}
     epx_input = {}
@@ -805,10 +807,14 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             epx_sa_theta_aps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_ap.cpu())})
         if sa_atm.last_theta_t_offsets is not None:
             epx_sa_theta_t_offsets.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_t_offsets.cpu())})
+        if sa_atm.last_theta_zp is not None:
+            epx_sa_theta_zps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_zp.cpu())})
         if hla_atm.last_theta_ap is not None:
             epx_hla_theta_aps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_ap.cpu())})
         if hla_atm.last_theta_t_offsets is not None:
             epx_hla_theta_t_offsets.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_t_offsets.cpu())})
+        if hla_atm.last_theta_zp is not None:
+            epx_hla_theta_zps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_zp.cpu())})
 
         pred_seg = y_hat.argmax(1)
 
@@ -883,9 +889,10 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         ornt_log_prefix = f"orientations/{phase}_sa_"
         sa_param_dict = dict(
             theta_ap=epx_sa_theta_aps.values(),
-            theta_tp=epx_sa_theta_t_offsets.values()
+            theta_t_offsets=epx_sa_theta_t_offsets.values(),
+            theta_zp=epx_sa_theta_zps.values(),
         )
-        sa_theta_ap_mean, sa_theta_t_offsets_mean = \
+        sa_theta_ap_mean, sa_theta_t_offsets_mean, sa_theta_zp_mean = \
             log_affine_param_stats(ornt_log_prefix, fold_postfix, sa_param_dict, global_idx,
                 logger_selected_metrics=('mean', 'std'), print_selected_metrics=('mean', 'std'))
         print()
@@ -894,6 +901,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             dict(
                 epoch_sa_theta_ap_mean=sa_theta_ap_mean,
                 epoch_sa_theta_t_offsets_mean=sa_theta_t_offsets_mean,
+                epoch_sa_theta_zp=sa_theta_zp_mean,
             )
         )
 
@@ -901,9 +909,10 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         ornt_log_prefix = f"orientations/{phase}_hla_"
         hla_param_dict = dict(
             theta_ap=epx_hla_theta_aps.values(),
-            theta_tp=epx_hla_theta_t_offsets.values()
+            theta_t_offsets=epx_hla_theta_t_offsets.values(),
+            theta_zp=epx_hla_theta_zps.values()
         )
-        hla_theta_ap_mean, hla_theta_tp_mean = \
+        hla_theta_ap_mean, hla_theta_tp_mean, hla_theta_zp_mean = \
             log_affine_param_stats(ornt_log_prefix, fold_postfix, hla_param_dict, global_idx,
                 logger_selected_metrics=('mean', 'std'), print_selected_metrics=('mean', 'std'))
         print()
@@ -912,6 +921,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             dict(
                 epoch_hla_theta_ap_mean=hla_theta_ap_mean,
                 epoch_hla_theta_tp_mean=hla_theta_tp_mean,
+                epoch_hla_theta_zp=hla_theta_zp_mean,
             )
         )
 
