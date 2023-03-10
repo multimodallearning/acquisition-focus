@@ -208,7 +208,7 @@ class AffineTransformModule(torch.nn.Module):
             theta_zp,
             theta_zp,
             theta_zp,
-            torch.ones([1,1], device=device)], dim=-1)
+            torch.ones([B,1], device=device)], dim=-1)
         )
 
         assert theta_a.shape == theta_t.shape == theta_z.shape == (B, 4, 4)
