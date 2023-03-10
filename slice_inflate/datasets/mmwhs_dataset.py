@@ -38,8 +38,6 @@ class MMWHSDataset(HybridIdDataset):
                      ),
                  **kwargs):
         self.state = state
-        self.io_normalisation_values = torch.load(
-            Path(args[0], "mmwhs_io_normalisation_values.pth"))
 
         if kwargs['use_2d_normal_to'] is not None:
             warnings.warn(

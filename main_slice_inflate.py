@@ -675,9 +675,7 @@ def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
 
     return elbo
 
-def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, batch, label_tags, class_weights, io_normalisation_values, autocast_enabled=False):
-    # b_input = b_input-io_normalisation_values['input_mean'].to(b_input.device)
-    # b_input = b_input/io_normalisation_values['input_std'].to(b_input.device)
+def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, batch, label_tags, class_weights, autocast_enabled=False):
 
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
@@ -706,9 +704,6 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
             y_hat = model(b_input, b_grid_affines)
         else:
             raise ValueError
-        # Reverse normalisation to outputs
-        # y_hat = y_hat*io_normalisation_values['target_std'].to(b_input.device)
-        # y_hat = y_hat+io_normalisation_values['target_mean'].to(b_input.device)
 
         ### Calculate loss ###
         assert y_hat.dim() == 5, \
@@ -770,8 +765,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 config, epx,
                 model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
                 batch,
-                dataset.label_tags, class_weights,
-                dataset.io_normalisation_values, autocast_enabled)
+                dataset.label_tags, class_weights, autocast_enabled)
 
             if r_params is None:
                 regularization = 0.0
@@ -796,7 +790,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                     config, epx,
                     model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
                     batch,
-                    dataset.label_tags, class_weights, dataset.io_normalisation_values, autocast_enabled)
+                    dataset.label_tags, class_weights, autocast_enabled)
 
         epx_losses.append(loss.item())
 
@@ -1132,21 +1126,6 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
         if config.debug or run_test_once_only:
             break
 
-# %%
-# training_dataset.eval()
-# eval_dataloader = DataLoader(training_dataset, batch_size=20,  pin_memory=False, drop_last=False)
-
-# for large_batch in eval_dataloader:
-#     large_b_input = get_model_input(large_batch, config_dict, num_classes=len(training_dataset.label_tags))
-
-# input_mean, input_std = large_b_input[0].float().mean((0,-3,-2,-1), keepdim=True).cpu(), large_b_input[0].float().std((0,-3,-2,-1), keepdim=True).cpu()
-# target_mean, target_std = large_b_input[1].float().mean((0,-3,-2,-1), keepdim=True).cpu(), large_b_input[1].float().std((0,-3,-2,-1), keepdim=True).cpu()
-
-# print(input_mean.shape, input_std.shape)
-# print(target_mean.shape, target_std.shape)
-
-# torch.save(dict(input_mean=input_mean, input_std=input_std, target_mean=target_mean, target_std=target_std), "io_normalisation_values.pth")
-# sys.exit(0)
 # %%
 # Config overrides
 # config_dict['wandb_mode'] = 'disabled'
