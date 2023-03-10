@@ -68,7 +68,7 @@ class AffineTransformModule(torch.nn.Module):
     def __init__(self, input_channels,
         fov_mm, fov_vox, view_affine,
         init_theta_ap=None, init_theta_t_offsets=None,
-        optim_method='angle-axis', use_affine_theta=True, tag=None, align_corners=False):
+        optim_method='angle-axis', use_affine_theta=True, offset_clip_value=1., tag=None, align_corners=False):
 
         super().__init__()
         assert fov_vox[0] == fov_vox[1] == fov_vox[2]
@@ -97,20 +97,30 @@ class AffineTransformModule(torch.nn.Module):
 
         self.fov_mm = fov_mm
         self.fov_vox = fov_vox
+        self.spat = int(fov_vox[-1])
+
         self.view_affine = view_affine.view(1,4,4)
-        self.localisation_net = LocalisationNet(
-            input_channels,
-            self.ap_space+3*int(fov_vox[-1]), # 3*spatial dimension for translational parameters
-            size_3d=fov_vox.tolist()
-        )
 
         self.use_affine_theta = use_affine_theta
-        self.init_theta_t_offsets = torch.nn.Parameter(torch.zeros([3,int(fov_vox[-1])]), requires_grad=False)
+        self.init_theta_t_offsets = torch.nn.Parameter(torch.zeros([3,self.spat]), requires_grad=False)
 
         self.tag = tag
         self.align_corners = align_corners
 
-        self.arra = torch.arange(0, fov_vox[-1])
+        self.offset_clip_value = offset_clip_value
+
+        self.vox_range = int(round(
+            self.get_vox_offsets_from_gs_offsets(offset_clip_value)
+            - self.get_vox_offsets_from_gs_offsets(-offset_clip_value)
+        ))
+
+        self.arra = torch.arange(0, self.vox_range) + (self.spat - self.vox_range) // 2 + 1
+
+        self.localisation_net = LocalisationNet(
+            input_channels,
+            self.ap_space+3*self.vox_range, # 3*spatial dimension for translational parameters
+            size_3d=fov_vox.tolist()
+        )
 
         self.last_theta_ap = None
         self.last_theta_t_offsets = None
@@ -137,20 +147,29 @@ class AffineTransformModule(torch.nn.Module):
         return theta_a.to(torch.float32), theta_t.to(torch.float32)
 
     def get_gs_offsets_from_theta_tp(self, theta_tp):
-        SPAT = int(self.fov_vox[-1])
-        theta_tp = theta_tp.view(-1,3,SPAT)
+        assert theta_tp.shape[1:] == (3,self.vox_range)
         slice_posxs = (
             torch.nn.functional.softmax(theta_tp, dim=2)
-            * self.arra.to(theta_tp).view(1,1,SPAT)
+            * self.arra.to(theta_tp).view(1,1,self.vox_range)
         ).sum(-1)
 
         if self.align_corners:
             # see https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/GridSampler.h
-            gs_offsets = 2./(SPAT-1)*slice_posxs - 1.0
+            gs_offsets = 2./(self.spat-1)*slice_posxs - 1.0
         else:
-            gs_offsets = (2.0*slice_posxs + 1.0)/SPAT - 1.0
+            gs_offsets = (2.0*slice_posxs + 1.0)/self.spat - 1.0
 
         return gs_offsets
+
+    def get_vox_offsets_from_gs_offsets(self, gs_offsets):
+
+        if self.align_corners:
+            # see https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/GridSampler.h
+            vox_offsets = (gs_offsets + 1.0) * (self.spat-1) / 2.0
+        else:
+            vox_offsets = ((gs_offsets+1.0)*self.spat - 1.0) / 2.0
+
+        return vox_offsets
 
     def get_batch_affines(self, x):
         B,C,D,H,W = x.shape
@@ -174,10 +193,8 @@ class AffineTransformModule(torch.nn.Module):
         theta_a = self.optim_function(theta_ap)
 
         # Translation matrix definition
-        # theta_tp[:,1:] = 0.0 # [:,0] is perpendicular to cut plane -> predict only this
-        # theta_tp[...] = 0.0 # TODO remove that
-
-        theta_t_offsets = self.get_gs_offsets_from_theta_tp(theta_tp)
+        theta_t_offsets = self.get_gs_offsets_from_theta_tp(theta_tp.view(B,3,self.vox_range))
+        theta_t_offsets = theta_t_offsets.clip(-self.offset_clip_value, self.offset_clip_value)
 
         theta_t = torch.cat([theta_t_offsets, torch.ones(B, device=device).view(B,1)], dim=1)
         theta_t = torch.cat([
