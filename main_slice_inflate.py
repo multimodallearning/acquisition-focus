@@ -395,13 +395,13 @@ def get_atm(config, num_classes, view, this_script_dir, _path=None):
         affine_path = Path(
         this_script_dir,
         "slice_inflate/preprocessing",
-        "mmwhs_1002_SA_yellow_slice_to_ras.mat"
+        "mmwhs_1002_SA.mat"
     )
     elif view == 'hla':
         affine_path = Path(
         this_script_dir,
         "slice_inflate/preprocessing",
-        "mmwhs_1002_HLA_red_slice_to_ras.mat"
+        "mmwhs_1002_4CH.mat"
     )
 
     # Add atm models
@@ -884,7 +884,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         ornt_log_prefix = f"orientations/{phase}_sa_"
         sa_param_dict = dict(
             theta_ap=epx_sa_theta_aps.values(),
-            theta_tp=epx_sa_theta_t_offsets.values()
+            theta_t_offsets=epx_sa_theta_t_offsets.values()
         )
         sa_theta_ap_mean, sa_theta_t_offsets_mean = \
             log_affine_param_stats(ornt_log_prefix, fold_postfix, sa_param_dict, global_idx,
@@ -898,11 +898,15 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             )
         )
 
+        if config.do_output:
+            _dir = Path(f"data/output/{wandb.run.name}")
+            torch.save(sa_param_dict, _dir/f"sa_params_{phase}_epx_{epx}.png")
+
     if epx_hla_theta_aps:
         ornt_log_prefix = f"orientations/{phase}_hla_"
         hla_param_dict = dict(
             theta_ap=epx_hla_theta_aps.values(),
-            theta_tp=epx_hla_theta_t_offsets.values()
+            theta_t_offsets=epx_hla_theta_t_offsets.values()
         )
         hla_theta_ap_mean, hla_theta_tp_mean = \
             log_affine_param_stats(ornt_log_prefix, fold_postfix, hla_param_dict, global_idx,
@@ -915,6 +919,9 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 epoch_hla_theta_tp_mean=hla_theta_tp_mean,
             )
         )
+        if config.do_output:
+            _dir = Path(f"data/output/{wandb.run.name}")
+            torch.save(hla_param_dict, _dir/f"hla_params_{phase}_epx_{epx}.png")
 
     if config.do_output and epx_input:
         # Store the slice model input

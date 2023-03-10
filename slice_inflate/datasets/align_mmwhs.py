@@ -98,13 +98,21 @@ def get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape
 
     return affine_mat @ pre_grid_sample_affine
 
-
+def do_sample(volume, grid, gs_kwargs):
+    if volume.requires_grad or grid.requires_grad:
+        transformed = checkpoint(torch.nn.functional.grid_sample, volume, grid, **gs_kwargs)
+    else:
+        transformed = torch.nn.functional.grid_sample(volume, grid, **gs_kwargs)
+    return transformed
 
 def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_mat: torch.Tensor, fov_mm, fov_vox,
     is_label=False, pre_grid_sample_affine=None, pre_grid_sample_augment_affine=None, dtype=torch.float32):
 
-    assert volume_affine.dim() == ras_affine_mat.dim() == pre_grid_sample_affine.dim() == pre_grid_sample_augment_affine.dim() == 3 # B,4,4
-    assert volume.shape[0] == volume_affine.shape[0] == ras_affine_mat.shape[0] == pre_grid_sample_affine.shape[0] == pre_grid_sample_augment_affine.shape[0]
+    DIM = volume_affine.dim()
+    B = volume.shape[0]
+    assert DIM == ras_affine_mat.dim() and B == ras_affine_mat.shape[0]
+    if pre_grid_sample_affine: assert DIM == pre_grid_sample_affine.dim() and B == pre_grid_sample_affine.shape[0]
+    if pre_grid_sample_augment_affine: assert DIM == pre_grid_sample_augment_affine.dim() and B == pre_grid_sample_augment_affine.shape[0]
 
     device = volume.device
     fov_mm = fov_mm.to(device)
@@ -115,9 +123,6 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
     if pre_grid_sample_affine is not None:
         pre_grid_sample_affine = pre_grid_sample_affine.to(volume_affine)
 
-    if pre_grid_sample_augment_affine is not None:
-        pre_grid_sample_augment_affine = pre_grid_sample_augment_affine.to(volume_affine)
-
     # Prepare volume
     B,C,D,H,W = volume.shape
     volume_shape = torch.tensor([D,H,W], device=device)
@@ -127,22 +132,34 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
     grid_affine = get_grid_affine_from_ras_affines(volume_affine, ras_affine_mat, volume_shape, fov_mm, pre_grid_sample_affine)
     target_shape = torch.Size([B,C] + fov_vox.tolist())
 
+    if pre_grid_sample_augment_affine is not None:
+        pre_grid_sample_augment_affine = pre_grid_sample_augment_affine.to(volume_affine)
+    else:
+        pre_grid_sample_augment_affine = torch.eye(4).to(volume_affine)
+
     augmented_grid_affine = (grid_affine @ pre_grid_sample_augment_affine)
+
     grid = torch.nn.functional.affine_grid(
         augmented_grid_affine[:,:3,:].view(B,3,4), target_shape, align_corners=False
     ).to(device=volume.device)
 
     if is_label:
-        transformed = checkpoint(
-            torch.nn.functional.grid_sample,
-            volume.to(dtype=dtype), grid.to(dtype=dtype), 'nearest', 'zeros', False
+        gs_kwargs = dict(
+            mode='nearest',
+            padding_mode='zeros',
+            align_corners=False
         )
+        transformed = do_sample(volume.to(dtype=dtype), grid.to(dtype=dtype), gs_kwargs)
+
     else:
+        gs_kwargs = dict(
+            mode='bilinear',
+            padding_mode='border',
+            align_corners=False
+        )
         min_value = volume.min()
         volume = volume - min_value
-        transformed = checkpoint(torch.nn.functional.grid_sample,
-            volume.to(dtype=dtype), grid.to(dtype=dtype), 'bilinear', 'border', False
-        )
+        transformed = do_sample(volume.to(dtype=dtype), grid.to(dtype=dtype), gs_kwargs)
         transformed = transformed + min_value
 
     transformed = transformed.view(target_shape)
@@ -158,12 +175,8 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_affine_
 
 
 
-def crop_around_label_center(b_image, b_label, vox_size):
-    assert b_label.dim() == 5
-    if not b_image is None:
-        assert b_image.dim() == 5
-
 def get_crop_affine(affine, vox_offset):
+    crop_affine = affine.clone()
     mm_offset = affine[:-1,:-1] @ vox_offset.to(affine)
     crop_affine[:-1,-1] = affine[:-1,-1] + mm_offset
     return crop_affine
@@ -254,8 +267,8 @@ def align_to_sa_hla_from_volume(base_dir, volume, initial_affine, align_affine, 
     fov_vox_slice[-1] = 1
 
     base_dir = Path(base_dir)
-    hla_affine_path = Path(base_dir.parent.parent, "slice_inflate/preprocessing", "mmwhs_1002_HLA_red_slice_to_ras.mat")
-    sa_affine_path =  Path(base_dir.parent.parent, "slice_inflate/preprocessing", "mmwhs_1002_SA_yellow_slice_to_ras.mat")
+    hla_affine_path = Path(base_dir.parent.parent, "slice_inflate/preprocessing", "mmwhs_1002_4CH.mat")
+    sa_affine_path =  Path(base_dir.parent.parent, "slice_inflate/preprocessing", "mmwhs_1002_SA.mat")
 
     hla_affine = align_affine @ torch.from_numpy(np.loadtxt(hla_affine_path))
     sa_affine =  align_affine @ torch.from_numpy(np.loadtxt(sa_affine_path))
