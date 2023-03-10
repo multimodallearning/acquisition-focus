@@ -204,6 +204,7 @@ class AffineTransformModule(torch.nn.Module):
         ], dim=-1)
 
         # Zoom matrix definition
+        theta_zp = theta_zp ** 2 # Zoom needs to be positive
         theta_z = torch.diag_embed(torch.cat([
             theta_zp,
             theta_zp,
