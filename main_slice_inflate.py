@@ -60,7 +60,7 @@ from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
     get_batch_dice_over_all, get_batch_score_per_label, save_model, \
     reduce_label_scores_epoch, get_test_func_all_parameters_updated, anomaly_hook
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
-from slice_inflate.models.affine_transform import AffineTransformModule, SoftCutModule, HardCutModule, LearnCutModule, get_theta_params
+from slice_inflate.models.affine_transform import AffineTransformModule, SoftCutModule, HardCutModule, get_theta_params
 from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
 from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params, deactivate_r_params, Stage, StageIterator
 
@@ -386,7 +386,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
 
 
 
-def get_atm(config, num_classes, view, this_script_dir, _path=None):
+def get_atm(config, num_classes, size_3d, view, this_script_dir, _path=None):
 
     assert view in ['sa', 'hla']
     device = config.device
@@ -406,6 +406,7 @@ def get_atm(config, num_classes, view, this_script_dir, _path=None):
 
     # Add atm models
     atm = AffineTransformModule(num_classes,
+        size_3d,
         torch.tensor(config['fov_mm']),
         torch.tensor(config['fov_vox']),
         offset_clip_value=config['offset_clip_value'],
@@ -430,20 +431,20 @@ class NoneOptimizer():
     def state_dict(self):
         return {}
 
-def get_transform_model(config, num_classes, this_script_dir, _path=None, sa_atm_override=None, hla_atm_override=None):
+def get_transform_model(config, num_classes, size_3d, this_script_dir, _path=None, sa_atm_override=None, hla_atm_override=None):
     device = config.device
 
     if isinstance(sa_atm_override, AffineTransformModule):
         # Check if atm is set externally
         sa_atm = sa_atm_override
     else:
-        sa_atm = get_atm(config, num_classes, view='sa', this_script_dir=this_script_dir, _path = _path)
+        sa_atm = get_atm(config, num_classes, size_3d, view='sa', this_script_dir=this_script_dir, _path = _path)
 
     if isinstance(hla_atm_override, AffineTransformModule):
         # Check if atm is set externally
         hla_atm = hla_atm_override
     else:
-        hla_atm = get_atm(config, num_classes, view='hla', this_script_dir=this_script_dir, _path = _path)
+        hla_atm = get_atm(config, num_classes, size_3d, view='hla', this_script_dir=this_script_dir, _path = _path)
 
     if config['soft_cut_std'] > 0:
         sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
@@ -613,12 +614,12 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     if config.reconstruction_target == 'from-dataloader':
         b_target = b_label
     elif config.reconstruction_target == 'sa-oriented':
-        # raise ValueError("Currently not working together with LearnCutModule")
+        raise ValueError("Currently not working together zoom parameters and LearnCutModule")
         b_target = sa_label
         grid_affines[0] = sa_grid_affine.inverse() @ grid_affines[0]
         grid_affines[1] = sa_grid_affine.inverse() @ grid_affines[1]
     elif config.reconstruction_target == 'hla-oriented':
-        # raise ValueError("Currently not working together with LearnCutModule")
+        raise ValueError("Currently not working together zoom parameters and LearnCutModule")
         b_target = hla_label
         grid_affines[0] = hla_grid_affine.inverse() @ grid_affines[0]
         grid_affines[1] = hla_grid_affine.inverse() @ grid_affines[1]
@@ -684,7 +685,6 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
         # from slice_inflate.models.nnunet_models import SkipConnector
         # nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_sa.nii.gz")
         # nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_hla.nii.gz")
-        # nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_target.nii.gz")
         # nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().int().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_sum_sa.nii.gz")
         # nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().int().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_sum_hla.nii.gz")
 
@@ -814,8 +814,9 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         pred_seg = y_hat.argmax(1)
 
         # Taken from nibabel nifti1.py
-        rzs = sa_atm.last_transformed_nii_affine[0,:3,:3]
-        nifti_zooms = (rzs[:3,:3]*rzs[:3,:3]).sum(1).sqrt().detach().cpu()
+        # nii_output_affine = sa_atm.last_transformed_nii_affine[0,:3,:3]
+        nii_output_affine = torch.diag(sa_atm.fov_mm/sa_atm.fov_vox)
+        nifti_zooms = (nii_output_affine[:3,:3]*nii_output_affine[:3,:3]).sum(1).sqrt().detach().cpu()
 
         # Calculate fast dice score
         pred_seg_oh = eo.rearrange(torch.nn.functional.one_hot(pred_seg, len(training_dataset.label_tags)), 'b d h w oh -> b oh d h w')
@@ -877,15 +878,17 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=())
 
     print()
+    output_dir = Path(f"data/output/{wandb.run.name}")
+    output_dir.mkdir(exist_ok=True)
 
     mean_transform_dict = dict()
 
     if epx_sa_theta_aps:
         ornt_log_prefix = f"orientations/{phase}_sa_"
         sa_param_dict = dict(
-            theta_ap=epx_sa_theta_aps.values(),
-            theta_t_offsets=epx_sa_theta_t_offsets.values(),
-            theta_zp=epx_sa_theta_zps.values(),
+            theta_ap=list(epx_sa_theta_aps.values()),
+            theta_t_offsets=list(epx_sa_theta_t_offsets.values()),
+            theta_zp=list(epx_sa_theta_zps.values()),
         )
         sa_theta_ap_mean, sa_theta_t_offsets_mean, sa_theta_zp_mean = \
             log_affine_param_stats(ornt_log_prefix, fold_postfix, sa_param_dict, global_idx,
@@ -901,15 +904,14 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         )
 
         if config.do_output:
-            _dir = Path(f"data/output/{wandb.run.name}")
-            torch.save(sa_param_dict, _dir/f"sa_params_{phase}_epx_{epx}.png")
+            torch.save(sa_param_dict, output_dir/f"sa_params_{phase}_epx_{epx}.png")
 
     if epx_hla_theta_aps:
         ornt_log_prefix = f"orientations/{phase}_hla_"
         hla_param_dict = dict(
-            theta_ap=epx_hla_theta_aps.values(),
-            theta_t_offsets=epx_hla_theta_t_offsets.values(),
-            theta_zp=epx_hla_theta_zps.values()
+            theta_ap=list(epx_hla_theta_aps.values()),
+            theta_t_offsets=list(epx_hla_theta_t_offsets.values()),
+            theta_zp=list(epx_hla_theta_zps.values())
         )
         hla_theta_ap_mean, hla_theta_tp_mean, hla_theta_zp_mean = \
             log_affine_param_stats(ornt_log_prefix, fold_postfix, hla_param_dict, global_idx,
@@ -924,15 +926,11 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             )
         )
         if config.do_output:
-            _dir = Path(f"data/output/{wandb.run.name}")
-            torch.save(hla_param_dict, _dir/f"hla_params_{phase}_epx_{epx}.png")
+            torch.save(hla_param_dict, output_dir/f"hla_params_{phase}_epx_{epx}.png")
 
     if config.do_output and epx_input:
         # Store the slice model input
         save_input = torch.stack(list(epx_input.values()))
-
-        _dir = Path(f"data/output/{wandb.run.name}")
-        _dir.mkdir(exist_ok=True)
 
         if config.use_distance_map_localization:
             save_input =  (save_input < 0.5).float()
@@ -947,13 +945,13 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
         BI, DI, HI, WI = save_input.shape
         img_input = eo.rearrange(save_input, 'BI DI HI WI -> (DI WI) (BI HI)')
-        log_frameless_image(img_input.numpy(), _dir / f"input_{phase}_epx_{epx}.png", dpi=150, cmap='gray')
+        log_frameless_image(img_input.numpy(), output_dir / f"input_{phase}_epx_{epx}.png", dpi=150, cmap='gray')
 
         focus_img_input = eo.rearrange(save_input.sum(0), 'DI HI WI -> (DI WI) HI')
-        log_frameless_image(focus_img_input.numpy(), _dir / f"input_{phase}_epx_{epx}_focus.png", dpi=150, cmap='magma')
+        log_frameless_image(focus_img_input.numpy(), output_dir / f"input_{phase}_epx_{epx}_focus.png", dpi=150, cmap='magma')
 
         lean_dct = {k:v for k,v in zip(epx_input.keys(), save_input.short())}
-        torch.save(lean_dct, _dir / f"input_{phase}_epx_{epx}.pt")
+        torch.save(lean_dct, output_dir / f"input_{phase}_epx_{epx}.pt")
 
     print(f"### END {phase.upper()}")
     print()
@@ -1026,8 +1024,9 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
         sa_atm_override = stage['sa_atm'] if stage is not None and 'sa_atm' in stage else None
         hla_atm_override = stage['hla_atm'] if stage is not None and 'hla_atm' in stage else None
 
+        size_3d = training_dataset[0]['label'].shape[-3:]
         (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer, transform_scheduler = get_transform_model(
-            config, len(training_dataset.label_tags), THIS_SCRIPT_DIR, _path=transform_mdl_chk_path,
+            config, len(training_dataset.label_tags), size_3d, THIS_SCRIPT_DIR, _path=transform_mdl_chk_path,
             sa_atm_override=sa_atm_override, hla_atm_override=hla_atm_override)
 
         all_optimizers = dict(optimizer=optimizer, transform_optimizer=transform_optimizer)
@@ -1271,6 +1270,7 @@ elif config_dict['sweep_type'] == 'wandb_sweep':
     wandb.agent(sweep_id, function=wandb_sweep_run)
 
 elif config_dict['sweep_type'] == 'stage-sweep':
+    size_3d = training_dataset[0]['label'].shape[-3:]
     r_params = init_regularization_params(
         [
             'hla_angles',
@@ -1282,8 +1282,8 @@ elif config_dict['sweep_type'] == 'stage-sweep':
     all_params_stages = [
         Stage( # Optimize SA
             r_params=r_params,
-            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa', THIS_SCRIPT_DIR),
-            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'sa', THIS_SCRIPT_DIR),
+            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa',
             epochs=config_dict['epochs']*2,
             soft_cut_std=-999,
@@ -1294,7 +1294,7 @@ elif config_dict['sweep_type'] == 'stage-sweep':
             __activate_fn__=lambda self: None
         ),
         Stage( # Optimize hla
-            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla', THIS_SCRIPT_DIR),
+            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'hla', THIS_SCRIPT_DIR),
             cuts_mode='sa>hla',
             epochs=config_dict['epochs']*2,
             soft_cut_std=-999,

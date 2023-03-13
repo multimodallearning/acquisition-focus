@@ -65,7 +65,7 @@ class LocalisationNet(torch.nn.Module):
 
 
 class AffineTransformModule(torch.nn.Module):
-    def __init__(self, input_channels,
+    def __init__(self, input_channels, size_3d,
         fov_mm, fov_vox, view_affine,
         init_theta_ap=None, init_theta_t_offsets=None, init_theta_zp=None,
         optim_method='angle-axis', use_affine_theta=True, offset_clip_value=1., tag=None,
@@ -103,7 +103,7 @@ class AffineTransformModule(torch.nn.Module):
         self.view_affine = view_affine.view(1,4,4)
 
         self.use_affine_theta = use_affine_theta
-        self.init_theta_t_offsets = torch.nn.Parameter(torch.zeros([3,self.spat]), requires_grad=False)
+        self.init_theta_t_offsets = torch.nn.Parameter(torch.zeros([3]), requires_grad=False)
 
         self.tag = tag
         self.align_corners = align_corners
@@ -111,16 +111,16 @@ class AffineTransformModule(torch.nn.Module):
         self.offset_clip_value = offset_clip_value
 
         self.vox_range = int(round(
-            self.get_vox_offsets_from_gs_offsets(offset_clip_value)
-            - self.get_vox_offsets_from_gs_offsets(-offset_clip_value)
+            self.get_vox_offsets_from_gs_offsets(self.offset_clip_value)
+            - self.get_vox_offsets_from_gs_offsets(-self.offset_clip_value)
         ))
 
-        self.arra = torch.arange(0, self.vox_range) + (self.spat - self.vox_range) // 2 + 1
+        self.arra = torch.arange(0, self.vox_range) + (self.spat - self.vox_range) // 2
 
         self.localisation_net = LocalisationNet(
             input_channels,
-            self.ap_space + 3*int(fov_vox[-1]) + 1, # 3*spatial dimension for translational parameters and 1x zoom parameter
-            size_3d=fov_vox.tolist()
+            self.ap_space + 3*int(self.vox_range) + 1, # 3*spatial dimension for translational parameters and 1x zoom parameter
+            size_3d=size_3d
         )
 
         self.use_affine_theta = use_affine_theta
@@ -129,8 +129,6 @@ class AffineTransformModule(torch.nn.Module):
 
         self.tag = tag
         self.align_corners = align_corners
-
-        self.arra = torch.arange(0, fov_vox[-1])
 
         self.last_theta_ap = None
         self.last_theta_t_offsets = None
@@ -201,7 +199,7 @@ class AffineTransformModule(torch.nn.Module):
         theta_atz_p = self.localisation_net(x.float())
         device = theta_atz_p.device
         theta_ap = theta_atz_p[:,:self.ap_space]
-        theta_tp = theta_atz_p[:,self.ap_space:-1]
+        theta_tp = theta_atz_p[:,self.ap_space:-1].view(B,3,self.vox_range)
         theta_zp = theta_atz_p[:,-1:]
 
         # Apply initial values
@@ -220,9 +218,8 @@ class AffineTransformModule(torch.nn.Module):
         theta_a = self.optim_function(theta_ap)
 
         # Translation matrix definition
-        theta_t_offsets = self.get_gs_offsets_from_theta_tp(theta_tp.view(B,3,self.vox_range))
-        theta_t_offsets = theta_t_offsets.clip(-self.offset_clip_value, self.offset_clip_value)
-        
+        theta_t_offsets = self.get_gs_offsets_from_theta_tp(theta_tp)
+
         theta_t = torch.cat([theta_t_offsets, torch.ones(B, device=device).view(B,1)], dim=1)
         theta_t = torch.cat([
             torch.eye(4, device=device)[:4,:3].view(1,4,3).repeat(B,1,1),
@@ -318,83 +315,83 @@ class HardCutModule(torch.nn.Module):
 
 
 
-class LearnCutModule(torch.nn.Module):
+# class LearnCutModule(torch.nn.Module):
 
-    def __init__(self, input_channels, size_3d, align_corners=False, mode='linear'):
-        super().__init__()
-        assert mode in ['linear', 'nearest']
-        assert size_3d[0] == size_3d[1] == size_3d[2]
-        self.localisation_net = LocalisationNet(
-            input_channels,
-            size_3d[-1],
-            size_3d=size_3d[-1]*3) # 3 for three translational parameters
-        self.size_3d = size_3d
-        self.arra = torch.arange(0, size_3d[-1])
-        self.align_corners = align_corners
-        self.mode = mode
+#     def __init__(self, input_channels, size_3d, align_corners=False, mode='linear'):
+#         super().__init__()
+#         assert mode in ['linear', 'nearest']
+#         assert size_3d[0] == size_3d[1] == size_3d[2]
+#         self.localisation_net = LocalisationNet(
+#             input_channels,
+#             size_3d[-1],
+#             size_3d=size_3d[-1]*3) # 3 for three translational parameters
+#         self.size_3d = size_3d
+#         self.arra = torch.arange(0, size_3d[-1])
+#         self.align_corners = align_corners
+#         self.mode = mode
 
-    def forward(self, b_volume, slice_posxs_override=None):
-        assert b_volume.dim() == 5
-        B,C,D,H,W = b_volume.shape
-        assert D == H == W
-        assert W == self.size_3d[-1]
+    # def forward(self, b_volume, slice_posxs_override=None):
+    #     assert b_volume.dim() == 5
+    #     B,C,D,H,W = b_volume.shape
+    #     assert D == H == W
+    #     assert W == self.size_3d[-1]
 
-        if slice_pos_override is None:
-            b_slice_selector = self.localisation_net(b_volume).view(B,3,W)
-            slice_posxs = (
-                torch.nn.functional.softmax(b_slice_selector, dim=2)
-                * self.arra.to(b_volume).view(1,1,W)
-            ).sum(-1)
-        else:
-            slice_posxs = slice_posxs_override
+    #     if slice_pos_override is None:
+    #         b_slice_selector = self.localisation_net(b_volume).view(B,3,W)
+    #         slice_posxs = (
+    #             torch.nn.functional.softmax(b_slice_selector, dim=2)
+    #             * self.arra.to(b_volume).view(1,1,W)
+    #         ).sum(-1)
+    #     else:
+    #         slice_posxs = slice_posxs_override
 
-        slice_posxs[:,0] = slice_posxs[:,0].clamp(0,W-1)
-        slice_posxs[:,1] = slice_posxs[:,1].clamp(0,W-1)
-        slice_posxs[:,2] = slice_posxs[:,2].clamp(0,W-1)
+    #     slice_posxs[:,0] = slice_posxs[:,0].clamp(0,W-1)
+    #     slice_posxs[:,1] = slice_posxs[:,1].clamp(0,W-1)
+    #     slice_posxs[:,2] = slice_posxs[:,2].clamp(0,W-1)
 
-        slice_posxs = torch.tensor([0, 0, 80.]).to(b_volume) # TODO remove!
+    #     slice_posxs = torch.tensor([0, 0, 80.]).to(b_volume) # TODO remove!
 
-        gs_space_affine = torch.eye(4).repeat(B,1,1).to(b_volume)
+    #     gs_space_affine = torch.eye(4).repeat(B,1,1).to(b_volume)
 
-        if self.align_corners:
-            # see https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/GridSampler.h
-            gs_offsets = 2./(W-1)*slice_posxs - 1.0
-        else:
-            gs_offsets = (2.0*slice_posxs + 1.0)/W - 1.0
+    #     if self.align_corners:
+    #         # see https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/GridSampler.h
+    #         gs_offsets = 2./(W-1)*slice_posxs - 1.0
+    #     else:
+    #         gs_offsets = (2.0*slice_posxs + 1.0)/W - 1.0
 
-        gs_space_affine[:,:3,-1] = gs_offsets # Caution: W is at row index 0
+    #     gs_space_affine[:,:3,-1] = gs_offsets # Caution: W is at row index 0
 
-        grid = torch.nn.functional.affine_grid(
-            gs_space_affine[:,:3,:].view(B,3,4), (B,C,D,H,1), align_corners=self.align_corners
-        ).to(device=volume.device)
+    #     grid = torch.nn.functional.affine_grid(
+    #         gs_space_affine[:,:3,:].view(B,3,4), (B,C,D,H,1), align_corners=self.align_corners
+    #     ).to(device=volume.device)
 
-        cut_slice = checkpoint(
-            torch.nn.functional.grid_sample,
-            volume.to(dtype=dtype), grid.to(dtype=dtype), self.mode, 'zeros', align_corners=self.align_corners
-        )
+    #     cut_slice = checkpoint(
+    #         torch.nn.functional.grid_sample,
+    #         volume.to(dtype=dtype), grid.to(dtype=dtype), self.mode, 'zeros', align_corners=self.align_corners
+    #     )
 
-        # slice_lower_posxs = slice_posxs.floor().clamp(0,W-1)
-        # slice_upper_posxs = (slice_lower_posxs+1).clamp(0,W-1)
-        # upper_factor = slice_posxs - slice_lower_posxs
-        # lower_factor = 1.0 - upper_factor
+    #     # slice_lower_posxs = slice_posxs.floor().clamp(0,W-1)
+    #     # slice_upper_posxs = (slice_lower_posxs+1).clamp(0,W-1)
+    #     # upper_factor = slice_posxs - slice_lower_posxs
+    #     # lower_factor = 1.0 - upper_factor
 
-        # if self.mode == 'nearest':
-        #     if lower_factor >= upper_factor:
-        #         slice_upper_posxs = slice_lower_posxs
-        #     else:
-        #         slice_lower_posxs = slice_upper_posxs
-        #     lower_factor = upper_factor = 0.5
+    #     # if self.mode == 'nearest':
+    #     #     if lower_factor >= upper_factor:
+    #     #         slice_upper_posxs = slice_lower_posxs
+    #     #     else:
+    #     #         slice_lower_posxs = slice_upper_posxs
+    #     #     lower_factor = upper_factor = 0.5
 
-        # # Gradient flows through slice interpolation factors
-        # slice_lower_posxs = slice_lower_posxs.long()
-        # slice_upper_posxs = slice_upper_posxs.long()
+    #     # # Gradient flows through slice interpolation factors
+    #     # slice_lower_posxs = slice_lower_posxs.long()
+    #     # slice_upper_posxs = slice_upper_posxs.long()
 
-        # interpolated_slice = (
-        #     lower_factor * b_volume[..., slice_lower_posxs[2]]
-        #     + upper_factor * b_volume[..., slice_upper_posxs[2]]
-        # )
+    #     # interpolated_slice = (
+    #     #     lower_factor * b_volume[..., slice_lower_posxs[2]]
+    #     #     + upper_factor * b_volume[..., slice_upper_posxs[2]]
+    #     # )
 
-        return cut_slice, gs_space_affine
+    #     return cut_slice, gs_space_affine
 
 
 class SoftCutModule(torch.nn.Module):

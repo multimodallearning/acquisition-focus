@@ -17,7 +17,7 @@ from slice_inflate.utils.common_utils import DotDict, get_script_dir
 from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, calc_dist_map
 from slice_inflate.models.affine_transform import get_random_affine
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
-from slice_inflate.datasets.align_mmwhs import crop_around_label_center, cut_slice, soft_cut_slice
+from slice_inflate.datasets.align_mmwhs import crop_around_label_center, cut_slice, soft_cut_slice, nifti_transform
 
 cache = Memory(location=os.environ['MMWHS_CACHE_PATH'])
 THIS_SCRIPT_DIR = get_script_dir()
@@ -329,7 +329,7 @@ def load_data(self_attributes: dict):
 
     for mod in modalities:
         if self.state.lower() == "train":
-            data_directory = f"{mod}_registered_train"
+            data_directory = f"{mod}_registered_train_selection"
 
         elif self.state.lower() == "test":
             data_directory = f"{mod}_registered_test_selection"
@@ -359,7 +359,7 @@ def load_data(self_attributes: dict):
     for _path in files:
         trailing_name = str(_path).split("/")[-1]
         modality, patient_id = re.findall(
-            r'(ct|mr)_train_(\d{4})_.*?.nii.gz', trailing_name)[0]
+            r'(ct|mr)_.*_(\d{4})_.*?.nii.gz', trailing_name)[0]
         patient_id = int(patient_id)
 
         # Generate cmrxmotion id like 001-02-ES
@@ -404,34 +404,22 @@ def load_data(self_attributes: dict):
         additional_data_3d[_3d_id]['nifti_affine'] = affine
 
         if is_label:
-            resample_mode = 'nearest'
             tmp = replace_label_values(tmp)
+
             if self.use_binarized_labels:
                 tmp[tmp>0] = 1.0
-        else:
-            resample_mode = 'trilinear'
 
-        if self.do_resample:
-            tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(
-                0), size=self.resample_size, mode=resample_mode).squeeze(0).squeeze(0)
-
-            if tmp.shape != self.resample_size:
-                difs = np.array(self.resample_size) - torch.tensor(tmp.shape)
-                pad_before, pad_after = (
-                    difs/2).clamp(min=0).int(), (difs.int()-(difs/2).int()).clamp(min=0)
-                tmp = F.pad(tmp, tuple(torch.stack(
-                    [pad_before.flip(0), pad_after.flip(0)], dim=1).view(-1).tolist()))
-
-        if self.crop_3d_region is not None:
-            difs = self.crop_3d_region[:, 1] - torch.tensor(tmp.shape)
-            pad_before, pad_after = (
-                difs/2).clamp(min=0).int(), (difs.int()-(difs/2).int()).clamp(min=0)
-            tmp = F.pad(tmp, tuple(torch.stack(
-                [pad_before.flip(0), pad_after.flip(0)], dim=1).view(-1).tolist()))
-
-            tmp = tmp[self.crop_3d_region[0, 0]:self.crop_3d_region[0, 1], :, :]
-            tmp = tmp[:, self.crop_3d_region[1, 0]:self.crop_3d_region[1, 1], :]
-            tmp = tmp[:, :, self.crop_3d_region[2, 0]:self.crop_3d_region[2, 1]]
+        tmp, _, affine = nifti_transform(
+            tmp.unsqueeze(0).unsqueeze(0),
+            affine.view(1,4,4), ras_transform_mat=None,
+            fov_mm=torch.as_tensor(self.fov_mm), fov_vox=torch.as_tensor(self.fov_vox),
+            is_label=is_label,
+            pre_grid_sample_affine=None,
+            pre_grid_sample_augment_affine=None,
+            dtype=torch.float32
+        )
+        tmp = tmp.squeeze(0).squeeze(0)
+        affine = affine.squeeze(0)
 
         if not IMAGE_ID in trailing_name:
             label_data_3d[_3d_id] = tmp.long()
