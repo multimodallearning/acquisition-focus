@@ -67,8 +67,9 @@ class LocalisationNet(torch.nn.Module):
 class AffineTransformModule(torch.nn.Module):
     def __init__(self, input_channels,
         fov_mm, fov_vox, view_affine,
-        init_theta_ap=None, init_theta_t_offsets=None,
-        optim_method='angle-axis', use_affine_theta=True, offset_clip_value=1., tag=None, align_corners=False):
+        init_theta_ap=None, init_theta_t_offsets=None, init_theta_zp=None,
+        optim_method='angle-axis', use_affine_theta=True, offset_clip_value=1., tag=None,
+        align_corners=False):
 
         super().__init__()
         assert fov_vox[0] == fov_vox[1] == fov_vox[2]
@@ -118,12 +119,22 @@ class AffineTransformModule(torch.nn.Module):
 
         self.localisation_net = LocalisationNet(
             input_channels,
-            self.ap_space+3*self.vox_range, # 3*spatial dimension for translational parameters
+            self.ap_space + 3*int(fov_vox[-1]) + 1, # 3*spatial dimension for translational parameters and 1x zoom parameter
             size_3d=fov_vox.tolist()
         )
 
+        self.use_affine_theta = use_affine_theta
+        self.init_theta_t_offsets = torch.nn.Parameter(torch.zeros([3,int(fov_vox[-1])]), requires_grad=False)
+        self.init_theta_zp = torch.nn.Parameter(torch.ones([1,1]), requires_grad=False)
+
+        self.tag = tag
+        self.align_corners = align_corners
+
+        self.arra = torch.arange(0, fov_vox[-1])
+
         self.last_theta_ap = None
         self.last_theta_t_offsets = None
+        self.last_theta_zp = None
         self.last_theta_a = None
         self.last_theta_t = None
         self.last_theta = None
@@ -136,15 +147,28 @@ class AffineTransformModule(torch.nn.Module):
     def set_init_theta_t_offsets(self, init_theta_t_offsets):
         self.init_theta_t_offsets.data = init_theta_t_offsets.data
 
+    def set_init_theta_zp(self, init_theta_zp):
+        self.init_theta_zp.data = init_theta_zp.data
+
+
     def get_init_affines(self):
-        assert not self.init_theta_ap.requires_grad and not self.init_theta_t_offsets.requires_grad
+        assert not self.init_theta_ap.requires_grad \
+            and not self.init_theta_t_offsets.requires_grad \
+            and not self.init_theta_zp.requires_grad
+
         device = self.init_theta_t_offsets.device
         theta_a = self.optim_function(self.init_theta_ap.view(1,self.ap_space))[0].view(1,4,4)
         theta_t = torch.cat([self.init_theta_t_offsets, torch.tensor([1], device=device)])
         theta_t = torch.cat([torch.eye(4)[:4,:3].to(device), theta_t.view(4,1)], dim=1).view(1,4,4)
+        theta_z = torch.diag_embed(torch.cat([
+            self.init_theta_zp,
+            self.init_theta_zp,
+            self.init_theta_zp,
+            torch.ones([1,1], device=device)], dim=-1
+        ))
 
-        assert theta_a.shape == theta_t.shape == (1,4,4)
-        return theta_a.to(torch.float32), theta_t.to(torch.float32)
+        assert theta_a.shape == theta_t.shape == theta_z.shape (1,4,4)
+        return theta_a.to(torch.float32), theta_t.to(torch.float32), theta_z.to(torch.float32)
 
     def get_gs_offsets_from_theta_tp(self, theta_tp):
         assert theta_tp.shape[1:] == (3,self.vox_range)
@@ -174,13 +198,16 @@ class AffineTransformModule(torch.nn.Module):
     def get_batch_affines(self, x):
         B,C,D,H,W = x.shape
 
-        theta_at_p = self.localisation_net(x.float())
-        device = theta_at_p.device
-        theta_ap = theta_at_p[:,:self.ap_space]
-        theta_tp = theta_at_p[:,self.ap_space:]
+        theta_atz_p = self.localisation_net(x.float())
+        device = theta_atz_p.device
+        theta_ap = theta_atz_p[:,:self.ap_space]
+        theta_tp = theta_atz_p[:,self.ap_space:-1]
+        theta_zp = theta_atz_p[:,-1:]
 
-        # Apply initial rotation
+        # Apply initial values
         theta_ap = theta_ap + self.init_theta_ap.view(1,self.ap_space).to(device)
+        # TODO: What about translational values?
+        theta_zp = theta_zp + self.init_theta_zp.view(1,1).to(device)
 
         # Rotation matrix definition
         theta_ap = theta_ap.view(B, self.ap_space)
@@ -195,21 +222,32 @@ class AffineTransformModule(torch.nn.Module):
         # Translation matrix definition
         theta_t_offsets = self.get_gs_offsets_from_theta_tp(theta_tp.view(B,3,self.vox_range))
         theta_t_offsets = theta_t_offsets.clip(-self.offset_clip_value, self.offset_clip_value)
-
+        
         theta_t = torch.cat([theta_t_offsets, torch.ones(B, device=device).view(B,1)], dim=1)
         theta_t = torch.cat([
             torch.eye(4, device=device)[:4,:3].view(1,4,3).repeat(B,1,1),
             theta_t.view(B,4,1)
         ], dim=-1)
 
-        assert theta_a.shape == theta_t.shape == (B, 4, 4)
+        # Zoom matrix definition
+        theta_zp = theta_zp.sigmoid() + 0.5 # Zoom needs to be positive and in range(0.5,1.5)
+        theta_z = torch.diag_embed(torch.cat([
+            theta_zp,
+            theta_zp,
+            theta_zp,
+            torch.ones([B,1], device=device)], dim=-1)
+        )
+
+        assert theta_a.shape == theta_t.shape == theta_z.shape == (B, 4, 4)
 
         self.last_theta_ap = theta_ap
         self.last_theta_t_offsets = theta_t_offsets
+        self.last_theta_zp = theta_zp
         self.last_theta_a = theta_a
         self.last_theta_t = theta_t
+        self.last_theta_z = theta_z
 
-        return theta_a, theta_t
+        return theta_a, theta_t, theta_z
 
     def forward(self, x_image, x_label, nifti_affine, hidden_sample_augment_affine, theta_override=None):
 
@@ -227,19 +265,20 @@ class AffineTransformModule(torch.nn.Module):
             theta = theta_override.detach().clone() # Caution: this is a non-differentiable theta
         else:
             if self.use_affine_theta:
-                theta_a, theta_t = self.get_batch_affines(x_image) # Initial parameters are applied here as well
+                theta_a, theta_t, theta_z = self.get_batch_affines(x_image) # Initial parameters are applied here as well
             else:
-                theta_a, theta_t = self.get_init_affines()
-                theta_a, theta_t = theta_a.to(device), theta_t.to(device)
-                theta_a, theta_t = theta_a.repeat(B,1,1), theta_t.repeat(B,1,1)
+                theta_a, theta_t, theta_z = self.get_init_affines()
+                theta_a, theta_t, theta_z = theta_a.to(device), theta_t.to(device), theta_z.to(device)
+                theta_a, theta_t, theta_z = theta_a.repeat(B,1,1), theta_t.repeat(B,1,1), theta_z.repeat(B,1,1)
 
-            theta = theta_a @ theta_t
+            theta = theta_z @ theta_a @ theta_t
 
             self.last_theta = theta
 
         # Gef affines:
         # theta_a : Affine for learnt rotation and initialization of affine module
         # theta_t : Affine for learnt translation (shifts volume relative to the grid_sample D,H,W axes)
+        # theta_z : Affine for learnt zoom
         # globabl_prelocate_affine : Affine for prelocating the volume (slice orientation and augmentation)
         # theta   : Affine for the learnt transformation
 
@@ -727,6 +766,7 @@ def quaternion_to_angle_axis(quaternion: torch.Tensor, eps=1e-6) -> torch.Tensor
 
 
 def get_theta_params(b_theta):
+    raise NotImplementedError("Zooms parameters missing.")
     bsz = b_theta.shape[0]
     theta_ap, theta_tp = rotation_matrix_to_angle_axis(b_theta[:,:3]), b_theta[:,:3,-1].view(bsz,3)
     return theta_ap, theta_tp

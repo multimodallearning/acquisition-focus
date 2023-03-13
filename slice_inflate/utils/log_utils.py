@@ -59,7 +59,7 @@ def log_affine_param_stats(log_prefix, log_postfix, affine_params_dct, log_idx,
                 log_path = log_path.replace('PLX', '')
                 print(log_path, ' '.join([f"{p:.3f}" for p in stats[tag].tolist()]))
 
-    return means['theta_ap'], means['theta_tp']
+    return means['theta_ap'], means['theta_t_offsets'], means['theta_zp']
 
 
 
