@@ -100,7 +100,9 @@ def get_grid_affine_from_ras_affines(volume_affine, ras_transform_mat, volume_sh
 
 def do_sample(volume, grid, gs_kwargs):
     if volume.requires_grad or grid.requires_grad:
-        transformed = checkpoint(torch.nn.functional.grid_sample, volume, grid, **gs_kwargs)
+        transformed = checkpoint(
+            torch.nn.functional.grid_sample, volume, grid,
+            *list(gs_kwargs.values()))
     else:
         transformed = torch.nn.functional.grid_sample(volume, grid, **gs_kwargs)
     return transformed
