@@ -2,7 +2,7 @@
     "num_folds": 0,
     "state": "train",
     "fold_override": null,
-    "epochs": 1,
+    "epochs": 120,
     "test_only_and_output_to": null,
     "batch_size": 5,
     "val_batch_size": 1,
