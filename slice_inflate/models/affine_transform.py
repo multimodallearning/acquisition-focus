@@ -101,11 +101,7 @@ class AffineTransformModule(torch.nn.Module):
         self.spat = int(fov_vox[-1])
 
         self.view_affine = view_affine.view(1,4,4)
-
         self.use_affine_theta = use_affine_theta
-        self.init_theta_t_offsets = torch.nn.Parameter(torch.zeros([3]), requires_grad=False)
-
-        self.tag = tag
         self.align_corners = align_corners
 
         self.offset_clip_value = offset_clip_value
@@ -124,11 +120,11 @@ class AffineTransformModule(torch.nn.Module):
         )
 
         self.use_affine_theta = use_affine_theta
-        self.init_theta_t_offsets = torch.nn.Parameter(torch.zeros([3,int(fov_vox[-1])]), requires_grad=False)
-        self.init_theta_zp = torch.nn.Parameter(torch.ones([1,1]), requires_grad=False)
-
         self.tag = tag
         self.align_corners = align_corners
+
+        self.init_theta_t_offsets = torch.nn.Parameter(torch.zeros([3]), requires_grad=False)
+        self.init_theta_zp = torch.nn.Parameter(torch.ones([1,1]), requires_grad=False)
 
         self.last_theta_ap = None
         self.last_theta_t_offsets = None
@@ -165,7 +161,7 @@ class AffineTransformModule(torch.nn.Module):
             torch.ones([1,1], device=device)], dim=-1
         ))
 
-        assert theta_a.shape == theta_t.shape == theta_z.shape (1,4,4)
+        assert theta_a.shape == theta_t.shape == theta_z.shape == (1,4,4)
         return theta_a.to(torch.float32), theta_t.to(torch.float32), theta_z.to(torch.float32)
 
     def get_gs_offsets_from_theta_tp(self, theta_tp):
