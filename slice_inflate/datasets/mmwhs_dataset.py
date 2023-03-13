@@ -401,8 +401,6 @@ def load_data(self_attributes: dict):
         augment_affine = torch.from_numpy(np.loadtxt(align_affine_path))
         affine = torch.as_tensor(nib_tmp.affine)
 
-        additional_data_3d[_3d_id]['nifti_affine'] = affine
-
         if is_label:
             tmp = replace_label_values(tmp)
 
@@ -420,6 +418,8 @@ def load_data(self_attributes: dict):
         )
         tmp = tmp.squeeze(0).squeeze(0)
         affine = affine.squeeze(0)
+
+        additional_data_3d[_3d_id]['nifti_affine'] = affine
 
         if not IMAGE_ID in trailing_name:
             label_data_3d[_3d_id] = tmp.long()

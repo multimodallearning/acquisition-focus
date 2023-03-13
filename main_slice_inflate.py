@@ -813,9 +813,9 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
         pred_seg = y_hat.argmax(1)
 
+        # Load any dataloader sample affine matrix (all have been resampled the same spacing/orientation)
+        nii_output_affine = batch['additional_data']['nifti_affine'][0]
         # Taken from nibabel nifti1.py
-        # nii_output_affine = sa_atm.last_transformed_nii_affine[0,:3,:3]
-        nii_output_affine = torch.diag(sa_atm.fov_mm/sa_atm.fov_vox)
         nifti_zooms = (nii_output_affine[:3,:3]*nii_output_affine[:3,:3]).sum(1).sqrt().detach().cpu()
 
         # Calculate fast dice score
