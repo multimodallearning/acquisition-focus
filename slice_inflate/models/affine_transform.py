@@ -216,7 +216,7 @@ class AffineTransformModule(torch.nn.Module):
 
         # Translation matrix definition
         theta_t_offsets = self.get_gs_offsets_from_theta_tp(theta_tp)
-        theta_t_offsets[:, 1:] = 0. # TODO check
+        # theta_t_offsets[:, 1:] = 0. # TODO check
         theta_t = torch.cat([theta_t_offsets, torch.ones(B, device=device).view(B,1)], dim=1)
         theta_t = torch.cat([
             torch.eye(4, device=device)[:4,:3].view(1,4,3).repeat(B,1,1),
@@ -261,6 +261,13 @@ class AffineTransformModule(torch.nn.Module):
             if self.use_affine_theta:
                 theta_a, theta_t, theta_z = self.get_batch_affines(x_image) # Initial parameters are applied here as well
             else:
+                self.last_theta_ap = None
+                self.last_theta_t_offsets = None
+                self.last_theta_zp = None
+                self.last_theta_a = None
+                self.last_theta_t = None
+                self.last_theta_z = None
+
                 theta_a, theta_t, theta_z = self.get_init_affines()
                 theta_a, theta_t, theta_z = theta_a.to(device), theta_t.to(device), theta_z.to(device)
                 theta_a, theta_t, theta_z = theta_a.repeat(B,1,1), theta_t.repeat(B,1,1), theta_z.repeat(B,1,1)

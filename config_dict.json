@@ -11,7 +11,7 @@
     "modality": "mr",
     "train_affine_theta": true,
     "use_affine_theta": true,
-    "offset_clip_value": 1.0,
+    "offset_clip_value": 0.4,
     "zoom_clip_value": 0.1,
     "use_distance_map_localization": false,
     "reconstruction_target": "from-dataloader",
