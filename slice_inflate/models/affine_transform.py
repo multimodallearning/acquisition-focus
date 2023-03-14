@@ -207,7 +207,7 @@ class AffineTransformModule(torch.nn.Module):
         theta_ap = theta_ap.view(B, self.ap_space)
 
         if self.optim_method == 'angle-axis':
-            theta_ap[:,0] = 0.0 # [:,0] rotates in plane
+            theta_ap[:,0] = 0.0 # [:,0] rotates in plane TODO this should not be restricted
         elif self.optim_method == 'normal-vector':
             theta_ap = theta_ap/theta_ap.norm(dim=1).view(-1,1) # Normalize
 
@@ -215,7 +215,7 @@ class AffineTransformModule(torch.nn.Module):
 
         # Translation matrix definition
         theta_t_offsets = self.get_gs_offsets_from_theta_tp(theta_tp)
-
+        theta_t_offsets[:, 1:] = 0. # TODO check
         theta_t = torch.cat([theta_t_offsets, torch.ones(B, device=device).view(B,1)], dim=1)
         theta_t = torch.cat([
             torch.eye(4, device=device)[:4,:3].view(1,4,3).repeat(B,1,1),
