@@ -224,6 +224,7 @@ class AffineTransformModule(torch.nn.Module):
 
         # Zoom matrix definition
         theta_zp = theta_zp.sigmoid() + 0.5 # Zoom needs to be positive and in range(0.5,1.5)
+        theta_zp = torch.ones([B,1]).to(device) # TODO remove
         theta_z = torch.diag_embed(torch.cat([
             theta_zp,
             theta_zp,

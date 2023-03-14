@@ -904,7 +904,12 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         )
 
         if config.do_output:
-            torch.save(sa_param_dict, output_dir/f"sa_params_{phase}_epx_{epx}.pt")
+            sa_dct = dict(
+                epx_sa_theta_aps=epx_sa_theta_aps,
+                epx_sa_theta_t_offsets=epx_sa_theta_t_offsets,
+                epx_sa_theta_zps=epx_sa_theta_zps,
+            )
+            torch.save(sa_dct, output_dir/f"sa_params_{phase}_epx_{epx}.pt")
 
     if epx_hla_theta_aps:
         ornt_log_prefix = f"orientations/{phase}_hla_"
@@ -926,7 +931,12 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             )
         )
         if config.do_output:
-            torch.save(hla_param_dict, output_dir/f"hla_params_{phase}_epx_{epx}.pt")
+            hla_dct = dict(
+                epx_hla_theta_aps=epx_hla_theta_aps,
+                epx_hla_theta_t_offsets=epx_hla_theta_t_offsets,
+                epx_hla_theta_zps=epx_hla_theta_zps,
+            )
+            torch.save(hla_dct, output_dir/f"hla_params_{phase}_epx_{epx}.pt")
 
     if config.do_output and epx_input:
         # Store the slice model input
