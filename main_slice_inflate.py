@@ -410,6 +410,7 @@ def get_atm(config, num_classes, size_3d, view, this_script_dir, _path=None):
         torch.tensor(config['fov_mm']),
         torch.tensor(config['fov_vox']),
         offset_clip_value=config['offset_clip_value'],
+        zoom_clip_value=config['zoom_clip_value'],
         view_affine=torch.as_tensor(np.loadtxt(affine_path)).float(),
         optim_method=config.affine_theta_optim_method, tag=view)
 

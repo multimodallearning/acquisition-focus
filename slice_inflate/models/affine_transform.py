@@ -68,7 +68,7 @@ class AffineTransformModule(torch.nn.Module):
     def __init__(self, input_channels, size_3d,
         fov_mm, fov_vox, view_affine,
         init_theta_ap=None, init_theta_t_offsets=None, init_theta_zp=None,
-        optim_method='angle-axis', use_affine_theta=True, offset_clip_value=1., tag=None,
+        optim_method='angle-axis', use_affine_theta=True, offset_clip_value=1., zoom_clip_value=2., tag=None,
         align_corners=False):
 
         super().__init__()
@@ -105,6 +105,7 @@ class AffineTransformModule(torch.nn.Module):
         self.align_corners = align_corners
 
         self.offset_clip_value = offset_clip_value
+        self.zoom_clip_value = zoom_clip_value
 
         self.vox_range = int(round(
             self.get_vox_offsets_from_gs_offsets(self.offset_clip_value)
@@ -223,8 +224,7 @@ class AffineTransformModule(torch.nn.Module):
         ], dim=-1)
 
         # Zoom matrix definition
-        theta_zp = theta_zp.sigmoid() + 0.5 # Zoom needs to be positive and in range(0.5,1.5)
-        theta_zp = torch.ones([B,1]).to(device) # TODO remove
+        theta_zp = self.zoom_clip_value * -(theta_zp.tanh()) + 1. # Zoom needs to be in range(1.0 +- clip value)
         theta_z = torch.diag_embed(torch.cat([
             theta_zp,
             theta_zp,
