@@ -12,7 +12,7 @@
     "train_affine_theta": true,
     "use_affine_theta": true,
     "offset_clip_value": 0.2,
-    "zoom_clip_value": 0.1,
+    "zoom_clip_value": 0.3,
     "use_distance_map_localization": false,
     "reconstruction_target": "from-dataloader",
     "affine_theta_optim_method": "R6-vector",
