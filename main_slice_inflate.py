@@ -744,8 +744,18 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
     if phase == 'train':
         model.train()
-        sa_atm.train()
-        hla_atm.train()
+
+        if config.train_affine_theta:
+            if config.cuts_mode == 'sa>hla':
+                sa_atm.eval()
+                hla_atm.train()
+            else:
+                sa_atm.train()
+                hla_atm.train()
+        else:
+            sa_atm.eval()
+            hla_atm.eval()
+
         dataset.train(augment=config.do_augment)
     else:
         model.eval()
