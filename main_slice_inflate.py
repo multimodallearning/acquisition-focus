@@ -1336,17 +1336,17 @@ elif config_dict['sweep_type'] == 'stage-sweep':
             use_distance_map_localization=False,
             __activate_fn__=lambda self: None
         ),
-        # Stage( # Reference run
-        #     do_augment=False,
-        #     do_output=True,
-        #     cuts_mode='sa+hla',
-        #     epochs=config_dict['epochs'],
-        #     soft_cut_std=-999,
-        #     train_affine_theta=False,
-        #     use_affine_theta=False,
-        #     use_distance_map_localization=False,
-        #     __activate_fn__=lambda self: None
-        # ),
+        Stage( # Reference run
+            do_augment=False,
+            do_output=True,
+            cuts_mode='sa+hla',
+            epochs=config_dict['epochs'],
+            soft_cut_std=-999,
+            train_affine_theta=False,
+            use_affine_theta=False,
+            use_distance_map_localization=False,
+            __activate_fn__=lambda self: None
+        ),
     ]
 
     selected_stages = all_params_stages
