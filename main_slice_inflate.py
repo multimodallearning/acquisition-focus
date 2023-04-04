@@ -498,7 +498,7 @@ def get_transform_model(config, num_classes, size_3d, this_script_dir, _path=Non
 
 
 # %%
-def get_transformed(label, soft_label, nifti_affine, hidden_sample_augment_affine, atm, cut_module,
+def get_transformed(label, soft_label, nifti_affine, known_augment_affine, hidden_augment_affine, atm, cut_module,
     crop_around_3d_label_center, crop_around_2d_label_center, image=None):
 
     img_is_invalid = image is None or image.dim() == 0
@@ -510,10 +510,10 @@ def get_transformed(label, soft_label, nifti_affine, hidden_sample_augment_affin
 
     # Transform  label with 'bilinear' interpolation to have gradients
     soft_label, label, grid_affine, _ = atm(soft_label.view(B, num_classes, D, H, W), label.view(B, num_classes, D, H, W),
-        nifti_affine, hidden_sample_augment_affine)
+        nifti_affine, known_augment_affine, hidden_augment_affine)
 
     image, _, _, _ = atm(image.view(B, 1, D, H, W), None,
-        nifti_affine, hidden_sample_augment_affine, theta_override=atm.last_theta)
+        nifti_affine, known_augment_affine, hidden_augment_affine, theta_override=atm.last_theta)
 
     if crop_around_3d_label_center is not None:
         _3d_vox_size = torch.as_tensor(
@@ -560,7 +560,8 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
         b_soft_label = b_label
 
     nifti_affine = batch['additional_data']['nifti_affine']
-    hidden_sample_augment_affine = batch['additional_data']['augment_affine']
+    known_augment_affine = batch['additional_data']['known_augment_affine']
+    hidden_augment_affine = batch['additional_data']['hidden_augment_affine']
 
     sa_atm.use_affine_theta = config.use_affine_theta
     hla_atm.use_affine_theta = config.use_affine_theta
@@ -573,7 +574,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
                 get_transformed(
                     b_label.view(B, NUM_CLASSES, D, H, W),
                     b_soft_label.view(B, NUM_CLASSES, D, H, W),
-                    nifti_affine, hidden_sample_augment_affine,
+                    nifti_affine, known_augment_affine, hidden_augment_affine,
                     sa_atm, sa_cut_module,
                     config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
                     image=None)
@@ -583,7 +584,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
             get_transformed(
                 b_label.view(B, NUM_CLASSES, D, H, W),
                 b_soft_label.view(B, NUM_CLASSES, D, H, W),
-                nifti_affine, hidden_sample_augment_affine,
+                nifti_affine, known_augment_affine, hidden_augment_affine,
                 hla_atm, hla_cut_module,
                 config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
                 image=None)

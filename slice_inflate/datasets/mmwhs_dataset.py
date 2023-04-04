@@ -121,13 +121,21 @@ class MMWHSDataset(HybridIdDataset):
             # sa_affine, hla_affine = torch.tensor([]), torch.tensor([])
 
         else:
-            augment_affine = torch.eye(4)
+            known_augment_affine = torch.eye(4)
+            hidden_augment_affine = torch.eye(4)
 
             if self.do_augment:
                 sample_augment_strength = self.self_attributes['sample_augment_strength']
-                augment_affine = get_random_affine(sample_augment_strength)
+                known_augment_affine = get_random_affine(
+                    rotation_strength=0.0,
+                    zoom_strength=sample_augment_strength)
 
-            additional_data['augment_affine'] = augment_affine.view(4,4)
+                hidden_augment_affine = get_random_affine(
+                    rotation_strength=0.0,
+                    zoom_strength=0.0)
+
+            additional_data['known_augment_affine'] = known_augment_affine.view(4,4)
+            additional_data['hidden_augment_affine'] = hidden_augment_affine.view(4,4)
 
             D, H, W = label.shape
 
@@ -413,7 +421,7 @@ def load_data(self_attributes: dict):
             fov_mm=torch.as_tensor(self.fov_mm), fov_vox=torch.as_tensor(self.fov_vox),
             is_label=is_label,
             pre_grid_sample_affine=None,
-            pre_grid_sample_augment_affine=None,
+            pre_grid_sample_hidden_affine=None,
             dtype=torch.float32
         )
         tmp = tmp.squeeze(0).squeeze(0)

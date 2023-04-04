@@ -108,7 +108,7 @@ def do_sample(volume, grid, gs_kwargs):
     return transformed
 
 def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_transform_mat: torch.Tensor, fov_mm, fov_vox,
-    is_label=False, pre_grid_sample_affine=None, pre_grid_sample_augment_affine=None, dtype=torch.float32):
+    is_label=False, pre_grid_sample_affine=None, pre_grid_sample_hidden_affine=None, dtype=torch.float32):
 
     DIM = volume.dim()
     assert DIM == 5
@@ -138,9 +138,9 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_transfo
     if pre_grid_sample_affine is not None:
         assert pre_grid_sample_affine.dim() == 3 \
             and B == pre_grid_sample_affine.shape[0]
-    if pre_grid_sample_augment_affine is not None:
-        assert pre_grid_sample_augment_affine.dim() == 3 \
-            and B == pre_grid_sample_augment_affine.shape[0]
+    if pre_grid_sample_hidden_affine is not None:
+        assert pre_grid_sample_hidden_affine.dim() == 3 \
+            and B == pre_grid_sample_hidden_affine.shape[0]
 
     device = volume.device
     fov_mm = fov_mm.to(device)
@@ -160,12 +160,12 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_transfo
     grid_affine = get_grid_affine_from_ras_affines(volume_affine, ras_transform_mat, volume_shape, fov_mm, pre_grid_sample_affine)
     target_shape = torch.Size([B,C] + fov_vox.tolist())
 
-    if pre_grid_sample_augment_affine is not None:
-        pre_grid_sample_augment_affine = pre_grid_sample_augment_affine.to(volume_affine)
+    if pre_grid_sample_hidden_affine is not None:
+        pre_grid_sample_hidden_affine = pre_grid_sample_hidden_affine.to(volume_affine)
     else:
-        pre_grid_sample_augment_affine = torch.eye(4).to(volume_affine)
+        pre_grid_sample_hidden_affine = torch.eye(4).to(volume_affine)
 
-    augmented_grid_affine = (grid_affine @ pre_grid_sample_augment_affine)
+    augmented_grid_affine = (grid_affine @ pre_grid_sample_hidden_affine)
 
     grid = torch.nn.functional.affine_grid(
         augmented_grid_affine[:,:3,:].view(B,3,4), target_shape, align_corners=False

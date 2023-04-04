@@ -243,7 +243,7 @@ class AffineTransformModule(torch.nn.Module):
 
         return theta_a, theta_t, theta_z
 
-    def forward(self, x_image, x_label, nifti_affine, hidden_sample_augment_affine, theta_override=None):
+    def forward(self, x_image, x_label, nifti_affine, known_augment_affine, hidden_augment_affine, theta_override=None):
 
         x_image_is_none = x_image is None or x_image.numel() == 0
         x_label_is_none = x_label is None or x_label.numel() == 0
@@ -289,13 +289,15 @@ class AffineTransformModule(torch.nn.Module):
             # nifti_affine is the affine of the original volume
             y_image, grid_affine, transformed_nii_affine = nifti_transform(x_image, nifti_affine, global_prelocate_affine,
                                         fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=False,
-                                        pre_grid_sample_affine=theta, pre_grid_sample_augment_affine=hidden_sample_augment_affine)
+                                        pre_grid_sample_affine=known_augment_affine.to(theta.device) @ theta,
+                                        pre_grid_sample_hidden_affine=hidden_augment_affine)
 
         if not x_label_is_none:
             # nifti_affine is the affine of the original volume
             y_label, grid_affine, transformed_nii_affine = nifti_transform(x_label, nifti_affine, global_prelocate_affine,
                                         fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=True,
-                                        pre_grid_sample_affine=theta, pre_grid_sample_augment_affine=hidden_sample_augment_affine)
+                                        pre_grid_sample_affine=known_augment_affine.to(theta.device) @ theta,
+                                        pre_grid_sample_hidden_affine=hidden_augment_affine)
 
         self.last_grid_affine = grid_affine
         self.last_transformed_nii_affine = transformed_nii_affine
@@ -427,13 +429,16 @@ class SoftCutModule(torch.nn.Module):
 
 
 
-def get_random_affine(strength=0.2, seed=None):
+def get_random_affine(rotation_strength=0.2, zoom_strength=0.2, seed=None):
     params = torch.tensor([[1.,0.,0., 0.,1.,0.]])
     with torch_manual_seeded(seed):
-        randn = torch.rand_like(params) * strength - strength/2
+        rand_r = torch.rand_like(params) * rotation_strength - rotation_strength/2
+        rand_z = torch.rand(1) * zoom_strength - zoom_strength/2 + 1.0
 
-    rand_theta = compute_rotation_matrix_from_ortho6d(params+randn)
-    return rand_theta
+    rand_theta_r = compute_rotation_matrix_from_ortho6d(params+rand_r)
+    rand_theta_z = torch.diag(torch.tensor([rand_z,rand_z,rand_z,1.0]))
+
+    return rand_theta_z @ rand_theta_r
 
 
 
