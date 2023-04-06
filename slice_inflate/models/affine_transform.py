@@ -429,11 +429,11 @@ class SoftCutModule(torch.nn.Module):
 
 
 
-def get_random_affine(rotation_strength=0.2, zoom_strength=0.2, seed=None):
+def get_random_affine(rotation_strength=0.2, zoom_strength=0.2):
     params = torch.tensor([[1.,0.,0., 0.,1.,0.]])
-    with torch_manual_seeded(seed):
-        rand_r = torch.rand_like(params) * rotation_strength - rotation_strength/2
-        rand_z = torch.rand(1) * zoom_strength - zoom_strength/2 + 1.0
+
+    rand_r = torch.rand_like(params) * rotation_strength - rotation_strength/2
+    rand_z = torch.rand(1) * zoom_strength - zoom_strength/2 + 1.0
 
     rand_theta_r = compute_rotation_matrix_from_ortho6d(params+rand_r)
     rand_theta_z = torch.diag(torch.tensor([rand_z,rand_z,rand_z,1.0]))
