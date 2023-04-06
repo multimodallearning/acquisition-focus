@@ -211,8 +211,16 @@ def get_crop_affine(affine, vox_offset):
 
 
 
+def get_crop_affine(affine, vox_offset):
+    crop_affine = torch.zeros_like(affine)
+    mm_offset = affine[:,:-1,:-1] @ vox_offset.to(affine)
+    crop_affine[:,:-1,-1] = affine[:,:-1,-1] + mm_offset
+    return crop_affine
+
+
+
 def crop_around_label_center(label: torch.Tensor, vox_size: torch.Tensor, image: torch.Tensor=None,
-    affine: torch.Tensor=None):
+    affine: torch.Tensor=None, center_mode='mean'):
     """This function crops (or pags) a label and a corresponding image to a specified voxel size
        based on the label centroid position (2D or 3D input).
 
@@ -228,19 +236,29 @@ def crop_around_label_center(label: torch.Tensor, vox_size: torch.Tensor, image:
     """
     n_dims = label.dim()-2
     assert n_dims == vox_size.numel()
+    assert center_mode in ['mean', 'minmax']
     B,C_LAB,*_ = label.shape
 
     vox_size = vox_size.int().to(device=label.device)
     label_shape = torch.as_tensor(label.shape, device=label.device).int()[2:]
     no_crop = (vox_size == -1)
-    vox_size[no_crop] = label_shape[no_crop]
+    # vox_size[no_crop] = label_shape[no_crop]
 
     sp_idxs = label.long().to_sparse()._indices()
-    label_center = sp_idxs.float().mean(dim=1).int()[-n_dims:]
+
+    if center_mode == 'mean':
+        label_center = sp_idxs.float().mean(dim=1).int()[-n_dims:]
+    elif center_mode == 'minmax':
+        label_center = (
+            (sp_idxs.float().amin(dim=1)+sp_idxs.float().amax(dim=1))/2
+        ).round().int()[-n_dims:]
 
     # This is the true bounding box in label space when cropping to the demanded size
-    in_bbox_min = (label_center-((vox_size+1)/2)+0.5).int()
-    in_bbox_max = (label_center+(vox_size/2)+0.5).int()
+    in_bbox_min = (label_center-((vox_size+1.5)/2.)).round().int()
+    in_bbox_max = label_center+(vox_size/2.).round().int()
+
+    in_bbox_min[no_crop] = 0
+    in_bbox_max[no_crop] = label_shape[no_crop]
 
     # This is the 'bounding box' in the output data space (the region of the cropped data we fill)
     out_bbox_min = torch.zeros(n_dims, dtype=torch.int)
@@ -250,7 +268,7 @@ def crop_around_label_center(label: torch.Tensor, vox_size: torch.Tensor, image:
     in_crop_slcs = [slice(None), slice(None)]
     out_crop_slcs = [slice(None), slice(None)]
 
-    cropped_label = torch.zeros([B,C_LAB]+vox_size.tolist(), dtype=torch.int, device=label.device)
+    cropped_label = torch.zeros([B,C_LAB]+(out_bbox_max-out_bbox_min).tolist(), dtype=torch.int, device=label.device)
 
     for dim_idx in range(n_dims):
         # Check bounds of crop and correct
@@ -268,7 +286,7 @@ def crop_around_label_center(label: torch.Tensor, vox_size: torch.Tensor, image:
     # Crop the data
     if image is not None:
         _, C_IM, *_ = image.shape
-        cropped_image = torch.zeros([B,C_IM]+vox_size.tolist(), dtype=image.dtype, device=image.device)
+        cropped_image = torch.zeros([B,C_IM]+(out_bbox_max-out_bbox_min).tolist(), dtype=image.dtype, device=image.device)
         cropped_image[out_crop_slcs] = image[in_crop_slcs]
     else:
         cropped_image = None

@@ -12,17 +12,18 @@ from scipy.ndimage import distance_transform_edt as distance
 import einops as eo
 import gc
 from collections import defaultdict
+import random
 
 MOD_GET_FN = lambda self, key: self[int(key)] if isinstance(self, nn.Sequential) \
                                               else getattr(self, key)
 
 @contextmanager
 def torch_manual_seeded(seed):
-    saved_state = torch.get_rng_state()
     if seed is not None:
         torch.manual_seed(seed)
+    else:
+        torch.manual_seed(random.random())
     yield
-    torch.set_rng_state(saved_state)
 
 
 
