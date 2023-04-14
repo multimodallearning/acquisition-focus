@@ -48,7 +48,7 @@
     "wandb_mode": "disabled",
     "sweep_type": null,
     "model_checkpoint_path": null,
-    "transform_model_checkpoint_path": "/shared/slice_inflate/data/models/20230404__13_28_31_sweet-lake-940-stage-3__best",
+    "transform_model_checkpoint_path": null,
     "do_output": true,
     "device": "cuda",
     "use_autocast": true

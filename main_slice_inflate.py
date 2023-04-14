@@ -1338,7 +1338,7 @@ elif config_dict['sweep_type'] == 'stage-sweep':
             __activate_fn__=lambda self: None
         ),
         Stage( # Reference run
-            do_augment=False,
+            do_augment=True,
             do_output=True,
             cuts_mode='sa+hla',
             epochs=config_dict['epochs'],
