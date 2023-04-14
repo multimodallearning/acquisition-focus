@@ -1331,7 +1331,7 @@ elif config_dict['sweep_type'] == 'stage-sweep':
             cuts_mode='sa+hla',
             epochs=config_dict['epochs'],
             soft_cut_std=-999,
-            do_augment=False,
+            do_augment=True,
             use_affine_theta=True,
             train_affine_theta=False,
             use_distance_map_localization=False,
