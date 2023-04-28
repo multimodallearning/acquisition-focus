@@ -204,18 +204,11 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_transfo
 
 
 def get_crop_affine(affine, vox_offset):
-    crop_affine = affine.clone()
-    mm_offset = affine[:-1,:-1] @ vox_offset.to(affine)
-    crop_affine[:-1,-1] = affine[:-1,-1] + mm_offset
-    return crop_affine
-
-
-
-def get_crop_affine(affine, vox_offset):
     crop_affine = torch.zeros_like(affine)
     mm_offset = affine[:,:-1,:-1] @ vox_offset.to(affine)
     crop_affine[:,:-1,-1] = affine[:,:-1,-1] + mm_offset
     return crop_affine
+
 
 
 
@@ -254,7 +247,7 @@ def crop_around_label_center(label: torch.Tensor, vox_size: torch.Tensor, image:
         ).round().int()[-n_dims:]
 
     # This is the true bounding box in label space when cropping to the demanded size
-    in_bbox_min = (label_center-((vox_size+1.5)/2.)).round().int()
+    in_bbox_min = (label_center-((vox_size+.5)/2.)).round().int()
     in_bbox_max = label_center+(vox_size/2.).round().int()
 
     in_bbox_min[no_crop] = 0
@@ -270,28 +263,32 @@ def crop_around_label_center(label: torch.Tensor, vox_size: torch.Tensor, image:
 
     cropped_label = torch.zeros([B,C_LAB]+(out_bbox_max-out_bbox_min).tolist(), dtype=torch.int, device=label.device)
 
-    for dim_idx in range(n_dims):
-        # Check bounds of crop and correct
-        if in_bbox_min[dim_idx] < 0:
-            out_bbox_min[dim_idx] = out_bbox_min[dim_idx]-in_bbox_min[dim_idx]
-            in_bbox_min[dim_idx] = 0
-
-        elif in_bbox_max[dim_idx] > label_shape[dim_idx]:
-            out_bbox_max[dim_idx] = out_bbox_max[dim_idx]-in_bbox_max[dim_idx]
-            in_bbox_max[dim_idx] = label_shape[dim_idx]
-
-        in_crop_slcs.append(slice(in_bbox_min[dim_idx], in_bbox_max[dim_idx]))
-        out_crop_slcs.append(slice(out_bbox_min[dim_idx], out_bbox_max[dim_idx]))
-
-    # Crop the data
     if image is not None:
         _, C_IM, *_ = image.shape
         cropped_image = torch.zeros([B,C_IM]+(out_bbox_max-out_bbox_min).tolist(), dtype=image.dtype, device=image.device)
+
+    in_clip_min = in_bbox_min.clip(min=0)-in_bbox_min
+    in_clip_max = in_bbox_max.clip(max=label_shape)-in_bbox_max
+
+    in_bbox_min_clip = in_bbox_min + in_clip_min
+    out_bbox_min_clip = out_bbox_min + in_clip_min
+
+    in_bbox_max_clip = in_bbox_max + in_clip_max
+    out_bbox_max_clip = out_bbox_max + in_clip_max
+
+    for dim_idx in range(n_dims):
+        # Create slices
+        in_crop_slcs.append(slice(in_bbox_min_clip[dim_idx], in_bbox_max_clip[dim_idx]))
+        out_crop_slcs.append(slice(out_bbox_min_clip[dim_idx], out_bbox_max_clip[dim_idx]))
+
+    # Crop the data
+
+    cropped_label[out_crop_slcs] = label[in_crop_slcs]
+
+    if image is not None:
         cropped_image[out_crop_slcs] = image[in_crop_slcs]
     else:
         cropped_image = None
-
-    cropped_label[out_crop_slcs] = label[in_crop_slcs]
 
     if affine is not None:
         # If an affine was passed recalculate the new affine
