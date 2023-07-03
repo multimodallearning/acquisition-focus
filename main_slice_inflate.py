@@ -890,7 +890,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=())
 
     print()
-    output_dir = Path(f"data/output/{wandb.run.name}")
+    output_dir = Path(f"data/output/{wandb.run.name}_{fold_postfix}")
     output_dir.mkdir(exist_ok=True)
 
     mean_transform_dict = dict()

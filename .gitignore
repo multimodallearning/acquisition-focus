@@ -6,6 +6,7 @@ wandb/**
 
 data/models
 data/MMWHS/*
+data/MMWHS_notest/*
 data/MMWHS2/*
 data/MNIST/*
 !data/MMWHS/mmwhs_io_normalisation_values.pth
