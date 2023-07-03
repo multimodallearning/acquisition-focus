@@ -838,7 +838,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'dice',
             b_dice, training_dataset.label_tags, exclude_bg=True)
 
-        if (epx % 20 == 0 and epx > 0) or (epx+1 == config.epochs) or config.debug:
+        if (epx % 20 == 0 and epx > 0) or (epx+1 == config.epochs) or config.debug or config.test_only_and_output_to:
             b_sz = pred_seg_oh.shape[0]
 
             b_iou = monai.metrics.compute_iou(pred_seg_oh, b_target)
@@ -1034,8 +1034,7 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
         )
 
         # Load from checkpoint, if any
-        mdl_chk_path = config.checkpoint_path if 'checkpoint_path' in config else None
-
+        mdl_chk_path = config.model_checkpoint_path if 'model_checkpoint_path' in config else None
         (model, optimizer, scheduler, scaler), epx_start = get_model(
             config, len(training_dataset), len(training_dataset.label_tags),
             THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=mdl_chk_path, load_model_only=False,
@@ -1046,7 +1045,9 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
         sa_atm_override = stage['sa_atm'] if stage is not None and 'sa_atm' in stage else None
         hla_atm_override = stage['hla_atm'] if stage is not None and 'hla_atm' in stage else None
 
-        size_3d = training_dataset[0]['label'].shape[-3:]
+        size_3d = training_dataset[0]['label'].shape[-3:] \
+            if len(training_dataset) > 0 else test_dataset[0]['label'].shape[-3:]
+
         (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer, transform_scheduler = get_transform_model(
             config, len(training_dataset.label_tags), size_3d, THIS_SCRIPT_DIR, _path=transform_mdl_chk_path,
             sa_atm_override=sa_atm_override, hla_atm_override=hla_atm_override)
@@ -1292,7 +1293,9 @@ elif config_dict['sweep_type'] == 'wandb_sweep':
     wandb.agent(sweep_id, function=wandb_sweep_run)
 
 elif config_dict['sweep_type'] == 'stage-sweep':
-    size_3d = training_dataset[0]['label'].shape[-3:]
+
+    size_3d = training_dataset[0]['label'].shape[-3:] \
+        if len(training_dataset) > 0 else test_dataset[0]['label'].shape[-3:]
     r_params = init_regularization_params(
         [
             'hla_angles',
