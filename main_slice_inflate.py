@@ -486,7 +486,7 @@ def get_transform_model(config, num_classes, size_3d, this_script_dir, _path=Non
         assert config.use_affine_theta
 
     if config.train_affine_theta:
-        transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=0.001)
+        transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=config.lr*1.5)
         transform_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(transform_optimizer, T_0=int(config.epochs/4))
     else:
         transform_optimizer = NoneOptimizer()
@@ -1093,9 +1093,7 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
             for shd_name, shd in all_schedulers.items():
                 if shd is not None:
                     shd.step()
-
-        wandb.log({f'training/scheduler_lr': scheduler.optimizer.param_groups[0]['lr']}, step=global_idx)
-        wandb.log({f'training/transform_scheduler_lr': transform_scheduler.optimizer.param_groups[0]['lr']}, step=global_idx)
+                    wandb.log({f'training/{shd_name}_lr': shd.optimizer.param_groups[0]['lr']}, step=global_idx)
         print()
 
         # Save model
