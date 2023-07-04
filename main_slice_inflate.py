@@ -419,7 +419,7 @@ def get_atm(config, num_classes, size_3d, view, this_script_dir, _path=None, ran
         tag=view)
 
     if random_ap_init:
-        atm.set_init_theta_ap(get_random_ortho6_vector(rotation_strength=0.5))
+        atm.set_init_theta_ap(get_random_ortho6_vector(rotation_strength=0.5, constrained=False))
 
     if _path:
         assert Path(_path).is_dir()

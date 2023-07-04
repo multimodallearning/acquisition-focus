@@ -257,8 +257,15 @@ class AffineTransformModule(torch.nn.Module):
         if theta_override is not None:
             theta = theta_override.detach().clone() # Caution: this is a non-differentiable theta
         else:
+            theta_a, theta_t, theta_z = self.get_init_affines()
+            theta_a, theta_t, theta_z = theta_a.to(device), theta_t.to(device), theta_z.to(device)
+            theta_a, theta_t, theta_z = theta_a.repeat(B,1,1), theta_t.repeat(B,1,1), theta_z.repeat(B,1,1)
+
             if self.use_affine_theta:
-                theta_a, theta_t, theta_z = self.get_batch_affines(x_image) # Initial parameters are applied here as well
+                theta_a_b, theta_t_b, theta_z_b = self.get_batch_affines(x_image) # Initial parameters are applied here as well
+                theta_a = theta_a_b @ theta_a
+                theta_t = theta_t_b @ theta_t
+                theta_z = theta_z_b @ theta_z
             else:
                 self.last_theta_ap = None
                 self.last_theta_t_offsets = None
@@ -266,10 +273,6 @@ class AffineTransformModule(torch.nn.Module):
                 self.last_theta_a = None
                 self.last_theta_t = None
                 self.last_theta_z = None
-
-                theta_a, theta_t, theta_z = self.get_init_affines()
-                theta_a, theta_t, theta_z = theta_a.to(device), theta_t.to(device), theta_z.to(device)
-                theta_a, theta_t, theta_z = theta_a.repeat(B,1,1), theta_t.repeat(B,1,1), theta_z.repeat(B,1,1)
 
             theta = theta_z @ theta_a @ theta_t
 
@@ -426,10 +429,12 @@ class SoftCutModule(torch.nn.Module):
 
         return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
 
-def get_random_ortho6_vector(rotation_strength=0.2):
+def get_random_ortho6_vector(rotation_strength=0.2, constrained=True):
     params = torch.tensor([[1.,0.,0., 0.,1.,0.]])
     rand_r = torch.rand_like(params) * rotation_strength - rotation_strength/2
-    return params + rand_r
+    if constrained:
+        return params + rand_r
+    return rand_r
 
 def get_random_affine(rotation_strength=0.2, zoom_strength=0.2):
     rand_z = torch.rand(1) * zoom_strength - zoom_strength/2 + 1.0
