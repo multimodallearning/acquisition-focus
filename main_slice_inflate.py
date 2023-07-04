@@ -387,10 +387,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
 
     return (model, optimizer, scheduler, scaler), epx
 
-# TODO: Init atms with init_theta_ap randomly DONE.
-# TODO: Move fold loop outside of stage/train loop
 
-# TODO: Load best model after stage
 
 def get_atm(config, num_classes, size_3d, view, this_script_dir, _path=None, random_ap_init=False):
 
@@ -449,13 +446,13 @@ def get_transform_model(config, num_classes, size_3d, this_script_dir, _path=Non
         # Check if atm is set externally
         sa_atm = sa_atm_override
     else:
-        sa_atm = get_atm(config, num_classes, size_3d, random_ap_init=config.use_random_affine_ap_init, view='sa', this_script_dir=this_script_dir, _path=_path)
+        sa_atm = get_atm(config, num_classes, size_3d, random_ap_init=config.use_random_affine_ap_init_sa, view='sa', this_script_dir=this_script_dir, _path=_path)
 
     if isinstance(hla_atm_override, AffineTransformModule):
         # Check if atm is set externally
         hla_atm = hla_atm_override
     else:
-        hla_atm = get_atm(config, num_classes, size_3d, random_ap_init=config.use_random_affine_ap_init, view='hla', this_script_dir=this_script_dir, _path = _path)
+        hla_atm = get_atm(config, num_classes, size_3d, random_ap_init=config.use_random_affine_ap_init_hla, view='hla', this_script_dir=this_script_dir, _path = _path)
 
     if config['soft_cut_std'] > 0:
         sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
@@ -1325,6 +1322,8 @@ for fold_properties in fold_iter:
         all_params_stages = [
             Stage( # Optimize SA
                 r_params=r_params,
+                use_random_affine_ap_init_sa=True,
+                use_random_affine_ap_init_hla=True,
                 # sa_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'sa', THIS_SCRIPT_DIR),
                 # hla_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'hla', THIS_SCRIPT_DIR),
                 cuts_mode='sa',
@@ -1339,6 +1338,8 @@ for fold_properties in fold_iter:
             ),
             Stage( # Optimize hla
                 # hla_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'hla', THIS_SCRIPT_DIR),
+                use_random_affine_ap_init_sa=False,
+                use_random_affine_ap_init_hla=True,
                 cuts_mode='sa>hla',
                 epochs=config_dict['epochs']*2,
                 soft_cut_std=-999,
@@ -1350,6 +1351,8 @@ for fold_properties in fold_iter:
                 __activate_fn__=set_previous_stage_transform_chk
             ),
             Stage( # Final optimized run
+                use_random_affine_ap_init_sa=False,
+                use_random_affine_ap_init_hla=False,
                 do_output=True,
                 cuts_mode='sa+hla',
                 epochs=config_dict['epochs'],
