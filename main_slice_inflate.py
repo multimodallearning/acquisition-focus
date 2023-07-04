@@ -16,6 +16,7 @@
 # %%
 import os
 import sys
+import re
 from pathlib import Path
 import json
 import dill
@@ -23,6 +24,8 @@ import einops as eo
 from datetime import datetime
 from git import Repo
 import joblib
+import copy
+from enum import Enum
 
 from slice_inflate.utils.common_utils import get_script_dir
 THIS_SCRIPT_DIR = get_script_dir()
@@ -46,7 +49,7 @@ import nibabel as nib
 import contextlib
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
-from slice_inflate.datasets.align_mmwhs import cut_slice
+from slice_inflate.datasets.align_mmwhs import cut_slice, crop_around_label_center
 from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, \
     log_oa_metrics, log_affine_param_stats, log_frameless_image, get_cuda_mem_info_str
 from sklearn.model_selection import KFold
@@ -60,7 +63,7 @@ from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
     get_batch_dice_over_all, get_batch_score_per_label, save_model, \
     reduce_label_scores_epoch, get_test_func_all_parameters_updated, anomaly_hook
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
-from slice_inflate.models.affine_transform import AffineTransformModule, SoftCutModule, HardCutModule, get_theta_params
+from slice_inflate.models.affine_transform import AffineTransformModule, SoftCutModule, HardCutModule, get_random_ortho6_vector
 from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
 from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params, deactivate_r_params, Stage, StageIterator
 
@@ -346,7 +349,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
         print(model.load_state_dict(model_dict, strict=False))
 
     else:
-        print(f"Generating fresh '{type(model).__name__}' model and align modules.")
+        print(f"Generating fresh '{type(model).__name__}' model.")
         epx = 0
 
     if encoder_training_only:
@@ -384,9 +387,12 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
 
     return (model, optimizer, scheduler, scaler), epx
 
+# TODO: Init atms with init_theta_ap randomly DONE.
+# TODO: Move fold loop outside of stage/train loop
 
+# TODO: Load best model after stage
 
-def get_atm(config, num_classes, size_3d, view, this_script_dir, _path=None):
+def get_atm(config, num_classes, size_3d, view, this_script_dir, _path=None, random_ap_init=False):
 
     assert view in ['sa', 'hla']
     device = config.device
@@ -412,7 +418,11 @@ def get_atm(config, num_classes, size_3d, view, this_script_dir, _path=None):
         offset_clip_value=config['offset_clip_value'],
         zoom_clip_value=config['zoom_clip_value'],
         view_affine=torch.as_tensor(np.loadtxt(affine_path)).float(),
-        optim_method=config.affine_theta_optim_method, tag=view)
+        optim_method=config.affine_theta_optim_method,
+        tag=view)
+
+    if random_ap_init:
+        atm.set_init_theta_ap(get_random_ortho6_vector(rotation_strength=0.5))
 
     if _path:
         assert Path(_path).is_dir()
@@ -439,13 +449,13 @@ def get_transform_model(config, num_classes, size_3d, this_script_dir, _path=Non
         # Check if atm is set externally
         sa_atm = sa_atm_override
     else:
-        sa_atm = get_atm(config, num_classes, size_3d, view='sa', this_script_dir=this_script_dir, _path = _path)
+        sa_atm = get_atm(config, num_classes, size_3d, random_ap_init=config.use_random_affine_ap_init, view='sa', this_script_dir=this_script_dir, _path=_path)
 
     if isinstance(hla_atm_override, AffineTransformModule):
         # Check if atm is set externally
         hla_atm = hla_atm_override
     else:
-        hla_atm = get_atm(config, num_classes, size_3d, view='hla', this_script_dir=this_script_dir, _path = _path)
+        hla_atm = get_atm(config, num_classes, size_3d, random_ap_init=config.use_random_affine_ap_init, view='hla', this_script_dir=this_script_dir, _path = _path)
 
     if config['soft_cut_std'] > 0:
         sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
@@ -722,7 +732,7 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
 
 
 
-def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, dataset, dataloader, class_weights, fold_postfix, phase='train',
+def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, dataset, dataloader, class_weights, phase='train',
     autocast_enabled=False, all_optimizers=None, scaler=None, store_net_output_to=None, r_params=None):
     PHASES = ['train', 'val', 'test']
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
@@ -872,25 +882,25 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     print(f"### {phase.upper()}")
 
     ### Log wandb data ###
-    log_id = f'losses/{phase}_loss{fold_postfix}'
+    log_id = f'losses/{phase}_loss'
     log_val = loss_mean
     wandb.log({log_id: log_val}, step=global_idx)
-    print(f'losses/{phase}_loss{fold_postfix}', log_val)
+    print(f'losses/{phase}_loss', log_val)
 
-    log_label_metrics(f"scores/{phase}_mean", fold_postfix, seg_metrics_nanmean, global_idx,
+    log_label_metrics(f"scores/{phase}_mean", '', seg_metrics_nanmean, global_idx,
         logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=('dice'))
 
-    log_label_metrics(f"scores/{phase}_std", fold_postfix, seg_metrics_std, global_idx,
+    log_label_metrics(f"scores/{phase}_std", '', seg_metrics_std, global_idx,
         logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=())
 
-    log_oa_metrics(f"scores/{phase}_mean_oa_exclude_bg", fold_postfix, seg_metrics_nanmean_oa, global_idx,
+    log_oa_metrics(f"scores/{phase}_mean_oa_exclude_bg", '', seg_metrics_nanmean_oa, global_idx,
         logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=('dice', 'iou', 'hd', 'hd95'))
 
-    log_oa_metrics(f"scores/{phase}_std_oa_exclude_bg", fold_postfix, seg_metrics_std_oa, global_idx,
+    log_oa_metrics(f"scores/{phase}_std_oa_exclude_bg", '', seg_metrics_std_oa, global_idx,
         logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=())
 
     print()
-    output_dir = Path(f"data/output/{wandb.run.name}_{fold_postfix}")
+    output_dir = Path(f"data/output/{wandb.run.name}")
     output_dir.mkdir(exist_ok=True)
 
     mean_transform_dict = dict()
@@ -903,7 +913,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             theta_zp=list(epx_sa_theta_zps.values()),
         )
         sa_theta_ap_mean, sa_theta_t_offsets_mean, sa_theta_zp_mean = \
-            log_affine_param_stats(ornt_log_prefix, fold_postfix, sa_param_dict, global_idx,
+            log_affine_param_stats(ornt_log_prefix, '', sa_param_dict, global_idx,
                 logger_selected_metrics=('mean', 'std'), print_selected_metrics=('mean', 'std'))
         print()
 
@@ -931,7 +941,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             theta_zp=list(epx_hla_theta_zps.values())
         )
         hla_theta_ap_mean, hla_theta_tp_mean, hla_theta_zp_mean = \
-            log_affine_param_stats(ornt_log_prefix, fold_postfix, hla_param_dict, global_idx,
+            log_affine_param_stats(ornt_log_prefix, '', hla_param_dict, global_idx,
                 logger_selected_metrics=('mean', 'std'), print_selected_metrics=('mean', 'std'))
         print()
 
@@ -981,154 +991,124 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
     return loss_mean, mean_transform_dict
 
+def get_fold_postfix(fold_properties):
+    fold_idx, _ = fold_properties
+    return f'fold-{fold_idx}' if fold_idx != -1 else ""
 
-
-def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
+def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None, test_dataset=None):
     # reset_determinism()
 
-    # Configure folds
-    if config.num_folds < 1:
-        train_idxs = range(training_dataset.__len__(use_2d_override=False))
-        val_idxs = []
-        fold_idx = -1
-        fold_iter = ([fold_idx, (train_idxs, val_idxs)],)
+    fold_idx, (train_idxs, val_idxs) = fold_properties
 
-    else:
-        kf = KFold(n_splits=config.num_folds)
-        fold_iter = enumerate(kf.split(range(training_dataset.__len__(use_2d_override=False))))
+    best_quality_metric = 1.e16
+    train_idxs = torch.tensor(train_idxs)
+    val_idxs = torch.tensor(val_idxs)
+    val_ids = training_dataset.switch_3d_identifiers(val_idxs)
 
-        if config.get('fold_override', None):
-            selected_fold = config.get('fold_override', 0)
-            fold_iter = list(fold_iter)[selected_fold:selected_fold+1]
+    print(f"Will run validation with these 3D samples (#{len(val_ids)}):", sorted(val_ids))
 
-    fold_means_no_bg = []
+    ### Add train sampler and dataloaders ##
+    train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
+    val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
+    test_subsampler = torch.utils.data.SubsetRandomSampler(range(len(test_dataset)))
 
-    for fold_idx, (train_idxs, val_idxs) in fold_iter:
-        fold_postfix = f'_fold{fold_idx}' if fold_idx != -1 else ""
+    if not run_test_once_only:
+        train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
+            sampler=train_subsampler, pin_memory=False, drop_last=True, # TODO Determine, why last batch is not transformed correctly
+            collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
+        )
+        training_dataset.set_augment_at_collate(False) # CAUTION: THIS INTERFERES WITH GRADIENT COMPUTATION IN AFFINE MODULES
 
-        best_quality_metric = 1.e16
-        train_idxs = torch.tensor(train_idxs)
-        val_idxs = torch.tensor(val_idxs)
-        val_ids = training_dataset.switch_3d_identifiers(val_idxs)
-
-        print(f"Will run validation with these 3D samples (#{len(val_ids)}):", sorted(val_ids))
-
-        ### Add train sampler and dataloaders ##
-        train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
-        val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
-        test_subsampler = torch.utils.data.SubsetRandomSampler(range(len(test_dataset)))
-
-        if not run_test_once_only:
-            train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
-                sampler=train_subsampler, pin_memory=False, drop_last=True, # TODO Determine, why last batch is not transformed correctly
-                collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
-            )
-            training_dataset.set_augment_at_collate(False) # CAUTION: THIS INTERFERES WITH GRADIENT COMPUTATION IN AFFINE MODULES
-
-            val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
-                sampler=val_subsampler, pin_memory=False, drop_last=False
-            )
-
-        test_dataloader = DataLoader(test_dataset, batch_size=config.val_batch_size,
-            sampler=test_subsampler, pin_memory=False, drop_last=False
+        val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
+            sampler=val_subsampler, pin_memory=False, drop_last=False
         )
 
-        # Load from checkpoint, if any
-        mdl_chk_path = config.model_checkpoint_path if 'model_checkpoint_path' in config else None
-        (model, optimizer, scheduler, scaler), epx_start = get_model(
-            config, len(training_dataset), len(training_dataset.label_tags),
-            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=mdl_chk_path, load_model_only=False,
-            encoder_training_only=config.encoder_training_only)
+    test_dataloader = DataLoader(test_dataset, batch_size=config.val_batch_size,
+        sampler=test_subsampler, pin_memory=False, drop_last=False
+    )
 
-        # Load transformation model from checkpoint, if any
-        transform_mdl_chk_path = config.transform_model_checkpoint_path if 'transform_model_checkpoint_path' in config else None
-        sa_atm_override = stage['sa_atm'] if stage is not None and 'sa_atm' in stage else None
-        hla_atm_override = stage['hla_atm'] if stage is not None and 'hla_atm' in stage else None
+    # Load from checkpoint, if any
+    mdl_chk_path = config.model_checkpoint_path if 'model_checkpoint_path' in config else None
+    (model, optimizer, scheduler, scaler), epx_start = get_model(
+        config, len(training_dataset), len(training_dataset.label_tags),
+        THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=mdl_chk_path, load_model_only=False,
+        encoder_training_only=config.encoder_training_only)
 
-        size_3d = training_dataset[0]['label'].shape[-3:] \
-            if len(training_dataset) > 0 else test_dataset[0]['label'].shape[-3:]
+    # Load transformation model from checkpoint, if any
+    transform_mdl_chk_path = config.transform_model_checkpoint_path if 'transform_model_checkpoint_path' in config else None
+    sa_atm_override = stage['sa_atm'] if stage is not None and 'sa_atm' in stage else None
+    hla_atm_override = stage['hla_atm'] if stage is not None and 'hla_atm' in stage else None
 
-        (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer, transform_scheduler = get_transform_model(
-            config, len(training_dataset.label_tags), size_3d, THIS_SCRIPT_DIR, _path=transform_mdl_chk_path,
-            sa_atm_override=sa_atm_override, hla_atm_override=hla_atm_override)
+    size_3d = training_dataset[0]['label'].shape[-3:] \
+        if len(training_dataset) > 0 else test_dataset[0]['label'].shape[-3:]
 
-        all_optimizers = dict(optimizer=optimizer, transform_optimizer=transform_optimizer)
-        all_schedulers = dict(scheduler=scheduler, transform_scheduler=transform_scheduler)
+    (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer, transform_scheduler = get_transform_model(
+        config, len(training_dataset.label_tags), size_3d, THIS_SCRIPT_DIR, _path=transform_mdl_chk_path,
+        sa_atm_override=sa_atm_override, hla_atm_override=hla_atm_override)
 
-        r_params = stage['r_params'] if stage is not None and 'r_params' in stage else None
-        # all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
+    all_optimizers = dict(optimizer=optimizer, transform_optimizer=transform_optimizer)
+    all_schedulers = dict(scheduler=scheduler, transform_scheduler=transform_scheduler)
 
-        # for bn_counts in training_dataset.bincounts_3d.values():
-        #     all_bn_counts += bn_counts
+    r_params = stage['r_params'] if stage is not None and 'r_params' in stage else None
+    # all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
 
-        # class_weights = 1 / (all_bn_counts).float().pow(.35)
-        # class_weights /= class_weights.mean()
+    # for bn_counts in training_dataset.bincounts_3d.values():
+    #     all_bn_counts += bn_counts
 
-        # class_weights = class_weights.to(device=config.device)
-        class_weights = None
+    # class_weights = 1 / (all_bn_counts).float().pow(.35)
+    # class_weights /= class_weights.mean()
 
-        autocast_enabled = 'cuda' in config.device and config['use_autocast']
+    # class_weights = class_weights.to(device=config.device)
+    class_weights = None
 
-        for epx in range(epx_start, config.epochs):
-            global_idx = get_global_idx(fold_idx, epx, config.epochs)
-            # Log the epoch idx per fold - so we can recover the diagram by setting
-            # ref_epoch_idx as x-axis in wandb interface
-            print( f"### Log epoch {epx}/{config.epochs}")
-            wandb.log({"ref_epoch_idx": epx}, step=global_idx)
+    autocast_enabled = 'cuda' in config.device and config['use_autocast']
 
-            if not run_test_once_only:
-                train_loss, mean_transform_dict = epoch_iter(
-                    epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
-                    training_dataset, train_dataloader, class_weights, fold_postfix,
-                    phase='train', autocast_enabled=autocast_enabled,
-                    all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None,
-                    r_params=r_params)
+    for epx in range(epx_start, config.epochs):
+        global_idx = get_global_idx(fold_idx, epx, config.epochs)
+        # Log the epoch idx per fold - so we can recover the diagram by setting
+        # ref_epoch_idx as x-axis in wandb interface
+        print( f"### Log epoch {epx}/{config.epochs}")
+        wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
-                if stage:
-                    stage.update(mean_transform_dict)
+        if not run_test_once_only:
+            train_loss, mean_transform_dict = epoch_iter(
+                epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
+                training_dataset, train_dataloader, class_weights,
+                phase='train', autocast_enabled=autocast_enabled,
+                all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None,
+                r_params=r_params)
 
-                val_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, training_dataset, val_dataloader, class_weights, fold_postfix,
-                    phase='val', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=None)
+            if stage:
+                stage.update(mean_transform_dict)
 
-            quality_metric, _ = test_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, test_dataset, test_dataloader, class_weights, fold_postfix,
-                phase='test', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=config.test_only_and_output_to)
+            val_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, training_dataset, val_dataloader, class_weights,
+                phase='val', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=None)
 
-            if run_test_once_only:
-                break
+        test_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, test_dataset, test_dataloader, class_weights,
+            phase='test', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=config.test_only_and_output_to)
 
-            ###  Scheduler management ###
-            if config.use_scheduling:
-                for shd_name, shd in all_schedulers.items():
-                    if shd is not None:
-                        shd.step()
+        quality_metric = val_loss
+        if run_test_once_only:
+            break
 
-            wandb.log({f'training/scheduler_lr': scheduler.optimizer.param_groups[0]['lr']}, step=global_idx)
-            print()
+        ###  Scheduler management ###
+        if config.use_scheduling:
+            for shd_name, shd in all_schedulers.items():
+                if shd is not None:
+                    shd.step()
 
-            # Save model
-            if config.save_every is None:
-                pass
+        wandb.log({f'training/scheduler_lr': scheduler.optimizer.param_groups[0]['lr']}, step=global_idx)
+        print()
 
-            elif config.save_every == 'best':
-                if quality_metric < best_quality_metric:
-                    best_quality_metric = quality_metric
-                    save_path = f"{config.mdl_save_prefix}/{wandb.run.name}_{fold_postfix}_best"
-                    save_model(
-                        Path(THIS_SCRIPT_DIR, save_path),
-                        epx=epx,
-                        loss=train_loss,
-                        model=model,
-                        sa_atm=sa_atm,
-                        hla_atm=hla_atm,
-                        sa_cut_module=sa_cut_module,
-                        hla_cut_module=hla_cut_module,
-                        optimizer=all_optimizers['optimizer'],
-                        transform_optimizer=all_optimizers['transform_optimizer'],
-                        scheduler=scheduler,
-                        scaler=scaler)
+        # Save model
+        if config.save_every is None:
+            pass
 
-            elif (epx % config.save_every == 0) or (epx+1 == config.epochs):
-                save_path = f"{config.mdl_save_prefix}/{wandb.run.name}_{fold_postfix}_epx{epx}"
+        elif config.save_every == 'best':
+            if quality_metric < best_quality_metric:
+                best_quality_metric = quality_metric
+                save_path = f"{config.mdl_save_prefix}/{wandb.run.name}_best"
+                stage['save_path'] = save_path
                 save_model(
                     Path(THIS_SCRIPT_DIR, save_path),
                     epx=epx,
@@ -1138,23 +1118,36 @@ def run_dl(run_name, config, training_dataset, test_dataset, stage=None):
                     hla_atm=hla_atm,
                     sa_cut_module=sa_cut_module,
                     hla_cut_module=hla_cut_module,
-                    optimizer=optimizer,
+                    optimizer=all_optimizers['optimizer'],
+                    transform_optimizer=all_optimizers['transform_optimizer'],
                     scheduler=scheduler,
                     scaler=scaler)
 
-                # (model, optimizer, scheduler, scaler) = \
-                #     get_model(
-                #         config, len(training_dataset),
-                #         len(training_dataset.label_tags),
-                #         THIS_SCRIPT_DIR=THIS_SCRIPT_DIR,
-                #         _path=_path, device=config.device)
+        elif (epx % config.save_every == 0) or (epx+1 == config.epochs):
+            save_path = f"{config.mdl_save_prefix}/{wandb.run.name}_epx{epx}"
+            stage['save_path'] = save_path
+            save_model(
+                Path(THIS_SCRIPT_DIR, save_path),
+                epx=epx,
+                loss=train_loss,
+                model=model,
+                sa_atm=sa_atm,
+                hla_atm=hla_atm,
+                sa_cut_module=sa_cut_module,
+                hla_cut_module=hla_cut_module,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                scaler=scaler)
 
-            # End of epoch loop
+            # (model, optimizer, scheduler, scaler) = \
+            #     get_model(
+            #         config, len(training_dataset),
+            #         len(training_dataset.label_tags),
+            #         THIS_SCRIPT_DIR=THIS_SCRIPT_DIR,
+            #         _path=_path, device=config.device)
 
-            if config.debug or run_test_once_only:
-                break
+        # End of epoch loop
 
-        # End of fold loop
         if config.debug or run_test_once_only:
             break
 
@@ -1203,21 +1196,19 @@ sweep_config_dict = dict(
 
 
 # %%
-def normal_run():
+def normal_run(config_dict, fold_properties, training_dataset, test_dataset):
     with wandb.init(project=PROJECT_NAME, group="training", job_type="train",
             config=config_dict, settings=wandb.Settings(start_method="thread"),
             mode=config_dict['wandb_mode']
         ) as run:
-        run.name = f"{NOW_STR}_{run.name}"
+        run.name = f"{NOW_STR}_{run.name}_{get_fold_postfix(fold_properties)}"
         print("Running", run.name)
         config = wandb.config
-
-        run_dl(run.name, config, training_dataset, test_dataset)
-
+        run_dl(run.name, config, fold_properties, training_dataset=training_dataset, test_dataset=test_dataset)
 
 
-def stage_sweep_run(config_dict, all_stages):
-    stage_run_prefix = None
+
+def stage_sweep_run(config_dict, fold_properties, all_stages, training_dataset, test_dataset):
 
     for stage in all_stages:
         stg_idx = all_stages.idx
@@ -1233,30 +1224,27 @@ def stage_sweep_run(config_dict, all_stages):
         with wandb.init(project=PROJECT_NAME, config=stage_config, settings=wandb.Settings(start_method="thread"),
             mode=stage_config['wandb_mode']) as run:
 
-            if stage_run_prefix is None:
-                stage_run_prefix = run.name
-
-            run.name = f"{NOW_STR}_{stage_run_prefix}-stage-{stg_idx+1}"
+            run.name = f"{NOW_STR}_{run.name}_stage-{stg_idx+1}_{get_fold_postfix(fold_properties)}"
             print("Running", run.name)
             config = wandb.config
 
-            run_dl(run.name, config, training_dataset, test_dataset, stage)
+            run_dl(run.name, config, fold_properties, stage, training_dataset, test_dataset,)
         wandb.finish()
         torch.cuda.empty_cache()
         print(get_cuda_mem_info_str())
 
 
 
-def wandb_sweep_run():
+def wandb_sweep_run(config_dict, fold_properties, training_dataset, test_dataset):
     with wandb.init(
             settings=wandb.Settings(start_method="thread"),
             mode=config_dict['wandb_mode']) as run:
 
-        run.name = f"{NOW_STR}_{run.name}"
+        run.name = f"{NOW_STR}_{run.name}_{get_fold_postfix(fold_properties)}"
         print("Running", run.name)
         config = wandb.config
 
-        run_dl(run.name, config, training_dataset, test_dataset)
+        run_dl(run.name, config, fold_properties, training_dataset=training_dataset, test_dataset=test_dataset)
 
 
 
@@ -1284,82 +1272,117 @@ def clean_sweep_dict(config_dict):
 
 
 
-if config_dict['sweep_type'] is None:
-    normal_run()
+def set_previous_stage_transform_chk(self):
+    self['transform_model_checkpoint_path'] = self['save_path']
 
-elif config_dict['sweep_type'] == 'wandb_sweep':
-    merged_sweep_config_dict = clean_sweep_dict(config_dict)
-    sweep_id = wandb.sweep(merged_sweep_config_dict, project=PROJECT_NAME)
-    wandb.agent(sweep_id, function=wandb_sweep_run)
 
-elif config_dict['sweep_type'] == 'stage-sweep':
 
-    size_3d = training_dataset[0]['label'].shape[-3:] \
-        if len(training_dataset) > 0 else test_dataset[0]['label'].shape[-3:]
-    r_params = init_regularization_params(
-        [
-            'hla_angles',
-            'hla_offsets',
-            'sa_angles',
-            'sa_offsets',
-        ], lambda_r=0.01)
+# main routine
+#
+#
 
-    all_params_stages = [
-        Stage( # Optimize SA
-            r_params=r_params,
-            sa_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'sa', THIS_SCRIPT_DIR),
-            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'hla', THIS_SCRIPT_DIR),
-            cuts_mode='sa',
-            epochs=config_dict['epochs']*2,
-            soft_cut_std=-999,
-            do_augment=True,
-            use_distance_map_localization=False,
-            use_affine_theta=True,
-            train_affine_theta=True,
-            do_output=True,
-            __activate_fn__=lambda self: None
-        ),
-        Stage( # Optimize hla
-            hla_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'hla', THIS_SCRIPT_DIR),
-            cuts_mode='sa>hla',
-            epochs=config_dict['epochs']*2,
-            soft_cut_std=-999,
-            do_augment=True,
-            use_distance_map_localization=False,
-            use_affine_theta=True,
-            train_affine_theta=True,
-            do_output=True,
-            __activate_fn__=lambda self: None
-        ),
-        Stage( # Final optimized run
-            do_output=True,
-            cuts_mode='sa+hla',
-            epochs=config_dict['epochs'],
-            soft_cut_std=-999,
-            do_augment=True,
-            use_affine_theta=True,
-            train_affine_theta=False,
-            use_distance_map_localization=False,
-            __activate_fn__=lambda self: None
-        ),
-        Stage( # Reference run
-            do_augment=True,
-            do_output=True,
-            cuts_mode='sa+hla',
-            epochs=config_dict['epochs'],
-            soft_cut_std=-999,
-            train_affine_theta=False,
-            use_affine_theta=False,
-            use_distance_map_localization=False,
-            __activate_fn__=lambda self: None
-        ),
-    ]
-
-    selected_stages = all_params_stages
-    stage_sweep_run(config_dict, StageIterator(selected_stages, verbose=True))
+# Configure folds
+if config_dict.num_folds < 1:
+    train_idxs = range(training_dataset.__len__(use_2d_override=False))
+    val_idxs = []
+    fold_idx = -1
+    fold_iter = ([fold_idx, (train_idxs, val_idxs)],)
 
 else:
-    raise ValueError()
+    kf = KFold(n_splits=config_dict.num_folds)
+    fold_iter = enumerate(kf.split(range(training_dataset.__len__(use_2d_override=False))))
+
+    if config_dict.get('fold_override', None):
+        selected_fold = config_dict.get('fold_override', 0)
+        fold_iter = list(fold_iter)[selected_fold:selected_fold+1]
+
+
+for fold_properties in fold_iter:
+    if config_dict['sweep_type'] is None:
+        normal_run(config_dict, fold_properties, training_dataset, test_dataset)
+
+    elif config_dict['sweep_type'] == 'wandb_sweep':
+        merged_sweep_config_dict = clean_sweep_dict(config_dict)
+        sweep_id = wandb.sweep(merged_sweep_config_dict, project=PROJECT_NAME)
+
+        def closure_wandb_sweep_run():
+            return wandb_sweep_run(config_dict, fold_properties, training_dataset=training_dataset, test_dataset=test_dataset)
+
+        wandb.agent(sweep_id, function=closure_wandb_sweep_run)
+
+    elif config_dict['sweep_type'] == 'stage-sweep':
+
+        size_3d = training_dataset[0]['label'].shape[-3:] \
+            if len(training_dataset) > 0 else test_dataset[0]['label'].shape[-3:]
+        r_params = init_regularization_params(
+            [
+                'hla_angles',
+                'hla_offsets',
+                'sa_angles',
+                'sa_offsets',
+            ], lambda_r=0.01)
+
+        all_params_stages = [
+            Stage( # Optimize SA
+                r_params=r_params,
+                # sa_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'sa', THIS_SCRIPT_DIR),
+                # hla_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'hla', THIS_SCRIPT_DIR),
+                cuts_mode='sa',
+                epochs=config_dict['epochs']*2,
+                soft_cut_std=-999,
+                do_augment=True,
+                use_distance_map_localization=False,
+                use_affine_theta=True,
+                train_affine_theta=True,
+                do_output=True,
+                __activate_fn__=lambda self: None
+            ),
+            Stage( # Optimize hla
+                # hla_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'hla', THIS_SCRIPT_DIR),
+                cuts_mode='sa>hla',
+                epochs=config_dict['epochs']*2,
+                soft_cut_std=-999,
+                do_augment=True,
+                use_distance_map_localization=False,
+                use_affine_theta=True,
+                train_affine_theta=True,
+                do_output=True,
+                __activate_fn__=set_previous_stage_transform_chk
+            ),
+            Stage( # Final optimized run
+                do_output=True,
+                cuts_mode='sa+hla',
+                epochs=config_dict['epochs'],
+                soft_cut_std=-999,
+                do_augment=True,
+                use_affine_theta=True,
+                train_affine_theta=False,
+                use_distance_map_localization=False,
+                __activate_fn__=set_previous_stage_transform_chk
+            ),
+            Stage( # Reference run
+                do_augment=True,
+                do_output=True,
+                cuts_mode='sa+hla',
+                epochs=config_dict['epochs'],
+                soft_cut_std=-999,
+                train_affine_theta=False,
+                use_affine_theta=False,
+                use_distance_map_localization=False,
+                __activate_fn__=lambda self: None
+            ),
+        ]
+
+        selected_stages = all_params_stages
+        stage_sweep_run(config_dict, fold_properties, StageIterator(selected_stages, verbose=True),
+                        training_dataset=training_dataset, test_dataset=test_dataset)
+
+    else:
+        raise ValueError()
+
+    if config_dict.debug or run_test_once_only:
+        break
+    # End of fold loop
 
 # %%
 if not in_notebook():

@@ -67,7 +67,6 @@ class LocalisationNet(torch.nn.Module):
 class AffineTransformModule(torch.nn.Module):
     def __init__(self, input_channels, size_3d,
         fov_mm, fov_vox, view_affine,
-        init_theta_ap=None, init_theta_t_offsets=None, init_theta_zp=None,
         optim_method='angle-axis', use_affine_theta=True, offset_clip_value=1., zoom_clip_value=2., tag=None,
         align_corners=False):
 
@@ -427,15 +426,14 @@ class SoftCutModule(torch.nn.Module):
 
         return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
 
-
+def get_random_ortho6_vector(rotation_strength=0.2):
+    params = torch.tensor([[1.,0.,0., 0.,1.,0.]])
+    rand_r = torch.rand_like(params) * rotation_strength - rotation_strength/2
+    return params + rand_r
 
 def get_random_affine(rotation_strength=0.2, zoom_strength=0.2):
-    params = torch.tensor([[1.,0.,0., 0.,1.,0.]])
-
-    rand_r = torch.rand_like(params) * rotation_strength - rotation_strength/2
     rand_z = torch.rand(1) * zoom_strength - zoom_strength/2 + 1.0
-
-    rand_theta_r = compute_rotation_matrix_from_ortho6d(params+rand_r)
+    rand_theta_r = compute_rotation_matrix_from_ortho6d(get_random_ortho6_vector(rotation_strength))
     rand_theta_z = torch.diag(torch.tensor([rand_z,rand_z,rand_z,1.0]))
 
     return rand_theta_z @ rand_theta_r

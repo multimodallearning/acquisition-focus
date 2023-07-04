@@ -14,7 +14,7 @@ import einops as eo
 from torch.utils.checkpoint import checkpoint
 
 from slice_inflate.utils.common_utils import DotDict, get_script_dir
-from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, calc_dist_map
+from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, calc_dist_map, get_rotation_matrix_3d_from_angles
 from slice_inflate.models.affine_transform import get_random_affine
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
 from slice_inflate.datasets.align_mmwhs import crop_around_label_center, cut_slice, soft_cut_slice, nifti_transform
@@ -255,19 +255,19 @@ def extract_2d_data(self_attributes: dict):
             for idx, img_slc in [(slice_idx, image.select(slice_dim, slice_idx))
                                  for slice_idx in range(image.shape[slice_dim])]:
                 # Set data view for id like "003rW100"
-                img_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = img_slc
+                img_data_2d[f"{_3d_id}:{self.use_2d_normal_to}{idx:03d}"] = img_slc
 
         for _3d_id, label in self.label_data_3d.items():
             for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx))
                                  for slice_idx in range(label.shape[slice_dim])]:
                 # Set data view for id like "003rW100"
-                label_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = lbl_slc
+                label_data_2d[f"{_3d_id}:{self.use_2d_normal_to}{idx:03d}"] = lbl_slc
 
         for _3d_id, label in self.modified_label_data_3d.items():
             for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx))
                                  for slice_idx in range(label.shape[slice_dim])]:
                 # Set data view for id like "003rW100"
-                modified_label_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = lbl_slc
+                modified_label_data_2d[f"{_3d_id}:{self.use_2d_normal_to}{idx:03d}"] = lbl_slc
 
     # Postprocessing of 2d slices
     print("Postprocessing 2D slices")
