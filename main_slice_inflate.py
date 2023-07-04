@@ -486,7 +486,7 @@ def get_transform_model(config, num_classes, size_3d, this_script_dir, _path=Non
         assert config.use_affine_theta
 
     if config.train_affine_theta:
-        transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=0.001)
+        transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=0.0005)
         transform_scheduler = torch.optim.lr_scheduler.ExponentialLR(transform_optimizer, gamma=0.995)
     else:
         transform_optimizer = NoneOptimizer()
