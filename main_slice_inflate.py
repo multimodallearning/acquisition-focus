@@ -486,7 +486,7 @@ def get_transform_model(config, num_classes, size_3d, this_script_dir, _path=Non
         assert config.use_affine_theta
 
     if config.train_affine_theta:
-        transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=config.lr*1.5)
+        transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=config.lr*2)
         transform_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(transform_optimizer, T_0=int(config.epochs/4))
     else:
         transform_optimizer = NoneOptimizer()
@@ -1323,7 +1323,7 @@ for fold_properties in fold_iter:
                 r_params=r_params,
                 use_random_affine_ap_init_sa=True,
                 use_random_affine_ap_init_hla=True,
-                # sa_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'sa', THIS_SCRIPT_DIR),
+                sa_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'sa', THIS_SCRIPT_DIR),
                 # hla_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'hla', THIS_SCRIPT_DIR),
                 cuts_mode='sa',
                 epochs=config_dict['epochs']*2,
