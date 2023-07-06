@@ -204,10 +204,9 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_transfo
 
 
 def get_crop_affine(affine, vox_offset):
-    crop_affine = torch.zeros_like(affine)
     mm_offset = affine[:,:-1,:-1] @ vox_offset.to(affine)
-    crop_affine[:,:-1,-1] = affine[:,:-1,-1] + mm_offset
-    return crop_affine
+    affine[:,:-1,-1] = affine[:,:-1,-1] + mm_offset
+    return affine
 
 
 
