@@ -5,10 +5,16 @@ wandb/**
 .cache/**/*
 
 data/models
-data/MMWHS/*
-data/MMWHS_notest/*
-data/MMWHS2/*
-data/MNIST/*
+data/MMWHS
+data/MMWHS_notest
+data/MMWHS2
+data/MNIST
+
+nnunetV2_results
+nnunetV2_preprocessed
+out
+tmp-exp1
+tmp-exp2
 !data/MMWHS/mmwhs_io_normalisation_values.pth
 *.nii.gz
 *.pth
