@@ -106,12 +106,12 @@ def do_sample(volume, grid, gs_kwargs):
 
 
 
-def get_noop_ras_transfrom_mat(volume_affine):
+def get_noop_ras_transfrom_mat(volume_affine, volume_shape):
     # This RAS matrix will not change the pixel orientations, nor the resulting nifti affine
     # (i.e. a quasi no-op for transformed voxel array no rotation,
     # but zoom is going on according to fov_mm, fov_vox)
     fov_mm_center = (
-        volume_affine @ torch.as_tensor(list(volume.shape[-3:])+ [1.], dtype=volume_affine.dtype)
+        volume_affine @ torch.as_tensor(list(volume_shape)+ [1.], dtype=volume_affine.dtype)
         + volume_affine @ torch.tensor([0.,0.,0.,1.], dtype=volume_affine.dtype)
     ) / 2
     # ras_transform_mat = torch.eye(4).repeat(B,1,1)
@@ -131,12 +131,18 @@ def get_noop_ras_transfrom_mat(volume_affine):
 def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_transform_mat:torch.Tensor=None, fov_mm=None, fov_vox=None,
     is_label=False, pre_grid_sample_affine=None, pre_grid_sample_hidden_affine=None, dtype=torch.float32):
 
+    device = volume.device
     DIM = volume.dim()
     assert DIM == 5
     B = volume.shape[0]
 
+    # Prepare shapes
+    B,C,D,H,W = volume.shape
+    volume_shape = torch.tensor([D,H,W], device=device)
+    target_shape = torch.Size([B,C] + fov_vox.tolist())
+
     if ras_transform_mat is None:
-        ras_transform_mat = get_noop_ras_transfrom_mat(volume_affine).repeat(B,1,1)
+        ras_transform_mat = get_noop_ras_transfrom_mat(volume_affine, volume_shape).repeat(B,1,1)
 
     assert volume_affine.dim() == ras_transform_mat.dim() == 3 \
         and B == volume_affine.shape[0] \
@@ -149,7 +155,6 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_transfo
         assert pre_grid_sample_hidden_affine.dim() == 3 \
             and B == pre_grid_sample_hidden_affine.shape[0]
 
-    device = volume.device
     fov_mm = fov_mm.to(device)
     fov_vox = fov_vox.to(device)
     volume_affine = volume_affine.to(device)
@@ -162,11 +167,6 @@ def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_transfo
     if pre_grid_sample_hidden_affine is None:
         pre_grid_sample_hidden_affine = torch.eye(4)[None]
     pre_grid_sample_hidden_affine = pre_grid_sample_hidden_affine.to(volume_affine)
-
-    # Prepare volume
-    B,C,D,H,W = volume.shape
-    volume_shape = torch.tensor([D,H,W], device=device)
-    target_shape = torch.Size([B,C] + fov_vox.tolist())
 
     # Get affines
     grid_affine, transformed_nii_affine = get_grid_affine_and_nii_affine(
