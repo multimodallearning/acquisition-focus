@@ -128,9 +128,9 @@ def get_noop_ras_transfrom_mat(volume_affine, volume_shape):
 
 
 
-def nifti_transform(volume:torch.Tensor, volume_affine:torch.Tensor, ras_transform_mat:torch.Tensor=None, fov_mm=None, fov_vox=None,
+def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_transform_mat:torch.Tensor=None, fov_mm=None, fov_vox=None,
     is_label=False, pre_grid_sample_affine=None, pre_grid_sample_hidden_affine=None, dtype=torch.float32):
-
+    # Works with nibabel loaded nii(.gz) files, itk loading untested
     device = volume.device
     DIM = volume.dim()
     assert DIM == 5
@@ -293,29 +293,3 @@ def crop_around_label_center(label: torch.Tensor, vox_size: torch.Tensor, image:
         affine = get_crop_affine(affine, vox_offset)
 
     return cropped_label, cropped_image, affine
-
-
-
-def cut_slice(b_volume):
-    b_volume = eo.rearrange(b_volume, 'B C D H W -> W B C D H')
-    center_idx = b_volume.shape[0]//2
-    b_volume = b_volume[center_idx:center_idx+1]
-    return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
-
-
-
-def soft_cut_slice(b_volume, std=50.0):
-    b_volume = eo.rearrange(b_volume, 'B C D H W -> W B C D H')
-    W = b_volume.shape[0]
-    center_idx = W//2
-
-    n_dist = torch.distributions.normal.Normal(torch.tensor(center_idx), torch.tensor(std))
-
-    probs = torch.arange(0, W)
-    probs = n_dist.log_prob(probs).exp()
-    probs = probs / probs.max()
-    probs = probs.to(b_volume.device)
-
-    b_volume = (b_volume * probs.view(W,1,1,1,1)).sum(0, keepdim=True)
-
-    return eo.rearrange(b_volume, ' W B C D H -> B C D H W')

@@ -1,4 +1,3 @@
-
 from contextlib import contextmanager
 import random
 import numpy as np
@@ -14,7 +13,7 @@ import gc
 from collections import defaultdict
 import random
 
-MOD_GET_FN = lambda self, key: self[int(key)] if isinstance(self, nn.Sequential) \
+MOD_GET_FN = lambda self, key: self[int(key)] if isinstance(self, torch.nn.Sequential) \
                                               else getattr(self, key)
 
 @contextmanager
@@ -633,8 +632,8 @@ def anomaly_hook(self, _input, output):
 
     for out_idx, out_item in enumerate(output):
         if isinstance(out_item, torch.Tensor):
-            nan_mask = torch.isnan(out)
-            inf_mask = torch.isinf(out)
+            nan_mask = torch.isnan(out_item)
+            inf_mask = torch.isinf(out_item)
             raise RuntimeError(f"Found nan/inf in output")
 
 
@@ -657,9 +656,9 @@ def print_torch_memory_vars(last_mem_dict=None, show_leaves=True, show_cpu=True,
 
         for size_key in set(list(last_mem_dict.keys()) + list(mem_dict.keys())):
             num = mem_dict[size_key]
-            if key in last_mem_dict:
+            if size_key in last_mem_dict:
                 print(size_key, num, f"({num - last_mem_dict[size_key]:+})")
-            elif key in mem_dict:
+            elif size_key in mem_dict:
                 print(size_key, num, f"({num:+})")
     else:
         print("Torch memory footprint")
@@ -673,3 +672,29 @@ def print_torch_memory_vars(last_mem_dict=None, show_leaves=True, show_cpu=True,
 def determine_network_output_size(net, _input):
     with torch.no_grad():
         return net(_input).shape
+
+
+
+def cut_slice(b_volume):
+    b_volume = eo.rearrange(b_volume, 'B C D H W -> W B C D H')
+    center_idx = b_volume.shape[0]//2
+    b_volume = b_volume[center_idx:center_idx+1]
+    return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
+
+
+
+def soft_cut_slice(b_volume, std=50.0):
+    b_volume = eo.rearrange(b_volume, 'B C D H W -> W B C D H')
+    W = b_volume.shape[0]
+    center_idx = W//2
+
+    n_dist = torch.distributions.normal.Normal(torch.tensor(center_idx), torch.tensor(std))
+
+    probs = torch.arange(0, W)
+    probs = n_dist.log_prob(probs).exp()
+    probs = probs / probs.max()
+    probs = probs.to(b_volume.device)
+
+    b_volume = (b_volume * probs.view(W,1,1,1,1)).sum(0, keepdim=True)
+
+    return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
