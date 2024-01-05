@@ -184,7 +184,11 @@ def display_clinical_views(volume:torch.Tensor, label:torch.Tensor, volume_affin
 
     fov_mm = torch.tensor([300.,300.,1.])
     fov_vox = torch.tensor([200,200,1])
-    for view_name, pt_affine in unrolled_view_affines.items():
+
+    fig, axs = plt.subplots(len(unrolled_view_affines)//5+1, 5)
+    axs = axs.flatten()
+
+    for ax, (view_name, pt_affine) in zip(axs, unrolled_view_affines.items()):
 
         image_slice, *_ = nifti_grid_sample(volume[None,None], volume_affine[None], None, fov_mm, fov_vox,
             is_label=True, pre_grid_sample_affine=pt_affine[None], pre_grid_sample_hidden_affine=None, dtype=torch.float32
@@ -193,10 +197,14 @@ def display_clinical_views(volume:torch.Tensor, label:torch.Tensor, volume_affin
             is_label=True, pre_grid_sample_affine=pt_affine[None], pre_grid_sample_hidden_affine=None, dtype=torch.float32
         )
 
-        plt.imshow(image_slice[0,0,...,0].T.flip(0), cmap='gray')
-        plt.imshow(label_slice[0,0,...,0].T.flip(0), cmap='magma', alpha=.2, interpolation='none')
-        plt.title(view_name)
-        plt.show()
+        ax.imshow(image_slice[0,0,...,0].T.flip(0), cmap='gray')
+        ax.imshow(label_slice[0,0,...,0].T.flip(0), cmap='magma', alpha=.2, interpolation='none')
+        ax.set_title(view_name)
+        ax.axis('off')
+
+    plt.tight_layout()
+    plt.show()
+    plt.close()
 
 
 
