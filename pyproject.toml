@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "slice-inflate"
-version = "0.1.0"
+version = "0.1.1"
 description = ""
 authors = ["Christian Weihsbach <christian.weihsbach@uni-luebeck.de>"]
 readme = "README.md"

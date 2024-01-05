@@ -182,8 +182,8 @@ def display_clinical_views(volume:torch.Tensor, label:torch.Tensor, volume_affin
         else:
             unrolled_view_affines[view_name] = affine
 
-    fov_mm = torch.tensor([300.,300.,1.])
-    fov_vox = torch.tensor([200,200,1])
+    fov_mm = torch.tensor([200.,200.,1.])
+    fov_vox = torch.tensor([100,100,1])
 
     fig, axs = plt.subplots(len(unrolled_view_affines)//5+1, 5)
     axs = axs.flatten()
@@ -191,7 +191,7 @@ def display_clinical_views(volume:torch.Tensor, label:torch.Tensor, volume_affin
     for ax, (view_name, pt_affine) in zip(axs, unrolled_view_affines.items()):
 
         image_slice, *_ = nifti_grid_sample(volume[None,None], volume_affine[None], None, fov_mm, fov_vox,
-            is_label=True, pre_grid_sample_affine=pt_affine[None], pre_grid_sample_hidden_affine=None, dtype=torch.float32
+            is_label=False, pre_grid_sample_affine=pt_affine[None], pre_grid_sample_hidden_affine=None, dtype=torch.float32
         )
         label_slice, *_ = nifti_grid_sample(label.to_dense()[None,None], volume_affine[None], None, fov_mm, fov_vox,
             is_label=True, pre_grid_sample_affine=pt_affine[None], pre_grid_sample_hidden_affine=None, dtype=torch.float32
