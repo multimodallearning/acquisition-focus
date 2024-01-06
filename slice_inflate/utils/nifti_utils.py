@@ -62,7 +62,6 @@ def get_grid_affine_and_nii_affine(
     affine_mat[:,:3,-1] = get_torch_translation_from_pix_translation(affine_mat[:,:3,-1], volume_shape)
     affine_mat = switch_0_2_mat_dim(affine_mat)
 
-
     affine_mat[:,:3,-1] += pre_grid_sample_affine_translation
 
     # Now get Nifti-matrix
@@ -189,7 +188,7 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
     else:
         gs_kwargs = dict(
             mode='bilinear',
-            padding_mode='border',
+            padding_mode='zeros',
             align_corners=False
         )
         min_value = volume.min()
@@ -230,7 +229,7 @@ def crop_around_label_center(label: torch.Tensor, volume_affine: torch.Tensor,
     pre_grid_sample_affine[:,:3,-1] = get_torch_translation_from_pix_translation(label_center, label_shape).flip(0)
 
     if image is not None:
-        cropped_image = nifti_grid_sample(image, volume_affine, ras_transform_mat=None, fov_mm=fov_mm, fov_vox=fov_vox,
+        cropped_image, *_ = nifti_grid_sample(image, volume_affine, ras_transform_mat=None, fov_mm=fov_mm, fov_vox=fov_vox,
             is_label=False, pre_grid_sample_affine=pre_grid_sample_affine, pre_grid_sample_hidden_affine=None,
             dtype=torch.float32)
     else:
