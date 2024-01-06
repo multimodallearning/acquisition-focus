@@ -130,9 +130,16 @@ def get_noop_ras_transfrom_mat(volume_affine, volume_shape):
 def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_transform_mat:torch.Tensor=None, fov_mm=None, fov_vox=None,
     is_label=False, pre_grid_sample_affine=None, pre_grid_sample_hidden_affine=None, dtype=torch.float32):
     # Works with nibabel loaded nii(.gz) files, itk loading untested
-    device = volume.device
+    assert isinstance(volume, torch.Tensor) and isinstance(volume_affine, torch.Tensor)
+    if pre_grid_sample_affine is not None:
+        assert isinstance(pre_grid_sample_affine, torch.Tensor)
+    if pre_grid_sample_hidden_affine is not None:
+        assert isinstance(pre_grid_sample_hidden_affine, torch.Tensor)
+        
     DIM = volume.dim()
     assert DIM == 5
+
+    device = volume.device
     B = volume.shape[0]
 
     # Prepare shapes
