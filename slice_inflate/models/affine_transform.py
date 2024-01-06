@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.cuda.amp as amp
 import numpy as np
 import einops as eo
-from slice_inflate.datasets.align_mmwhs import nifti_transform
+from slice_inflate.utils.nifti_utils import nifti_grid_sample
 from slice_inflate.utils.torch_utils import determine_network_output_size
 
 import dill
@@ -289,14 +289,14 @@ class AffineTransformModule(torch.nn.Module):
 
         if not x_image_is_none:
             # nifti_affine is the affine of the original volume
-            y_image, grid_affine, transformed_nii_affine = nifti_transform(x_image, nifti_affine, global_prelocate_affine,
+            y_image, grid_affine, transformed_nii_affine = nifti_grid_sample(x_image, nifti_affine, global_prelocate_affine,
                                         fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=False,
                                         pre_grid_sample_affine=known_augment_affine.to(theta.device) @ theta,
                                         pre_grid_sample_hidden_affine=hidden_augment_affine)
 
         if not x_label_is_none:
             # nifti_affine is the affine of the original volume
-            y_label, grid_affine, transformed_nii_affine = nifti_transform(x_label, nifti_affine, global_prelocate_affine,
+            y_label, grid_affine, transformed_nii_affine = nifti_grid_sample(x_label, nifti_affine, global_prelocate_affine,
                                         fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=True,
                                         pre_grid_sample_affine=known_augment_affine.to(theta.device) @ theta,
                                         pre_grid_sample_hidden_affine=hidden_augment_affine)
@@ -438,7 +438,16 @@ def get_random_ortho6_vector(rotation_strength=0.2, constrained=True):
 
 def get_random_affine(rotation_strength=0.2, zoom_strength=0.2):
     rand_z = torch.rand(1) * zoom_strength - zoom_strength/2 + 1.0
-    rand_theta_r = compute_rotation_matrix_from_ortho6d(get_random_ortho6_vector(rotation_strength))
+    # rand_theta_r = compute_rotation_matrix_from_ortho6d(get_random_ortho6_vector(rotation_strength))
+
+    ortho_vect = torch.tensor((rotation_strength*torch.randn(2)).tolist()+[1.])
+    ortho_vect /= ortho_vect.norm(2)
+    one = torch.tensor([1.]+(rotation_strength*torch.randn(2)).tolist())
+    two = torch.cross(ortho_vect, one)
+    two /= two.norm(2)
+    one = torch.cross(two, ortho_vect)
+
+    rand_theta_r = torch.stack([one,two,ortho_vect])
     rand_theta_z = torch.diag(torch.tensor([rand_z,rand_z,rand_z,1.0]))
 
     return rand_theta_z @ rand_theta_r
