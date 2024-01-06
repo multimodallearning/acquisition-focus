@@ -203,39 +203,21 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
 
 
 
-def get_crop_affine(affine, vox_offset):
-    mm_offset = affine[:,:-1,:-1] @ vox_offset.to(affine)
-    affine[:,:-1,-1] = affine[:,:-1,-1] + mm_offset
-    return affine
+def crop_around_label_center(label: torch.Tensor, volume_affine: torch.Tensor,
+                              fov_mm: torch.Tensor, fov_vox: torch.Tensor, image: torch.Tensor=None,
+                              center_mode='mean'):
 
-
-
-def crop_around_label_center(label: torch.Tensor, vox_size: torch.Tensor, image: torch.Tensor=None,
-    affine: torch.Tensor=None, center_mode='mean'):
-    """This function crops (or pags) a label and a corresponding image to a specified voxel size
-       based on the label centroid position (2D or 3D input).
-
-    Args:
-        label (torch.Tensor): Label map to crop
-        vox_size (torch.Tensor): The target size, i.e. torch.tensor([200,100,100]).
-            A dimension with size -1 will not be cropped.
-        image (torch.Tensor): Optional image. Defaults to None.
-        affine (torch.Tensor, optional): A nifti affine which is adjusted accordingly. Defaults to None.
-
-    Returns:
-        _type_: _description_
-    """
     n_dims = label.dim()-2
-    assert n_dims == vox_size.numel()
+    assert n_dims == fov_vox.numel()
     assert center_mode in ['mean', 'minmax']
-    B,C_LAB,*_ = label.shape
 
-    vox_size = vox_size.int().to(device=label.device)
+    fov_vox = fov_vox.int().to(device=label.device)
+
     label_shape = torch.as_tensor(label.shape, device=label.device).int()[2:]
-    no_crop = (vox_size == -1)
-    # vox_size[no_crop] = label_shape[no_crop]
+    no_crop = (fov_vox == -1)
+    fov_vox[no_crop] = label_shape[no_crop]
 
-    sp_idxs = label.long().to_sparse()._indices()
+    sp_idxs = label.int().to_sparse()._indices()
 
     if center_mode == 'mean':
         label_center = sp_idxs.float().mean(dim=1).int()[-n_dims:]
@@ -244,52 +226,18 @@ def crop_around_label_center(label: torch.Tensor, vox_size: torch.Tensor, image:
             (sp_idxs.float().amin(dim=1)+sp_idxs.float().amax(dim=1))/2
         ).round().int()[-n_dims:]
 
-    # This is the true bounding box in label space when cropping to the demanded size
-    in_bbox_min = (label_center-((vox_size+.5)/2.)).round().int()
-    in_bbox_max = label_center+(vox_size/2.).round().int()
-
-    in_bbox_min[no_crop] = 0
-    in_bbox_max[no_crop] = label_shape[no_crop]
-
-    # This is the 'bounding box' in the output data space (the region of the cropped data we fill)
-    out_bbox_min = torch.zeros(n_dims, dtype=torch.int)
-    out_bbox_max = vox_size.clone().int()
-    out_bbox_max[no_crop] = label_shape[no_crop]
-
-    in_crop_slcs = [slice(None), slice(None)]
-    out_crop_slcs = [slice(None), slice(None)]
-
-    cropped_label = torch.zeros([B,C_LAB]+(out_bbox_max-out_bbox_min).tolist(), dtype=torch.int, device=label.device)
+    pre_grid_sample_affine = torch.eye(4)[None]
+    pre_grid_sample_affine[:,:3,-1] = get_torch_translation_from_pix_translation(label_center, label_shape).flip(0)
 
     if image is not None:
-        _, C_IM, *_ = image.shape
-        cropped_image = torch.zeros([B,C_IM]+(out_bbox_max-out_bbox_min).tolist(), dtype=image.dtype, device=image.device)
-
-    in_clip_min = in_bbox_min.clip(min=0)-in_bbox_min
-    in_clip_max = in_bbox_max.clip(max=label_shape)-in_bbox_max
-
-    in_bbox_min_clip = in_bbox_min + in_clip_min
-    out_bbox_min_clip = out_bbox_min + in_clip_min
-
-    in_bbox_max_clip = in_bbox_max + in_clip_max
-    out_bbox_max_clip = out_bbox_max + in_clip_max
-
-    for dim_idx in range(n_dims):
-        # Create slices
-        in_crop_slcs.append(slice(in_bbox_min_clip[dim_idx], in_bbox_max_clip[dim_idx]))
-        out_crop_slcs.append(slice(out_bbox_min_clip[dim_idx], out_bbox_max_clip[dim_idx]))
-
-    # Crop the data
-    cropped_label[out_crop_slcs] = label[in_crop_slcs]
-
-    if image is not None:
-        cropped_image[out_crop_slcs] = image[in_crop_slcs]
+        cropped_image = nifti_grid_sample(image, volume_affine, ras_transform_mat=None, fov_mm=fov_mm, fov_vox=fov_vox,
+            is_label=False, pre_grid_sample_affine=pre_grid_sample_affine, pre_grid_sample_hidden_affine=None,
+            dtype=torch.float32)
     else:
         cropped_image = None
 
-    if affine is not None:
-        # If an affine was passed recalculate the new affine
-        vox_offset = torch.tensor([slc.start.item() for slc in in_crop_slcs[-n_dims:]])
-        affine = get_crop_affine(affine, vox_offset)
+    cropped_label, _, cropped_nii_affine = nifti_grid_sample(label, volume_affine, ras_transform_mat=None, fov_mm=fov_mm, fov_vox=fov_vox,
+            is_label=True, pre_grid_sample_affine=pre_grid_sample_affine, pre_grid_sample_hidden_affine=None,
+            dtype=torch.float32)
 
-    return cropped_label, cropped_image, affine
+    return cropped_label, cropped_image, cropped_nii_affine
