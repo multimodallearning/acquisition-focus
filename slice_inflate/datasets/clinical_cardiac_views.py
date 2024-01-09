@@ -227,14 +227,16 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
 
     sp_myolv_label = get_sub_sp_tensor(sp_label, eq_value=(class_dict['MYO'],class_dict['LV']))
     sp_myolvla_label = get_sub_sp_tensor(sp_label, eq_value=(class_dict['MYO'], class_dict['LV'], class_dict['LA']))
+    sp_heart_label = get_sub_sp_tensor(sp_label, eq_value=(class_dict.values()))
 
     # 0. Extract axial, sagittal, coronal views
+    heart_center, _ = get_inertia_tensor(sp_heart_label)
     sagittal_vect = torch.tensor([1.,0.,0.])
     coronal_vect = torch.tensor([0.,1.,0.])
     axial_vect = torch.tensor([0.,0.,1.])
-    pt_axial_affine = get_affine_from_center_and_plane_vects(torch.as_tensor(label_shape)//2, sagittal_vect, coronal_vect, label_shape)
-    pt_coronal_affine = get_affine_from_center_and_plane_vects(torch.as_tensor(label_shape)//2, axial_vect, sagittal_vect, label_shape)
-    pt_sagittal_affine = get_affine_from_center_and_plane_vects(torch.as_tensor(label_shape)//2, coronal_vect, axial_vect, label_shape)
+    pt_axial_affine = get_affine_from_center_and_plane_vects(heart_center, sagittal_vect, coronal_vect, label_shape)
+    pt_coronal_affine = get_affine_from_center_and_plane_vects(heart_center, axial_vect, sagittal_vect, label_shape)
+    pt_sagittal_affine = get_affine_from_center_and_plane_vects(heart_center, coronal_vect, axial_vect, label_shape)
 
     # 1. Extract LV+MYO centerline
     myolv_center, lv_I = get_inertia_tensor(sp_myolv_label)
