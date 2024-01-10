@@ -110,10 +110,10 @@ def get_noop_ras_transfrom_mat(volume_affine, volume_shape):
     # (i.e. a quasi no-op for transformed voxel array no rotation,
     # but zoom is going on according to fov_mm, fov_vox)
     fov_mm_center = (
-        volume_affine @ torch.as_tensor(list(volume_shape)+ [1.], dtype=volume_affine.dtype)
-        + volume_affine @ torch.tensor([0.,0.,0.,1.], dtype=volume_affine.dtype)
+        volume_affine @ torch.as_tensor(list(volume_shape)+ [1.]).to(volume_affine)
+        + volume_affine @ torch.tensor([0.,0.,0.,1.]).to(volume_affine)
     ) / 2
-    # ras_transform_mat = torch.eye(4).repeat(B,1,1)
+
     ras_transform_mat = torch.tensor([
         [1., 0., 0., 0],
         [0., -1., 0., 0.],
@@ -135,7 +135,7 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
         assert isinstance(pre_grid_sample_affine, torch.Tensor)
     if pre_grid_sample_hidden_affine is not None:
         assert isinstance(pre_grid_sample_hidden_affine, torch.Tensor)
-        
+
     DIM = volume.dim()
     assert DIM == 5
 

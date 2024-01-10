@@ -67,7 +67,8 @@ class LocalisationNet(torch.nn.Module):
 class AffineTransformModule(torch.nn.Module):
     def __init__(self, input_channels, size_3d,
         fov_mm, fov_vox, view_affine,
-        optim_method='angle-axis', use_affine_theta=True, offset_clip_value=1., zoom_clip_value=2., tag=None,
+        optim_method='angle-axis', use_affine_theta=True,
+        offset_clip_value=1., zoom_clip_value=2., tag=None,
         align_corners=False):
 
         super().__init__()
@@ -99,7 +100,11 @@ class AffineTransformModule(torch.nn.Module):
         self.fov_vox = fov_vox
         self.spat = int(fov_vox[-1])
 
-        self.view_affine = view_affine.view(1,4,4)
+        if isinstance(view_affine, torch.Tensor):
+            self.view_affine = view_affine.view(1,4,4)
+        else:
+            self.view_affine = None
+
         self.use_affine_theta = use_affine_theta
         self.align_corners = align_corners
 
@@ -285,7 +290,10 @@ class AffineTransformModule(torch.nn.Module):
         # globabl_prelocate_affine : Affine for prelocating the volume (slice orientation and augmentation)
         # theta   : Affine for the learnt transformation
 
-        global_prelocate_affine = self.view_affine.repeat(B,1,1).to(device)
+        if self.view_affine is not None:
+            global_prelocate_affine = self.view_affine.repeat(B,1,1).to(device)
+        else:
+            global_prelocate_affine = None
 
         if not x_image_is_none:
             # nifti_affine is the affine of the original volume

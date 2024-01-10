@@ -403,18 +403,6 @@ def get_atm(config, num_classes, size_3d, view, this_script_dir, _path=None, ran
     assert view in ['sa', 'hla']
     device = config.device
 
-    if view == 'sa':
-        affine_path = Path(
-        this_script_dir,
-        "slice_inflate/preprocessing",
-        "mmwhs_1002_SA.mat"
-    )
-    elif view == 'hla':
-        affine_path = Path(
-        this_script_dir,
-        "slice_inflate/preprocessing",
-        "mmwhs_1002_4CH.mat"
-    )
 
     # Add atm models
     atm = AffineTransformModule(num_classes,
@@ -423,7 +411,7 @@ def get_atm(config, num_classes, size_3d, view, this_script_dir, _path=None, ran
         torch.tensor(config.hires_fov_vox),
         offset_clip_value=config['offset_clip_value'],
         zoom_clip_value=config['zoom_clip_value'],
-        view_affine=torch.as_tensor(np.loadtxt(affine_path)).float(),
+        view_affine=None,
         optim_method=config.affine_theta_optim_method,
         tag=view)
 
@@ -862,7 +850,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 b_iou, training_dataset.label_tags, exclude_bg=True)
 
             b_hd = monai.metrics.compute_hausdorff_distance(pred_seg_oh, b_target) * nifti_zooms.norm()
-            b_hd = torch.cat([torch.zeros(b_sz,1), b_hd], dim=1) # Add zero score for background
+            b_hd = torch.cat([torch.zeros(b_sz,1).to(b_hd), b_hd], dim=1) # Add zero score for background
             label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd',
                 b_hd, training_dataset.label_tags, exclude_bg=True)
 

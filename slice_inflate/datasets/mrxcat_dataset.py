@@ -21,6 +21,8 @@ from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
 from slice_inflate.utils.nifti_utils import crop_around_label_center, nifti_grid_sample
 from slice_inflate.utils.torch_utils import cut_slice, soft_cut_slice
 from slice_inflate.datasets.clinical_cardiac_views import get_clinical_cardiac_view_affines
+from slice_inflate.utils.nnunetv2_utils import load_network, get_model_from_network, run_inference_on_image
+
 
 cache = Memory(location=os.environ['CACHE_PATH'])
 THIS_SCRIPT_DIR = get_script_dir()
@@ -435,8 +437,6 @@ class MRXCATDataset(HybridIdDataset):
                 NNUNET_MRXCAT_MODEL_RESULTS_PATH = "/storage/staff/christianweihsbach/nnunet/nnUNetV2_results/Dataset670_MRXCAT_ac_focus/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d"
                 lores_prescan = lores_prescan.squeeze()
                 # Segment using nnunet v2 model
-                from slice_inflate.utils.nnunetv2_utils import load_network, get_model_from_network, run_inference_on_image
-
                 network, parameters, patch_size, configuration_manager, inference_allowed_mirroring_axes, plans_manager, dataset_json = load_network(NNUNET_MRXCAT_MODEL_RESULTS_PATH, 0)
                 spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
 
