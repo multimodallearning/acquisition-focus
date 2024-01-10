@@ -22,23 +22,32 @@
     "cuts_mode": "sa+hla",
     "use_2d_normal_to": null,
     "use_binarized_labels": false,
-    "dataset": "mmwhs",
-    "data_base_path": "./data/MMWHS_notest",
+    "dataset": "mrxcat",
+    "data_base_path": "./data/datasets/MRXCAT/prepared_files",
     "crop_3d_region": null,
     "crop_2d_slices_gt_num_threshold": 0,
     "crop_around_3d_label_center": null,
     "crop_around_2d_label_center": null,
-    "fov_mm": [
-        224.0,
-        224.0,
-        224.0
+    "hires_fov_mm": [
+        240.0,
+        240.0,
+        240.0
     ],
-    "fov_vox": [
-        128,
-        128,
-        128
+    "hires_fov_vox": [
+        160,
+        160,
+        160
     ],
-
+    "lores_fov_mm": [
+        240.0,
+        240.0,
+        240.0
+    ],
+    "lores_fov_vox": [
+        40,
+        40,
+        40
+    ],
     "max_load_3d_num": null,
     "lr": 0.001,
     "use_scheduling": true,
@@ -46,9 +55,9 @@
     "encoder_training_only": false,
     "save_every": "best",
     "mdl_save_prefix": "data/models",
-    "debug": false,
-    "wandb_mode": "online",
-    "sweep_type": "stage-sweep",
+    "debug": true,
+    "wandb_mode": "disabled",
+    "sweep_type": null,
     "model_checkpoint_path": null,
     "transform_model_checkpoint_path": null,
     "do_output": true,
