@@ -172,23 +172,16 @@ def display_clinical_views(volume:torch.Tensor, label:torch.Tensor, volume_affin
     assert label.dim() == 3
     assert label.is_sparse
 
-    clinical_view_affines = get_clinical_cardiac_view_affines(label, volume_affine, class_dict, num_sa_slices, debug=debug)
-    unrolled_view_affines = {}
-    for view_name, affine in clinical_view_affines.items():
-        if view_name == 'ALL_SA':
-            for a_idx, uaff in enumerate(affine):
-                unrolled_name = f'SA-{a_idx}'
-                unrolled_view_affines[unrolled_name] = uaff
-        else:
-            unrolled_view_affines[view_name] = affine
+    clinical_view_affines = get_clinical_cardiac_view_affines(label, volume_affine, class_dict, num_sa_slices,
+                                                              return_unrolled=True, debug=debug)
 
     fov_mm = torch.tensor([200.,200.,1.])
     fov_vox = torch.tensor([100,100,1])
 
-    fig, axs = plt.subplots(len(unrolled_view_affines)//5+1, 5)
+    fig, axs = plt.subplots(len(clinical_view_affines)//5+1, 5)
     axs = axs.flatten()
 
-    for ax, (view_name, pt_affine) in zip(axs, unrolled_view_affines.items()):
+    for ax, (view_name, pt_affine) in zip(axs, clinical_view_affines.items()):
 
         image_slice, *_ = nifti_grid_sample(volume[None,None], volume_affine[None], None, fov_mm, fov_vox,
             is_label=False, pre_grid_sample_affine=pt_affine[None], pre_grid_sample_hidden_affine=None, dtype=torch.float32
@@ -208,7 +201,8 @@ def display_clinical_views(volume:torch.Tensor, label:torch.Tensor, volume_affin
 
 
 
-def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_dict: dict, num_sa_slices:int = 3, debug=False):
+def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_dict: dict,
+                                      num_sa_slices:int = 3, return_unrolled=False, debug=False):
     assert label.dim() == 3
     assert 'LV' in class_dict
     assert 'RV' in class_dict
@@ -321,7 +315,7 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
     volume_space_4CH_myolvrv_min_principal = pix_4ch_affine.inverse()[:3,:3] @ _4CH_space_myolvla_min_principal
     pt_2ch_affine = get_affine_from_center_and_plane_vects(myolvla_center, volume_space_sa_myolvrv_mid_principal, volume_space_4CH_myolvrv_min_principal, label_shape)
 
-    return {
+    clinical_view_affines = {
         'axial': pt_axial_affine,
         'sagittal': pt_sagittal_affine,
         'coronal': pt_coronal_affine,
@@ -331,3 +325,16 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
         '4CH': pt_4ch_affine,
         '2CH': pt_2ch_affine,
     }
+
+    if return_unrolled:
+        unrolled_view_affines = {}
+        for view_name, affine in clinical_view_affines.items():
+            if view_name == 'ALL_SA':
+                for a_idx, uaff in enumerate(affine):
+                    unrolled_name = f'SA-{a_idx}'
+                    unrolled_view_affines[unrolled_name] = uaff
+            else:
+                unrolled_view_affines[view_name] = affine
+        return unrolled_view_affines
+
+    return clinical_view_affines
