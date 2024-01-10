@@ -48,6 +48,7 @@
         40,
         40
     ],
+    "clinical_view_affine_type": "from-gt",
     "max_load_3d_num": null,
     "lr": 0.001,
     "use_scheduling": true,
