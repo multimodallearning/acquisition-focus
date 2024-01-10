@@ -5,10 +5,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Current File",
+            "name": "Python: main_slice_inflate.py",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "${workspaceFolder}/main_slice_inflate.py",
             "console": "integratedTerminal",
             "justMyCode": false,
             "env": {"PYDEVD_WARN_SLOW_RESOLVE_TIMEOUT": "3"}
