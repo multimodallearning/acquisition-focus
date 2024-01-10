@@ -1,3 +1,4 @@
+from abc import abstractmethod
 import warnings
 from collections.abc import Iterable
 from collections import OrderedDict
@@ -12,7 +13,7 @@ from slice_inflate.utils.common_utils import LabelDisturbanceMode
 class HybridIdDataset(Dataset):
 
     def __init__(self,
-        base_dir, load_func, extract_slice_func=None,
+        data_base_dir,
         ensure_labeled_pairs=True, do_resample=True,
         resample_size: tuple=(96,96,60), do_normalize:bool=True,
         max_load_3d_num=None,
@@ -31,12 +32,10 @@ class HybridIdDataset(Dataset):
         for arg_name, arg_value in kwargs.items():
             self.self_attributes[arg_name] = arg_value
 
-        del self.self_attributes['load_func']
-        del self.self_attributes['extract_slice_func']
         del self.self_attributes['kwargs']
         del self.self_attributes['self']
 
-        self.base_dir = base_dir
+        self.data_base_dir = data_base_dir
         self.ensure_labeled_pairs = ensure_labeled_pairs
         self.do_resample = do_resample
         self.resample_size = resample_size
@@ -57,7 +56,7 @@ class HybridIdDataset(Dataset):
         self.augment_at_collate = False
 
         # Load base 3D data
-        all_3d_data_dict = load_func(self.self_attributes)
+        all_3d_data_dict = self.load_data(self.self_attributes)
 
         self.self_attributes['img_paths'] = self.img_paths = all_3d_data_dict.pop('img_paths', {})
         self.self_attributes['label_paths'] = self.label_paths = all_3d_data_dict.pop('label_paths', {})
@@ -106,7 +105,7 @@ class HybridIdDataset(Dataset):
 
         if use_2d_normal_to is not None:
             if extract_slice_func is None:
-                extract_slice_func = extract_2d_data
+                extract_slice_func = HybridIdDataset.extract_2d_data
 
             all_2d_data_dict = extract_slice_func(self.self_attributes)
             self.img_data_2d = all_2d_data_dict.pop('img_data_2d', {})
@@ -472,64 +471,16 @@ class HybridIdDataset(Dataset):
 
         return b_image, b_label, b_spat_augment_grid
 
+    @abstractmethod
+    def get_file_id(file_path):
+        raise NotImplementedError()
 
+    @staticmethod
+    @abstractmethod
+    def extract_2d_data(self_attributes: dict):
+        raise NotImplementedError()
 
-def extract_2d_data(self):
-    if self.use_2d_normal_to == "D":
-        slice_dim = -3
-    elif self.use_2d_normal_to == "H":
-        slice_dim = -2
-    elif self.use_2d_normal_to == "W":
-        slice_dim = -1
-    else:
-        raise ValueError
-
-    for _3d_id, image in self.img_data_3d.items():
-        for idx, img_slc in [(slice_idx, image.select(slice_dim, slice_idx)) \
-                                for slice_idx in range(image.shape[slice_dim])]:
-            # Set data view for id like "003rW100"
-            self.img_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = img_slc
-
-    for _3d_id, label in self.label_data_3d.items():
-        for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
-                                for slice_idx in range(label.shape[slice_dim])]:
-            # Set data view for id like "003rW100"
-            self.label_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = lbl_slc
-
-    for _3d_id, label in self.modified_label_data_3d.items():
-        for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
-                                for slice_idx in range(label.shape[slice_dim])]:
-            # Set data view for id like "003rW100"
-            self.modified_label_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = lbl_slc
-
-    # Postprocessing of 2d slices
-    print("Postprocessing 2D slices")
-    orig_2d_num = len(self.img_data_2d.keys())
-
-    if self.crop_2d_slices_gt_num_threshold > 0:
-        for key, label in list(self.label_data_2d.items()):
-            uniq_vals = label.unique()
-
-            if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
-                # Delete 2D slices with less than n gt-pixels (but keep 3d data)
-                del self.img_data_2d[key]
-                del self.label_data_2d[key]
-                del self.modified_label_data_2d[key]
-
-    postprocessed_2d_num = len(self.img_data_2d.keys())
-    print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
-
-    nonzero_lbl_percentage = torch.tensor([lbl.sum((-2,-1)) > 0 for lbl in self.label_data_2d.values()]).sum()
-    nonzero_lbl_percentage = nonzero_lbl_percentage/len(self.label_data_2d)
-    print(f"Nonzero 2D labels: " f"{nonzero_lbl_percentage*100:.2f}%")
-
-    nonzero_mod_lbl_percentage = torch.tensor([ensure_dense(lbl)[0].sum((-2,-1)) > 0 for lbl in self.modified_label_data_2d.values()]).sum()
-    nonzero_mod_lbl_percentage = nonzero_mod_lbl_percentage/len(self.modified_label_data_2d)
-    print(f"Nonzero modified 2D labels: " f"{nonzero_mod_lbl_percentage*100:.2f}%")
-    print(f"Loader will use {postprocessed_2d_num} of {orig_2d_num} 2D slices.")
-
-    return dict(
-        img_data_2d=img_data_2d,
-        label_data_2d=label_data_2d,
-        modified_label_data_2d=modified_label_data_2d
-    )
+    @staticmethod
+    @abstractmethod
+    def load_data(self_attributes: dict):
+        raise NotImplementedError()

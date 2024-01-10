@@ -14,12 +14,12 @@
 
 
 from copy import deepcopy
-from nnunet.utilities.nd_softmax import softmax_helper
+from nnunetv2.utilities.helpers import softmax_helper_dim1
+from nnunet.network_architecture.initialization import InitWeights_He # TODO remove nnunet v1 dependencies
+from nnunet.network_architecture.neural_network import SegmentationNetwork # TODO remove nnunet v1 dependencies
 from torch import nn
 import torch
 import numpy as np
-from nnunet.network_architecture.initialization import InitWeights_He
-from nnunet.network_architecture.neural_network import SegmentationNetwork
 import torch.nn.functional
 from torch.utils.checkpoint import checkpoint_sequential, checkpoint
 
@@ -228,7 +228,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
                  norm_op=nn.BatchNorm2d, norm_op_kwargs=None,
                  dropout_op=nn.Dropout2d, dropout_op_kwargs=None,
                  nonlin=nn.LeakyReLU, nonlin_kwargs=None, deep_supervision=True, dropout_in_localization=False,
-                 final_nonlin=softmax_helper, weightInitializer=InitWeights_He(1e-2), pool_op_kernel_sizes=None,
+                 final_nonlin=softmax_helper_dim1, weightInitializer=InitWeights_He(1e-2), pool_op_kernel_sizes=None,
                  conv_kernel_sizes=None,
                  upscale_logits=False, convolutional_pooling=False, convolutional_upsampling=False,
                  max_num_features=None, basic_block=ConvDropoutNormNonlin,
@@ -401,7 +401,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             n_features_after_tu_and_concat = min(n_features_after_tu_and_concat, Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D)
 
             if not self.convolutional_upsampling:
-                self.tu.append(Upsample(scale_factor=self.dec_pool_op_kernel_sizes[-(u + 1)], mode=upsample_mode))
+                self.tu.append(Upsample(scale_factor=self.dec_pool_op_kernel_sizes[-(u + 1)], mode=self.dec_upsample_mode))
             else:
                 self.tu.append(self.dec_transpconv(nfeatures_from_down, nfeatures_from_skip, self.dec_pool_op_kernel_sizes[-(u + 1)],
                                           self.dec_pool_op_kernel_sizes[-(u + 1)], bias=False))
@@ -441,7 +441,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
         for usl in range(num_pool - 1):
             if self.upscale_logits:
                 self.upscale_logits_ops.append(Upsample(scale_factor=tuple([int(i) for i in cum_upsample[usl + 1]]),
-                                                        mode=upsample_mode))
+                                                        mode=self.dec_upsample_mode))
             else:
                 self.upscale_logits_ops.append(lambda x: x)
 

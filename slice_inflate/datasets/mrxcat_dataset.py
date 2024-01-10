@@ -1,6 +1,7 @@
 import os
 import time
 import glob
+import json
 import re
 import warnings
 import torch
@@ -25,7 +26,7 @@ THIS_SCRIPT_DIR = get_script_dir()
 
 
 
-class MMWHSDataset(HybridIdDataset):
+class MRXCATDataset(HybridIdDataset):
     def __init__(self, *args, state='train',
                  label_tags=(
                     "background",
@@ -34,9 +35,7 @@ class MMWHSDataset(HybridIdDataset):
                     "RV",
                     "LA",
                     "RA",
-            # "ascending_aorta", # This label is currently purged from the data
-            # "pulmonary_artery" # This label is currently purged from the data
-                     ),
+                ),
                  **kwargs):
         self.state = state
 
@@ -51,16 +50,10 @@ class MMWHSDataset(HybridIdDataset):
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
 
     def extract_3d_id(self, _input):
-        # Match sth like 1001-HLA:mTS1
-        items = re.findall(r'^(\d{4})-(ct|mr)(:m[A-Z0-9a-z]{3,4})?', _input)[0]
-        items = list(filter(None, items))
-        return "-".join(items)
+        return _input[:8]
 
     def extract_short_3d_id(self, _input):
-        # Match sth like 1001-HLA:mTS1 and returns 1001-HLA
-        items = re.findall(r'^(\d{4})-(HLA)', _input)[0]
-        items = list(filter(None, items))
-        return "-".join(items)
+        return _input[:8]
 
     def __getitem__(self, dataset_id, use_2d_override=None):
         use_2d = self.use_2d(use_2d_override)
@@ -226,8 +219,16 @@ class MMWHSDataset(HybridIdDataset):
 
         return collate_closure
 
+    @staticmethod
     def get_file_id(file_path):
-        raise NotImplementedError()
+        file_path = Path(file_path)
+        patient_id, temporary_frame_idx, type_str = re.findall(
+            r'phantom_(\d{3})_t(\d{3})_(.*?).nii.gz', file_path.name)[0]
+        patient_id = int(patient_id)
+        temporary_frame_idx = int(temporary_frame_idx)
+        mrxcat_id = f"{patient_id:03d}_t{temporary_frame_idx:03d}"
+
+        is_label = type_str == 'label'
         return mrxcat_id, is_label
 
     @staticmethod
@@ -328,10 +329,17 @@ class MMWHSDataset(HybridIdDataset):
         # Use only specific attributes of a dict to have a cacheable function
         self = DotDict(self_attributes)
 
-        IMAGE_ID = '_image'
-
         files = []
-        data_path = Path(self.base_dir)
+        data_path = Path(self.data_base_dir)
+
+        # Open split json
+        split_file = data_path / "metadata/data_split.json"
+        with(split_file.open('r')) as split_file:
+            split_dict = json.load(split_file)
+
+        metadata_file = data_path / "metadata/metadata.json"
+        with(metadata_file.open('r')) as metadata_file:
+            metadata_dict = json.load(metadata_file)
 
         if self.crop_3d_region is not None:
             self.crop_3d_region = torch.as_tensor(self.crop_3d_region)
@@ -341,29 +349,16 @@ class MMWHSDataset(HybridIdDataset):
         files = sorted(files)
 
         if self.state.lower() == "train":
-            state_phantoms = [
-                # 'phantom_001', # male, free-breathing
-                'phantom_002', # female, free-breathing
-                'phantom_003', # male, breath-hold
-                'phantom_004', # female, breath-hold
-            ]
+            files = split_dict['train_files']
 
         elif self.state.lower() == "test":
-            state_phantoms = [
-                'phantom_006', # female, apical thin, diaphragm-motion
-                'phantom_007', # male, lesion
-                # 'phantom_008', # male, lesion
-                # 'phantom_009', # male, free-breathing, other resp-period
-            ]
+            files = split_dict['test_files']
 
         elif self.state.lower() == "empty":
             state_phantoms = []
         else:
             raise Exception(
                 "Unknown data state. Choose either 'train or 'test'")
-
-        get_phantom_intersection = lambda e: len(set([p for p in e.parts]).intersection(set(state_phantoms))) == 1
-        files = list(filter(get_phantom_intersection, files))
 
         # First read filepaths
         img_paths = {}
@@ -373,17 +368,14 @@ class MMWHSDataset(HybridIdDataset):
             files = files[:2]
 
         for _path in files:
-            modality, patient_id = re.findall(
-                r'(ct|mr)_.*_(\d{4})_.*?.nii.gz', _path.name)[0]
-            patient_id = int(patient_id)
+            file_id, is_label = MRXCATDataset.get_file_id(_path)
 
-            # Generate cmrxmotion id like 001-02-ES
-            mmwhs_id = f"{patient_id:04d}-{modality}"
-
-            if not IMAGE_ID in trailing_name:
-                label_paths[mmwhs_id] = str(_path)
+            if is_label:
+                label_paths[file_id] = str(_path)
             else:
-                img_paths[mmwhs_id] = str(_path)
+                img_paths[file_id] = str(_path)
+
+        assert len(img_paths) > 0
 
         if self.ensure_labeled_pairs:
             pair_idxs = set(img_paths).intersection(set(label_paths))
@@ -398,7 +390,7 @@ class MMWHSDataset(HybridIdDataset):
         additional_data_3d = {}
 
         # Load data from files
-        print(f"Loading MMWHS {self.state} images and labels... ({modalities})")
+        print(f"Loading MRXCAT {self.state} images and labels...")
         id_paths_to_load = list(label_paths.items()) + list(img_paths.items())
 
         description = f"{len(img_paths)} images, {len(label_paths)} labels"
@@ -406,46 +398,58 @@ class MMWHSDataset(HybridIdDataset):
         for _3d_id, _file in tqdm(id_paths_to_load, desc=description):
             additional_data_3d[_3d_id] = additional_data_3d.get(_3d_id, {})
 
-            trailing_name = str(_file).split("/")[-1]
-            is_label = not IMAGE_ID in trailing_name
+            file_id, is_label = MRXCATDataset.get_file_id(_file)
             nib_tmp = nib.load(_file)
             tmp = torch.from_numpy(nib_tmp.get_fdata()).squeeze()
-
-            align_affine_path = str(Path(self.base_dir, "preprocessed",
-                                    f"f1002mr_m{_3d_id.split('-')[0]}{_3d_id.split('-')[1]}.mat"))
-            augment_affine = torch.from_numpy(np.loadtxt(align_affine_path))
-            affine = torch.as_tensor(nib_tmp.affine)
+            nii_affine = torch.as_tensor(nib_tmp.affine)
 
             if is_label:
-                tmp = MMWHSDataset.replace_label_values(tmp)
-
+                # tmp = MRXCATDataset.replace_label_values(tmp)
                 if self.use_binarized_labels:
                     tmp[tmp>0] = 1.0
-
-            tmp, _, affine = nifti_grid_sample(
-                tmp.unsqueeze(0).unsqueeze(0),
-                affine.view(1,4,4), ras_transform_mat=None,
-                fov_mm=torch.as_tensor(self.fov_mm), fov_vox=torch.as_tensor(self.fov_vox),
-                is_label=is_label,
-                pre_grid_sample_affine=None,
-                pre_grid_sample_hidden_affine=None,
-                dtype=torch.float32
-            )
-            tmp = tmp.squeeze(0).squeeze(0)
-            affine = affine.squeeze(0)
-
-            additional_data_3d[_3d_id]['nifti_affine'] = affine
-
-            if not IMAGE_ID in trailing_name:
                 label_data_3d[_3d_id] = tmp.long()
-                oh = torch.nn.functional.one_hot(tmp.long()).permute(3,0,1,2)
-                additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool(), mode='outer').squeeze(0)
 
             else:
                 if self.do_normalize:  # Normalize image to zero mean and unit std
                     tmp = (tmp - tmp.mean()) / tmp.std()
-
                 img_data_3d[_3d_id] = tmp
+
+            # Set additionals
+            if is_label:
+                additional_data_3d[_3d_id]['nifti_affine'] = nii_affine # Has to be set once, either for image or label
+                additional_data_3d[_3d_id]['gt_view_affines'] = metadata_dict['phantom_'+_3d_id+'_image']['view_affines'] # Has to be set once, either for image or label
+
+                if self.use_distance_map_localization:
+                    oh = torch.nn.functional.one_hot(tmp.long()).permute(3,0,1,2)
+                    additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool(), mode='outer').squeeze(0)
+            else:
+
+                lores_prescan, *_ = nifti_grid_sample(
+                    tmp.unsqueeze(0).unsqueeze(0),
+                    nii_affine.view(1,4,4), ras_transform_mat=None,
+                    fov_mm=torch.as_tensor(self.lores_fov_mm), fov_vox=torch.as_tensor(self.lores_fov_vox),
+                    is_label=False,
+                    pre_grid_sample_affine=None,
+                    pre_grid_sample_hidden_affine=None,
+                    dtype=torch.float32
+                )
+                NNUNET_MRXCAT_MODEL_RESULTS_PATH = "/storage/staff/christianweihsbach/nnunet/nnUNetV2_results/Dataset670_MRXCAT_ac_focus/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d"
+                lores_prescan = lores_prescan.squeeze()
+                # Segment using nnunet v2 model
+                from slice_inflate.utils.nnunetv2_utils import load_network, get_model_from_network, run_inference_on_image
+
+                network, parameters, patch_size, configuration_manager, inference_allowed_mirroring_axes, plans_manager, dataset_json = load_network(NNUNET_MRXCAT_MODEL_RESULTS_PATH, 0)
+                spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
+
+                lores_prescan_segmentation = run_inference_on_image(lores_prescan, spacing, network, parameters,
+                    plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes,
+                    device=torch.device('cuda')
+                )
+
+                additional_data_3d[_3d_id]['lores_prescan'] = lores_prescan
+                additional_data_3d[_3d_id]['lores_prescan_segmentation'] = lores_prescan_segmentation
+                additional_data_3d[_3d_id]['lores_prescan_view_affines'] = None
+
 
         # Initialize 3d modified labels as unmodified labels
         for label_id in label_data_3d.keys():
@@ -472,21 +476,4 @@ class MMWHSDataset(HybridIdDataset):
 
     @staticmethod
     def replace_label_values(label):
-        # Replace label numbers with MMWHS equivalent
-        # STRUCTURE           MMWHS   ACDC    NNUNET
-        # background          0       0       0
-        # left_myocardium     205     2       1
-        # left_atrium         420     N/A     2
-        # ?                   421     N/A     N/A
-        # left_ventricle      500     3       3
-        # right_atrium        550     N/A     4
-        # right_ventricle     600     1       5
-        # ascending_aorta     820     N/A     6
-        # pulmonary_artery    850     N/A     7
-        orig_values = [0,  205, 420, 421, 500, 550, 600, 820, 850]
-        new_values = [0,  1,   2,   0,   3,   4,   5,   0,   0]
-
-        modified_label = label.clone()
-        for orig, new in zip(orig_values, new_values):
-            modified_label[modified_label == orig] = new
-        return modified_label
+       raise NotImplementedError()

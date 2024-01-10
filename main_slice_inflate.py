@@ -30,7 +30,7 @@ from enum import Enum
 from slice_inflate.utils.common_utils import get_script_dir
 THIS_SCRIPT_DIR = get_script_dir()
 
-os.environ['MMWHS_CACHE_PATH'] = str(Path(THIS_SCRIPT_DIR, '.cache'))
+os.environ['CACHE_PATH'] = str(Path(THIS_SCRIPT_DIR, '.cache'))
 
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
 os.environ.update(get_vars('*'))
@@ -49,19 +49,21 @@ import nibabel as nib
 import contextlib
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
-from slice_inflate.datasets.align_mmwhs import cut_slice, crop_around_label_center
+from slice_inflate.utils.nifti_utils import crop_around_label_center
 from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, \
     log_oa_metrics, log_affine_param_stats, log_frameless_image, get_cuda_mem_info_str
 from sklearn.model_selection import KFold
 import numpy as np
 import monai
 
-from slice_inflate.losses.dice_loss import DC_and_CE_loss
-from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset, load_data, extract_2d_data
+from nnunetv2.training.loss.compound_losses import DC_and_CE_loss
+from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset
+from slice_inflate.datasets.mrxcat_dataset import MRXCATDataset
+
 from slice_inflate.utils.common_utils import DotDict, in_notebook
 from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
     get_batch_dice_over_all, get_batch_score_per_label, save_model, \
-    reduce_label_scores_epoch, get_test_func_all_parameters_updated, anomaly_hook
+    reduce_label_scores_epoch, get_test_func_all_parameters_updated, anomaly_hook, cut_slice
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.models.affine_transform import AffineTransformModule, SoftCutModule, HardCutModule, get_random_ortho6_vector
 from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
@@ -84,31 +86,38 @@ config_dict['git_commit'] = f"{dirty_str}{THIS_REPO.commit().hexsha}"
 
 def prepare_data(config):
     args = [config.data_base_path]
-    kwargs = dict(
-        state=config.state,
-        load_func=load_data,
-        extract_slice_func=extract_2d_data,
-        modality=config.modality,
-        do_align_global=True,
-        do_resample=False, # Prior to cropping, resample image?
-        crop_3d_region=None, # Crop or pad the images to these dimensions
-        fov_mm=config.fov_mm,
-        fov_vox=config.fov_vox,
-        crop_around_3d_label_center=config.crop_around_3d_label_center,
-        pre_interpolation_factor=1., # When getting the data, resize the data by this factor
-        ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
-        use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
-        use_binarized_labels=config.use_binarized_labels,
-        crop_around_2d_label_center=config.crop_around_2d_label_center,
-        max_load_3d_num=config.max_load_3d_num,
-        soft_cut_std=config.soft_cut_std,
-        sample_augment_strength=config.sample_augment_strength,
-        device=config.device,
-        debug=config.debug
-    )
+
+    if config.dataset == 'mmwhs':
+        dataset_class = MMWHSDataset
+        kwargs = dict(
+            state=config.state,
+            modality=config.modality,
+            do_align_global=True,
+            do_resample=False, # Prior to cropping, resample image?
+            crop_3d_region=None, # Crop or pad the images to these dimensions
+            fov_mm=config.fov_mm,
+            fov_vox=config.fov_vox,
+            crop_around_3d_label_center=config.crop_around_3d_label_center,
+            pre_interpolation_factor=1., # When getting the data, resize the data by this factor
+            ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
+            use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
+            use_binarized_labels=config.use_binarized_labels,
+            crop_around_2d_label_center=config.crop_around_2d_label_center,
+            max_load_3d_num=config.max_load_3d_num,
+            soft_cut_std=config.soft_cut_std,
+            sample_augment_strength=config.sample_augment_strength,
+            device=config.device,
+            debug=config.debug
+        )
+    elif config.dataset == 'mrxcat':
+        dataset_class = MRXCATDataset
+        kwargs = {k:v for k,v in config.items()}
+    else:
+        raise ValueError()
+
 
     arghash = joblib.hash(joblib.hash(args)+joblib.hash(kwargs))
-    cache_path = Path(os.environ['MMWHS_CACHE_PATH'], arghash, 'dataset.dil')
+    cache_path = Path(os.environ['CACHE_PATH'], arghash, 'dataset.dil')
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     if cache_path.is_file():
@@ -116,7 +125,7 @@ def prepare_data(config):
         with open(cache_path, 'rb') as file:
             dataset = dill.load(file)
     else:
-        dataset = MMWHSDataset(*args, **kwargs)
+        dataset = dataset_class(*args, **kwargs)
         with open(cache_path, 'wb') as file:
             dill.dump(dataset, file)
 
