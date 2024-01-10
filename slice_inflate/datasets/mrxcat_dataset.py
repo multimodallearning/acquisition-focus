@@ -106,8 +106,6 @@ class MRXCATDataset(HybridIdDataset):
         modified_label, _ = ensure_dense(modified_label)
         modified_label = modified_label.to(device=self.device)
 
-        augment_affine = None
-
         if self.augment_at_collate:
             raise NotImplementedError()
             # hla_image, hla_label = image, label
@@ -132,9 +130,9 @@ class MRXCATDataset(HybridIdDataset):
             additional_data['known_augment_affine'] = known_augment_affine.view(4,4)
             additional_data['hidden_augment_affine'] = hidden_augment_affine.view(4,4)
 
-            D, H, W = label.shape
-
-        additional_data['label_distance_map'] = additional_data['label_distance_map'].to(device=self.device)
+        for key, val in additional_data.items():
+            if isinstance(val, torch.Tensor):
+                additional_data[key] = val.to(device=self.device)
 
         return dict(
             dataset_idx=dataset_idx,
@@ -366,7 +364,7 @@ class MRXCATDataset(HybridIdDataset):
         label_paths = {}
 
         if self.debug:
-            files = files[:2]
+            files = files[:6]
 
         for _path in files:
             file_id, is_label = MRXCATDataset.get_file_id(_path)
