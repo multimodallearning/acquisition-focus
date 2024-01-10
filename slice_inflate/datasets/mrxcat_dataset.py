@@ -20,6 +20,7 @@ from slice_inflate.models.affine_transform import get_random_affine
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
 from slice_inflate.utils.nifti_utils import crop_around_label_center, nifti_grid_sample
 from slice_inflate.utils.torch_utils import cut_slice, soft_cut_slice
+from slice_inflate.datasets.clinical_cardiac_views import get_clinical_cardiac_view_affines
 
 cache = Memory(location=os.environ['CACHE_PATH'])
 THIS_SCRIPT_DIR = get_script_dir()
@@ -448,8 +449,10 @@ class MRXCATDataset(HybridIdDataset):
 
                 additional_data_3d[_3d_id]['lores_prescan'] = lores_prescan
                 additional_data_3d[_3d_id]['lores_prescan_segmentation'] = lores_prescan_segmentation
-                additional_data_3d[_3d_id]['lores_prescan_view_affines'] = None
-
+                class_dict = {tag:idx for idx,tag in enumerate(self.label_tags)}
+                additional_data_3d[_3d_id]['lores_prescan_view_affines'] = get_clinical_cardiac_view_affines(
+                    lores_prescan_segmentation, nii_affine, class_dict,
+                    num_sa_slices=15, return_unrolled=True)
 
         # Initialize 3d modified labels as unmodified labels
         for label_id in label_data_3d.keys():
