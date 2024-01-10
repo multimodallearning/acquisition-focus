@@ -31,6 +31,7 @@ monai = "^1.1.0"
 scalene = "^1.5.19"
 seaborn = "^0.12.2"
 black = "^23.12.1"
+nnunet = "^1.7.1"
 
 [build-system]
 requires = ["poetry-core"]

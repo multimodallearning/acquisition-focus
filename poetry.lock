@@ -1839,6 +1839,33 @@ test = ["coverage", "pytest (!=5.3.4)", "pytest-cov", "pytest-doctestplus"]
 zstd = ["pyzstd (>=0.14.3)"]
 
 [[package]]
+name = "nnunet"
+version = "1.7.1"
+description = "nnU-Net. Framework for out-of-the box biomedical image segmentation."
+optional = false
+python-versions = "*"
+files = [
+    {file = "nnunet-1.7.1.tar.gz", hash = "sha256:0e4836ab1df049585b60c152fc2b4b2cf882728cd93c78e49288c6db90f9f703"},
+]
+
+[package.dependencies]
+batchgenerators = ">=0.23"
+dicom2nifti = "*"
+matplotlib = "*"
+medpy = "*"
+nibabel = "*"
+numpy = "*"
+pandas = "*"
+requests = "*"
+scikit-image = ">=0.14"
+scikit-learn = "*"
+scipy = "*"
+SimpleITK = "*"
+tifffile = "*"
+torch = ">1.10.0"
+tqdm = "*"
+
+[[package]]
 name = "nnunetv2"
 version = "2.1.1"
 description = "nnU-Net. Framework for out-of-the box biomedical image segmentation."
@@ -1874,7 +1901,7 @@ yacs = "*"
 type = "git"
 url = "git@github.com:chr-wei/nnUNet.git"
 reference = "HEAD"
-resolved_reference = "25d61ca79d571cc246af7a7dc07a22dff3f4c4b7"
+resolved_reference = "74007fed34ce2b425167fbf74585b9f8779a0d77"
 
 [[package]]
 name = "numpy"
@@ -3846,4 +3873,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "fed7b9db3b0825e485094785c912f0f17d93108d71f399938a34b861c5ffb106"
+content-hash = "2f98ccb4d43e9621864c051721fe41e7115a752ddddd88e79c585bb24ff382c7"
