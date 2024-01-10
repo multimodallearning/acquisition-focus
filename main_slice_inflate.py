@@ -574,6 +574,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
         ctx = torch.no_grad \
             if config.cuts_mode == 'sa>hla' else contextlib.nullcontext # Do not use gradients when just inferring from SA view
         with ctx():
+            # TODO: Add case dependent grid affine here of p2Ch and p4CH view
             sa_image, sa_label, sa_image_slc, sa_label_slc, sa_grid_affine = \
                 get_transformed(
                     b_label.view(B, NUM_CLASSES, D, H, W),
@@ -855,7 +856,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 b_hd, training_dataset.label_tags, exclude_bg=True)
 
             b_hd95 = monai.metrics.compute_hausdorff_distance(pred_seg_oh, b_target, percentile=95) * nifti_zooms.norm()
-            b_hd95 = torch.cat([torch.zeros(b_sz,1), b_hd95], dim=1) # Add zero score for background
+            b_hd95 = torch.cat([torch.zeros(b_sz,1).to(b_hd95), b_hd95], dim=1) # Add zero score for background
             label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd95',
                 b_hd95, training_dataset.label_tags, exclude_bg=True)
 
