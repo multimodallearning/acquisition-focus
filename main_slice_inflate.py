@@ -553,6 +553,10 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
 
     b_label = batch['label']
     b_image = batch['image']
+    if config.clinical_view_affine_type == 'from-gt':
+        b_view_affines = batch['additional_data']['gt_view_affines']
+    elif config.clinical_view_affine_type == 'from-lores-prescan':
+        b_view_affines = batch['additional_data']['lores_prescan_view_affines']
 
     b_label = eo.rearrange(F.one_hot(b_label, num_classes),
                         'B D H W OH -> B OH D H W')
@@ -574,7 +578,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
         ctx = torch.no_grad \
             if config.cuts_mode == 'sa>hla' else contextlib.nullcontext # Do not use gradients when just inferring from SA view
         with ctx():
-            # TODO: Add case dependent grid affine here of p2Ch and p4CH view
+            # TODO: Add case dependent grid affine here of p2Ch
             sa_image, sa_label, sa_image_slc, sa_label_slc, sa_grid_affine = \
                 get_transformed(
                     b_label.view(B, NUM_CLASSES, D, H, W),
@@ -585,6 +589,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
                     image=None)
 
     if 'hla' in config.cuts_mode:
+        # TODO: Add case dependent grid affine of p4CH view
         hla_image, hla_label, hla_image_slc, hla_label_slc, hla_grid_affine = \
             get_transformed(
                 b_label.view(B, NUM_CLASSES, D, H, W),
@@ -861,7 +866,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 b_hd95, training_dataset.label_tags, exclude_bg=True)
 
         if store_net_output_to not in ["", None]:
-            store_path = Path(store_net_output_to, f"output_batch{batch_idx}.pth")
+            store_path = Path(store_net_output_to, f"output_batch{batch_idx:05d}.pth")
             store_path.parent.mkdir(exist_ok=True, parents=True)
             torch.save(dict(batch=batch, input=b_input, output=y_hat, target=b_target), store_path)
 
@@ -926,7 +931,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 epx_sa_theta_t_offsets=epx_sa_theta_t_offsets,
                 epx_sa_theta_zps=epx_sa_theta_zps,
             )
-            torch.save(sa_dct, output_dir/f"sa_params_{phase}_epx_{epx}.pt")
+            torch.save(sa_dct, output_dir/f"sa_params_{phase}_epx_{epx:05d}.pt")
 
     if epx_hla_theta_aps:
         ornt_log_prefix = f"orientations/{phase}_hla_"
@@ -953,7 +958,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 epx_hla_theta_t_offsets=epx_hla_theta_t_offsets,
                 epx_hla_theta_zps=epx_hla_theta_zps,
             )
-            torch.save(hla_dct, output_dir/f"hla_params_{phase}_epx_{epx}.pt")
+            torch.save(hla_dct, output_dir/f"hla_params_{phase}_epx_{epx:05d}.pt")
 
     if config.do_output and epx_input:
         # Store the slice model input
@@ -978,7 +983,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         log_frameless_image(focus_img_input.numpy(), output_dir / f"input_{phase}_epx_{epx}_focus.png", dpi=150, cmap='magma')
 
         lean_dct = {k:v for k,v in zip(epx_input.keys(), save_input.short())}
-        torch.save(lean_dct, output_dir / f"input_{phase}_epx_{epx}.pt")
+        torch.save(lean_dct, output_dir / f"input_{phase}_epx_{epx:05d}.pt")
 
     print(f"### END {phase.upper()}")
     print()
