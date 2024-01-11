@@ -167,7 +167,8 @@ def display_inertia(sp_label, affine=None):
         plot_inertia(tr_label)
 
 
-def display_clinical_views(volume:torch.Tensor, label:torch.Tensor, volume_affine:torch.Tensor, class_dict: dict, num_sa_slices=3, debug=False):
+def display_clinical_views(volume:torch.Tensor, label:torch.Tensor, volume_affine:torch.Tensor, class_dict: dict, num_sa_slices=3,
+                           output_to_file=None, debug=False):
     assert volume.dim() == 3
     assert label.dim() == 3
     assert label.is_sparse
@@ -196,7 +197,10 @@ def display_clinical_views(volume:torch.Tensor, label:torch.Tensor, volume_affin
         ax.axis('off')
 
     plt.tight_layout()
-    plt.show()
+    if output_to_file is not None:
+        plt.savefig(output_to_file)
+    else:
+        plt.show()
     plt.close()
 
 
