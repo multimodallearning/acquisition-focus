@@ -1313,8 +1313,25 @@ if config_dict.num_folds < 1:
     fold_iter = ([fold_idx, (train_idxs, val_idxs)],)
 
 else:
-    kf = KFold(n_splits=config_dict.num_folds)
-    fold_iter = enumerate(kf.split(range(training_dataset.__len__(use_2d_override=False))))
+    # kf = KFold(n_splits=config_dict.num_folds)
+    # fold_iter = enumerate(kf.split(range(training_dataset.__len__(use_2d_override=False))))
+    fold_iter = []
+    for fold_idx in range(config_dict.num_folds):
+        current_fold_idxs = training_dataset.data_split['train_folds'][f"fold_{fold_idx}"]
+        train_files = [training_dataset.data_split['train_files'][idx] for idx in current_fold_idxs['train_idxs']]
+        val_files = [training_dataset.data_split['train_files'][idx] for idx in current_fold_idxs['val_idxs']]
+
+        train_ids = set([training_dataset.get_file_id(fl)[0] for fl in train_files])
+        val_ids = set([training_dataset.get_file_id(fl)[0] for fl in val_files])
+        assert len(train_ids.intersection(val_ids)) == 0, \
+            f"Training and validation set must not overlap. But they do: {train_ids.intersection(val_ids)}"
+        train_idxs = training_dataset.switch_3d_identifiers(train_ids)
+        val_idxs = training_dataset.switch_3d_identifiers(val_ids)
+        fold_iter.append((
+            [idx for idx in train_idxs if idx is not None],
+            [idx for idx in val_idxs if idx is not None]
+        ))
+    fold_iter = enumerate(fold_iter)
 
     if config_dict.get('fold_override', None):
         selected_fold = config_dict.get('fold_override', 0)
