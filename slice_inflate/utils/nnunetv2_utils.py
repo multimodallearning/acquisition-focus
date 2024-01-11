@@ -57,7 +57,8 @@ def run_inference_on_image(b_image: torch.Tensor, b_spacing: torch.Tensor,
 
     with suppress_stdout():
         data = get_data_iterator_from_raw_npy_data(b_image.squeeze(1).cpu().numpy(), None, [properties], None,
-                                                   plans_manager, dataset_json, configuration_manager, num_processes=0)
+                                                   plans_manager, dataset_json, configuration_manager,
+                                                   num_processes=1, pin_memory=False)
         seg = run_inference(data, network, parameters,
             plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes,
             device=b_image.device)
