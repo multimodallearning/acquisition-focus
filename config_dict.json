@@ -48,7 +48,9 @@
         40,
         40
     ],
-    "clinical_view_affine_type": "from-gt",
+    "clinical_view_affine_type": "from-segmented-lores-prescan",
+    "label_slice_type": "from-segmented-hires",
+    "nnunet_segment_model_path": "/storage/staff/christianweihsbach/nnunet/nnUNetV2_results/Dataset670_MRXCAT_ac_focus/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d",
     "max_load_3d_num": null,
     "lr": 0.001,
     "use_scheduling": true,

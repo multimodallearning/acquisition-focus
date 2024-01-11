@@ -247,3 +247,8 @@ def crop_around_label_center(label: torch.Tensor, volume_affine: torch.Tensor,
             dtype=torch.float32)
 
     return cropped_label, cropped_image, cropped_nii_affine
+
+
+def get_zooms(nii_affine):
+    assert nii_affine.dim() == 3
+    return (nii_affine[:,:3,:3]*nii_affine[:,:3,:3]).sum(1).sqrt()

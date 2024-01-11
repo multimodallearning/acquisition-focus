@@ -68,6 +68,8 @@ from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.models.affine_transform import AffineTransformModule, SoftCutModule, HardCutModule, get_random_ortho6_vector
 from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
 from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params, deactivate_r_params, Stage, StageIterator
+from slice_inflate.utils.nnunetv2_utils import get_segment_fn
+from slice_inflate.utils.nifti_utils import get_zooms
 
 NOW_STR = datetime.now().strftime("%Y%m%d__%H_%M_%S")
 THIS_REPO = Repo(THIS_SCRIPT_DIR)
@@ -502,8 +504,8 @@ def get_transform_model(config, num_classes, size_3d, this_script_dir, _path=Non
 
 
 # %%
-def get_transformed(label, soft_label, nifti_affine, known_augment_affine, hidden_augment_affine, atm, cut_module,
-    crop_around_3d_label_center, crop_around_2d_label_center, image=None):
+def get_transformed(config, label, soft_label, nifti_affine, known_augment_affine, hidden_augment_affine,
+                    atm, cut_module, image=None, segment_fn=None):
 
     img_is_invalid = image is None or image.dim() == 0
 
@@ -519,13 +521,13 @@ def get_transformed(label, soft_label, nifti_affine, known_augment_affine, hidde
     image, _, _, _ = atm(image.view(B, 1, D, H, W), None,
         nifti_affine, known_augment_affine, hidden_augment_affine, theta_override=atm.last_theta)
 
-    if crop_around_3d_label_center is not None:
-        _3d_vox_size = torch.as_tensor(
-            crop_around_3d_label_center)
-        label, image, _ = crop_around_label_center(
-            label, _3d_vox_size, image)
-        _, soft_label, _ = crop_around_label_center(
-            label, _3d_vox_size, soft_label)
+    # if config.crop_around_3d_label_center is not None:
+    #     _3d_vox_size = torch.as_tensor(
+    #         crop_around_3d_label_center)
+    #     label, image, _ = crop_around_label_center(
+    #         label, _3d_vox_size, image)
+    #     _, soft_label, _ = crop_around_label_center(
+    #         label, _3d_vox_size, soft_label)
 
     # label_slc, slice_pos , gs_space_affine = cut_module(soft_label)
     # grid_affine = grid_affine @ gs_space_affine.to(grid_affine)
@@ -534,28 +536,39 @@ def get_transformed(label, soft_label, nifti_affine, known_augment_affine, hidde
     label_slc = cut_module(soft_label)
     image_slc = cut_module(image)
 
-    if crop_around_2d_label_center is not None:
-        _2d_vox_size = torch.as_tensor(
-            crop_around_2d_label_center+[1])
-        label_slc, image_slc, _ = crop_around_label_center(
-            label_slc, _2d_vox_size, image_slc)
+    # TODO Add slice segmentation
+    if config.label_slice_type == 'from-gt':
+        pass
+    elif config.label_slice_type == 'from-segmented-hires':
+        assert not img_is_invalid and segment_fn is not None
+        # Beware: Label slice does not have gradients anymore
+        pred_slc = segment_fn(eo.rearrange(image_slc, 'B C D H 1 -> B C 1 D H'), get_zooms(nifti_affine)).view(B,1,D,H)
+        pred_slc = eo.rearrange(pred_slc, 'B 1 D H -> B D H 1').long()
+        label_slc = eo.rearrange(F.one_hot(pred_slc, num_classes),
+            'B D H 1 OH -> B OH D H 1')
+
+    # if config.crop_around_2d_label_center is not None:
+    #     _2d_vox_size = torch.as_tensor(
+    #         crop_around_2d_label_center+[1])
+    #     label_slc, image_slc, _ = crop_around_label_center(
+    #         label_slc, _2d_vox_size, image_slc)
 
     if img_is_invalid:
         image = torch.empty([])
         image_slc = torch.empty([])
 
-    # Do not set label_slc to .int() here, since we (may) need the gradients
-    return image, label.int(), image_slc, label_slc, grid_affine
+    # Do not set label_slc to .long() here, since we (may) need the gradients
+    return image, label.long(), image_slc, label_slc, grid_affine
 
 
 
-def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, hla_cut_module):
+def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, hla_cut_module, segment_fn):
 
     b_label = batch['label']
     b_image = batch['image']
     if config.clinical_view_affine_type == 'from-gt':
         b_view_affines = batch['additional_data']['gt_view_affines']
-    elif config.clinical_view_affine_type == 'from-lores-prescan':
+    elif config.clinical_view_affine_type == 'from-segmented-lores-prescan':
         b_view_affines = batch['additional_data']['lores_prescan_view_affines']
 
     b_label = eo.rearrange(F.one_hot(b_label, num_classes),
@@ -582,28 +595,28 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
             sa_input_grid_affine = torch.as_tensor(b_view_affines['p2CH']).view(B,4,4).to(known_augment_affine)
             sa_image, sa_label, sa_image_slc, sa_label_slc, sa_grid_affine = \
                 get_transformed(
+                    config,
                     b_label.view(B, NUM_CLASSES, D, H, W),
                     b_soft_label.view(B, NUM_CLASSES, D, H, W),
                     nifti_affine,
                     known_augment_affine @ sa_input_grid_affine,
                     hidden_augment_affine,
                     sa_atm, sa_cut_module,
-                    config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
-                    image=None)
+                    image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
 
     if 'hla' in config.cuts_mode:
         # Use case dependent grid affine of p2CH view
         hla_input_grid_affine = torch.as_tensor(b_view_affines['p4CH']).view(B,4,4).to(known_augment_affine)
         hla_image, hla_label, hla_image_slc, hla_label_slc, hla_grid_affine = \
             get_transformed(
+                config,
                 b_label.view(B, NUM_CLASSES, D, H, W),
                 b_soft_label.view(B, NUM_CLASSES, D, H, W),
                 nifti_affine,
                 known_augment_affine @ hla_input_grid_affine,
                 hidden_augment_affine,
                 hla_atm, hla_cut_module,
-                config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
-                image=None)
+                image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
 
     if config.cuts_mode == 'sa':
         slices = [sa_label_slc, sa_label_slc]
@@ -694,11 +707,11 @@ def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
 
     return elbo
 
-def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, batch, label_tags, class_weights, autocast_enabled=False):
+def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, batch, label_tags, class_weights, segment_fn, autocast_enabled=False):
 
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
-        b_input, b_target, b_grid_affines = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module)
+        b_input, b_target, b_grid_affines = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module, segment_fn)
 
         # from slice_inflate.models.nnunet_models import SkipConnector
         # nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_sa.nii.gz")
@@ -783,6 +796,8 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     if isinstance(model, BlendowskiVAE):
         model.set_epoch(epx)
 
+    segment_fn = dataset.segment_fn
+
     bbar = tqdm(enumerate(dataloader), desc=phase, total=len(dataloader))
     lst_mem = {}
     for batch_idx, batch in bbar:
@@ -795,7 +810,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 config, epx,
                 model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
                 batch,
-                dataset.label_tags, class_weights, autocast_enabled)
+                dataset.label_tags, class_weights, segment_fn, autocast_enabled)
 
             if r_params is None:
                 regularization = 0.0
@@ -820,7 +835,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                     config, epx,
                     model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
                     batch,
-                    dataset.label_tags, class_weights, autocast_enabled)
+                    dataset.label_tags, class_weights, segment_fn, autocast_enabled)
 
         epx_losses.append(loss.item())
 
@@ -842,9 +857,10 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         pred_seg = y_hat.argmax(1)
 
         # Load any dataloader sample affine matrix (all have been resampled the same spacing/orientation)
-        nii_output_affine = batch['additional_data']['nifti_affine'][0]
+        nii_output_affine = batch['additional_data']['nifti_affine']
         # Taken from nibabel nifti1.py
-        nifti_zooms = (nii_output_affine[:3,:3]*nii_output_affine[:3,:3]).sum(1).sqrt().detach().cpu()
+        nifti_zooms = get_zooms(nii_output_affine).detach().cpu()
+        # nifti_zooms = (nii_output_affine[:3,:3]*nii_output_affine[:3,:3]).sum(1).sqrt().detach().cpu()
 
         # Calculate fast dice score
         pred_seg_oh = eo.rearrange(torch.nn.functional.one_hot(pred_seg, len(training_dataset.label_tags)), 'b d h w oh -> b oh d h w')

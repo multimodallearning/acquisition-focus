@@ -192,11 +192,14 @@ class MMWHSDataset(HybridIdDataset):
                         augment_affine[b_idx, :3, :3] = get_rotation_matrix_3d_from_angles(
                             deg_angles)
 
+                config = None # TODO read config
                 sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
                     self.get_transformed(
+                        config,
                         label, nifti_affine, augment_affine, 'sa', image)
                 hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
                     self.get_transformed(
+                        config,
                         label, nifti_affine, augment_affine, 'hla', image)
 
                 all_hla_images.append(hla_image)

@@ -21,7 +21,7 @@ from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
 from slice_inflate.utils.nifti_utils import crop_around_label_center, nifti_grid_sample
 from slice_inflate.utils.torch_utils import cut_slice, soft_cut_slice
 from slice_inflate.datasets.clinical_cardiac_views import get_clinical_cardiac_view_affines
-from slice_inflate.utils.nnunetv2_utils import load_network, get_model_from_network, run_inference_on_image
+from slice_inflate.utils.nnunetv2_utils import get_segment_fn
 
 
 cache = Memory(location=os.environ['CACHE_PATH'])
@@ -186,11 +186,14 @@ class MRXCATDataset(HybridIdDataset):
                         augment_affine[b_idx, :3, :3] = get_rotation_matrix_3d_from_angles(
                             deg_angles)
 
+                config = None # TODO read config
                 sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
                     self.get_transformed(
+                        config,
                         label, nifti_affine, augment_affine, 'sa', image)
                 hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
                     self.get_transformed(
+                        config,
                         label, nifti_affine, augment_affine, 'hla', image)
 
                 all_hla_images.append(hla_image)
@@ -330,6 +333,8 @@ class MRXCATDataset(HybridIdDataset):
         # Use only specific attributes of a dict to have a cacheable function
         self = DotDict(self_attributes)
 
+        segment_fn = get_segment_fn(self.nnunet_segment_model_path, 0, torch.device('cuda'))
+
         files = []
         data_path = Path(self.data_base_dir)
 
@@ -437,20 +442,15 @@ class MRXCATDataset(HybridIdDataset):
                     pre_grid_sample_hidden_affine=None,
                     dtype=torch.float32
                 )
-                NNUNET_MRXCAT_MODEL_RESULTS_PATH = "/storage/staff/christianweihsbach/nnunet/nnUNetV2_results/Dataset670_MRXCAT_ac_focus/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d"
-                lores_prescan = lores_prescan.squeeze()
+
                 # Segment using nnunet v2 model
-                network, parameters, patch_size, configuration_manager, inference_allowed_mirroring_axes, plans_manager, dataset_json = load_network(NNUNET_MRXCAT_MODEL_RESULTS_PATH, 0)
-                spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
+                lores_spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
+                lores_prescan_segmentation = segment_fn(lores_prescan, lores_spacing.view(1,3))
 
-                lores_prescan_segmentation = run_inference_on_image(lores_prescan, spacing, network, parameters,
-                    plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes,
-                    device=torch.device('cuda')
-                )
-
-                additional_data_3d[_3d_id]['lores_prescan'] = lores_prescan
                 additional_data_3d[_3d_id]['lores_nii_affine'] = lores_nii_affine
-                additional_data_3d[_3d_id]['lores_prescan_segmentation'] = lores_prescan_segmentation
+                additional_data_3d[_3d_id]['lores_prescan'] = lores_prescan.squeeze()
+                additional_data_3d[_3d_id]['lores_prescan_segmentation'] = lores_prescan_segmentation.squeeze()
+
                 class_dict = {tag:idx for idx,tag in enumerate(self.label_tags)}
                 additional_data_3d[_3d_id]['lores_prescan_view_affines'] = get_clinical_cardiac_view_affines(
                     lores_prescan_segmentation, nii_affine, class_dict,

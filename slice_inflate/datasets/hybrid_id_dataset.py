@@ -9,6 +9,7 @@ from torch.utils.data import Dataset
 
 from slice_inflate.utils.torch_utils import interpolate_sample, augment_noise, spatial_augment, torch_manual_seeded, ensure_dense, get_bincounts
 from slice_inflate.utils.common_utils import LabelDisturbanceMode
+from slice_inflate.utils.nnunetv2_utils import get_segment_fn
 
 class HybridIdDataset(Dataset):
 
@@ -34,6 +35,8 @@ class HybridIdDataset(Dataset):
 
         del self.self_attributes['kwargs']
         del self.self_attributes['self']
+
+        self.segment_fn = get_segment_fn(self.self_attributes['nnunet_segment_model_path'], 0, torch.device('cuda'))
 
         self.data_base_dir = data_base_dir
         self.ensure_labeled_pairs = ensure_labeled_pairs
