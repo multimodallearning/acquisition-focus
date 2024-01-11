@@ -419,13 +419,16 @@ class MRXCATDataset(HybridIdDataset):
             if is_label:
                 additional_data_3d[_3d_id]['nifti_affine'] = nii_affine # Has to be set once, either for image or label
                 additional_data_3d[_3d_id]['gt_view_affines'] = metadata_dict['phantom_'+_3d_id+'_image']['view_affines'] # Has to be set once, either for image or label
-
+                # works
+                # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
+                # display_clinical_views(tmp, tmp.to_sparse(), nii_affine, {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
+                #                         output_to_file="my_output.png", debug=False)
                 if self.use_distance_map_localization:
                     oh = torch.nn.functional.one_hot(tmp.long()).permute(3,0,1,2)
                     additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool(), mode='outer').squeeze(0)
             else:
 
-                lores_prescan, *_ = nifti_grid_sample(
+                lores_prescan, _, lores_nii_affine = nifti_grid_sample(
                     tmp.unsqueeze(0).unsqueeze(0),
                     nii_affine.view(1,4,4), ras_transform_mat=None,
                     fov_mm=torch.as_tensor(self.lores_fov_mm), fov_vox=torch.as_tensor(self.lores_fov_vox),
@@ -446,12 +449,17 @@ class MRXCATDataset(HybridIdDataset):
                 )
 
                 additional_data_3d[_3d_id]['lores_prescan'] = lores_prescan
+                additional_data_3d[_3d_id]['lores_nii_affine'] = lores_nii_affine
                 additional_data_3d[_3d_id]['lores_prescan_segmentation'] = lores_prescan_segmentation
                 class_dict = {tag:idx for idx,tag in enumerate(self.label_tags)}
                 additional_data_3d[_3d_id]['lores_prescan_view_affines'] = get_clinical_cardiac_view_affines(
                     lores_prescan_segmentation, nii_affine, class_dict,
                     num_sa_slices=15, return_unrolled=True)
 
+                # works
+                # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
+                # display_clinical_views(lores_prescan, lores_prescan_segmentation.to_sparse(), lores_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
+                #                         output_to_file="my_output_lores.png", debug=False)
         # Initialize 3d modified labels as unmodified labels
         for label_id in label_data_3d.keys():
             modified_label_data_3d[label_id] = label_data_3d[label_id]

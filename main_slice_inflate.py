@@ -578,23 +578,29 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
         ctx = torch.no_grad \
             if config.cuts_mode == 'sa>hla' else contextlib.nullcontext # Do not use gradients when just inferring from SA view
         with ctx():
-            # TODO: Add case dependent grid affine here of p2Ch
+            # Use case dependent grid affine of p2CH view
+            sa_input_grid_affine = torch.as_tensor(b_view_affines['p2CH']).view(B,4,4).to(known_augment_affine)
             sa_image, sa_label, sa_image_slc, sa_label_slc, sa_grid_affine = \
                 get_transformed(
                     b_label.view(B, NUM_CLASSES, D, H, W),
                     b_soft_label.view(B, NUM_CLASSES, D, H, W),
-                    nifti_affine, known_augment_affine, hidden_augment_affine,
+                    nifti_affine,
+                    known_augment_affine @ sa_input_grid_affine,
+                    hidden_augment_affine,
                     sa_atm, sa_cut_module,
                     config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
                     image=None)
 
     if 'hla' in config.cuts_mode:
-        # TODO: Add case dependent grid affine of p4CH view
+        # Use case dependent grid affine of p2CH view
+        hla_input_grid_affine = torch.as_tensor(b_view_affines['p4CH']).view(B,4,4).to(known_augment_affine)
         hla_image, hla_label, hla_image_slc, hla_label_slc, hla_grid_affine = \
             get_transformed(
                 b_label.view(B, NUM_CLASSES, D, H, W),
                 b_soft_label.view(B, NUM_CLASSES, D, H, W),
-                nifti_affine, known_augment_affine, hidden_augment_affine,
+                nifti_affine,
+                known_augment_affine @ hla_input_grid_affine,
+                hidden_augment_affine,
                 hla_atm, hla_cut_module,
                 config['crop_around_3d_label_center'], config['crop_around_2d_label_center'],
                 image=None)
