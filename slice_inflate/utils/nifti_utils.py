@@ -73,8 +73,8 @@ def get_grid_affine_and_nii_affine(
 
     nii_affine = volume_affine @ nii_affine # Pix to mm space
 
-    translation_offset = (volume_shape.view(1,3) * pre_grid_sample_affine_translation.flip(1)/2).view(3)
-    translation_offset = volume_affine[:,:3,:3] @ translation_offset
+    translation_offset = (volume_shape.view(1,3) * pre_grid_sample_affine_translation.flip(1)/2).view(B,3)
+    translation_offset = (volume_affine[:,:3,:3] @ translation_offset.view(B,3,1)).view(B,3)
 
     nii_affine[:,:3,-1] += neg_half_mm_shift # To be tested
     nii_affine[:,:3,-1] += translation_offset
@@ -106,6 +106,7 @@ def do_sample(volume, grid, gs_kwargs):
 
 
 def get_noop_ras_transfrom_mat(volume_affine, volume_shape):
+    B = volume_affine.shape[0]
     # This RAS matrix will not change the pixel orientations, nor the resulting nifti affine
     # (i.e. a quasi no-op for transformed voxel array no rotation,
     # but zoom is going on according to fov_mm, fov_vox)
@@ -119,9 +120,9 @@ def get_noop_ras_transfrom_mat(volume_affine, volume_shape):
         [0., -1., 0., 0.],
         [0., 0., 1., 0.],
         [0., 0., 0., 1.]
-    ]).unsqueeze(0)
+    ]).unsqueeze(0).repeat(B,1,1).to(volume_affine)
 
-    ras_transform_mat[:,:3,-1] = fov_mm_center[:,:3].view(1,3)
+    ras_transform_mat[:,:3,-1] = fov_mm_center[:,:3].view(B,3)
 
     return ras_transform_mat
 
@@ -148,7 +149,7 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
     target_shape = torch.Size([B,C] + fov_vox.tolist())
 
     if ras_transform_mat is None:
-        ras_transform_mat = get_noop_ras_transfrom_mat(volume_affine, volume_shape).repeat(B,1,1)
+        ras_transform_mat = get_noop_ras_transfrom_mat(volume_affine, volume_shape)
 
     assert volume_affine.dim() == ras_transform_mat.dim() == 3 \
         and B == volume_affine.shape[0] \
