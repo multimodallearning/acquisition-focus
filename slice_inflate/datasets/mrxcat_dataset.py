@@ -445,7 +445,7 @@ class MRXCATDataset(HybridIdDataset):
 
                 # Segment using nnunet v2 model
                 lores_spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
-                lores_prescan_segmentation = segment_fn(lores_prescan, lores_spacing.view(1,3))
+                lores_prescan_segmentation = segment_fn(lores_prescan.cuda(), lores_spacing.view(1,3)).cpu()
 
                 additional_data_3d[_3d_id]['lores_nii_affine'] = lores_nii_affine
                 additional_data_3d[_3d_id]['lores_prescan'] = lores_prescan.squeeze()
