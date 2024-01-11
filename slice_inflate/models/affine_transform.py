@@ -247,7 +247,7 @@ class AffineTransformModule(torch.nn.Module):
 
         return theta_a, theta_t, theta_z
 
-    def forward(self, x_image, x_label, nifti_affine, known_augment_affine, hidden_augment_affine, theta_override=None):
+    def forward(self, x_image, x_label, nifti_affine, fix_input_grid_affine, hidden_fix_input_grid_affine, theta_override=None):
 
         x_image_is_none = x_image is None or x_image.numel() == 0
         x_label_is_none = x_label is None or x_label.numel() == 0
@@ -299,15 +299,15 @@ class AffineTransformModule(torch.nn.Module):
             # nifti_affine is the affine of the original volume
             y_image, grid_affine, transformed_nii_affine = nifti_grid_sample(x_image, nifti_affine, global_prelocate_affine,
                                         fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=False,
-                                        pre_grid_sample_affine=known_augment_affine.to(theta.device) @ theta,
-                                        pre_grid_sample_hidden_affine=hidden_augment_affine)
+                                        pre_grid_sample_affine=theta @ fix_input_grid_affine.to(theta.device),
+                                        pre_grid_sample_hidden_affine=hidden_fix_input_grid_affine)
 
         if not x_label_is_none:
             # nifti_affine is the affine of the original volume
             y_label, grid_affine, transformed_nii_affine = nifti_grid_sample(x_label, nifti_affine, global_prelocate_affine,
                                         fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=True,
-                                        pre_grid_sample_affine=known_augment_affine.to(theta.device) @ theta,
-                                        pre_grid_sample_hidden_affine=hidden_augment_affine)
+                                        pre_grid_sample_affine=theta @ fix_input_grid_affine.to(theta.device),
+                                        pre_grid_sample_hidden_affine=hidden_fix_input_grid_affine)
 
         self.last_grid_affine = grid_affine
         self.last_transformed_nii_affine = transformed_nii_affine
