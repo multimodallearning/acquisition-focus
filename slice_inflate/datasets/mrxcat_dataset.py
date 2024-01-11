@@ -423,8 +423,8 @@ class MRXCATDataset(HybridIdDataset):
             # Set additionals
             if is_label:
                 additional_data_3d[_3d_id]['nifti_affine'] = nii_affine # Has to be set once, either for image or label
-                additional_data_3d[_3d_id]['gt_view_affines'] = metadata_dict['phantom_'+_3d_id+'_image']['view_affines'] # Has to be set once, either for image or label
-                # works
+                view_affines = metadata_dict['phantom_'+_3d_id+'_image']['view_affines'] # Has to be set once, either for image or label
+                additional_data_3d[_3d_id]['gt_view_affines'] = {k:torch.as_tensor(v) for k,v in view_affines.items()}
                 # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
                 # display_clinical_views(tmp, tmp.to_sparse(), nii_affine, {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
                 #                         output_to_file="my_output.png", debug=False)
