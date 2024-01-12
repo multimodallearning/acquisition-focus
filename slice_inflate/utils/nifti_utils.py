@@ -3,17 +3,36 @@ from torch.utils.checkpoint import checkpoint
 import einops as eo
 
 
-
-def flip_mat_rows(affine_mat):
+def flip_mat_rows_old(affine_mat):
     affine_mat[:,:3] = affine_mat[:,:3].flip(1)
     return affine_mat
 
 
 
-def switch_0_2_mat_dim(affine_mat):
-    affine_mat = flip_mat_rows(affine_mat.clone())
+def switch_0_2_mat_dim_old(affine_mat):
+    affine_mat = flip_mat_rows_old(affine_mat.clone())
     affine_mat = affine_mat.transpose(2,1)
-    affine_mat = flip_mat_rows(affine_mat)
+    affine_mat = flip_mat_rows_old(affine_mat)
+    return affine_mat.transpose(2,1)
+
+
+
+def flip_mat_cols_0_2(affine_mat):
+    _,R,C = affine_mat.shape
+    flip_affine = torch.tensor([
+        [0., 0., 1., 0.],
+        [0., 1., 0., 0.],
+        [1., 0., 0., 0.],
+        [0., 0., 0., 1.]
+    ]).view(1,4,4)[:,:R,:C].to(affine_mat)
+    return affine_mat @ flip_affine
+
+
+
+def switch_0_2_mat_dim(affine_mat):
+    affine_mat = flip_mat_cols_0_2(affine_mat)
+    affine_mat = affine_mat.transpose(2,1)
+    affine_mat = flip_mat_cols_0_2(affine_mat)
     return affine_mat.transpose(2,1)
 
 
@@ -41,15 +60,33 @@ def rescale_rot_components_with_shape_distortion(affine, volume_shape):
 
 
 
+def extract_rot_matrix(affine_mat):
+    extractor = torch.eye(4).view(1,4,4).to(affine_mat)
+    offset = torch.zeros_like(extractor)
+    offset[:,-1,-1] = 1.
+    return (affine_mat @ (extractor-offset)) + offset
+
+
+
+def extract_translation_matrix(affine_mat):
+    extractor = torch.zeros_like(affine_mat)
+    extractor[:,-1,-1] = 1.
+    offset = torch.eye(4).view(1,4,4).to(affine_mat)
+    return affine_mat @ extractor + (offset-extractor)
+
+
+
 def get_grid_affine_and_nii_affine(
     volume_affine, ras_transform_mat, volume_shape, fov_mm, fov_vox, pre_grid_sample_affine
 ):
-    pre_grid_sample_affine_rot = pre_grid_sample_affine[:,:3,:3]
+    # TODO check new ops
+    B = volume_affine.shape[0]
+    pre_grid_sample_affine_rot = extract_rot_matrix(pre_grid_sample_affine) # should be ok...
     pre_grid_sample_affine_translation = pre_grid_sample_affine[:,:3,-1]
 
     # (IJK -> RAS+).inverse() @ (Slice -> RAS+) == Slice -> IJK
     affine_mat = volume_affine.inverse() @ ras_transform_mat
-    affine_mat[:,:3,:3] = switch_0_2_mat_dim(pre_grid_sample_affine_rot) @ affine_mat[:,:3,:3]
+    affine_mat = affine_mat @ switch_0_2_mat_dim(pre_grid_sample_affine_rot) @ extract_rot_matrix(affine_mat)
 
     # Rescale matrix for field of view
     affine_mat = rescale_rot_components_with_diag(affine_mat, fov_mm / volume_shape)
@@ -59,10 +96,10 @@ def get_grid_affine_and_nii_affine(
     # Adjust shape distortions for torch (torch space is always -1;+1 and not D,H,W)
     affine_mat = rescale_rot_components_with_shape_distortion(affine_mat, volume_shape)
     # Adjust offset and switch D,W dimension of matrix (needs two times switching on rows and on columns)
-    affine_mat[:,:3,-1] = get_torch_translation_from_pix_translation(affine_mat[:,:3,-1], volume_shape)
+    affine_mat[:,:3,-1] = get_torch_translation_from_pix_translation(affine_mat[:,:3,-1], volume_shape) # TODO fix
     affine_mat = switch_0_2_mat_dim(affine_mat)
 
-    affine_mat[:,:3,-1] += pre_grid_sample_affine_translation
+    affine_mat[:,:3,-1] = affine_mat[:,:3,-1] + pre_grid_sample_affine_translation # TODO fix
 
     # Now get Nifti-matrix
     nii_affine = affine_mat_pix_space
