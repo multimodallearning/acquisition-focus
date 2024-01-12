@@ -446,7 +446,6 @@ def get_random_ortho6_vector(rotation_strength=0.2, constrained=True):
 
 def get_random_affine(rotation_strength=0.2, zoom_strength=0.2):
     rand_z = torch.rand(1) * zoom_strength - zoom_strength/2 + 1.0
-    # rand_theta_r = compute_rotation_matrix_from_ortho6d(get_random_ortho6_vector(rotation_strength))
 
     ortho_vect = torch.tensor((rotation_strength*torch.randn(2)).tolist()+[1.])
     ortho_vect /= ortho_vect.norm(2)
@@ -455,7 +454,8 @@ def get_random_affine(rotation_strength=0.2, zoom_strength=0.2):
     two /= two.norm(2)
     one = torch.cross(two, ortho_vect)
 
-    rand_theta_r = torch.stack([one,two,ortho_vect])
+    rand_theta_r = torch.eye(4)
+    rand_theta_r[:3,:3] = torch.stack([one,two,ortho_vect])
     rand_theta_z = torch.diag(torch.tensor([rand_z,rand_z,rand_z,1.0]))
 
     return rand_theta_z @ rand_theta_r
