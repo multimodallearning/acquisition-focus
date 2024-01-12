@@ -1004,7 +1004,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         # Build mean image and concat to individual sample views
         save_input = torch.cat([save_input.float().mean(0, keepdim=True), save_input], dim=0)
         img_input = eo.rearrange(save_input, 'BI DI HI WI -> (DI WI) (BI HI)')
-        log_frameless_image(img_input.numpy(), output_dir / f"input_{phase}_epx_{epx:05d}.png", dpi=150, cmap='magma')
+        log_frameless_image(img_input.numpy(), output_dir / f"slices_{phase}_epx_{epx:05d}.png", dpi=150, cmap='magma')
 
         lean_dct = {k:v for k,v in zip(epx_input.keys(), save_input.short())}
         torch.save(lean_dct, output_dir / f"input_{phase}_epx_{epx:05d}.pt")
@@ -1026,9 +1026,11 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
 
     best_quality_metric = 1.e16
     train_idxs = torch.tensor(train_idxs)
+    train_ids = training_dataset.switch_3d_identifiers(train_idxs)
     val_idxs = torch.tensor(val_idxs)
     val_ids = training_dataset.switch_3d_identifiers(val_idxs)
 
+    print(f"Will run training with these 3D samples (#{len(train_ids)}):", sorted(train_ids))
     print(f"Will run validation with these 3D samples (#{len(val_ids)}):", sorted(val_ids))
 
     ### Add train sampler and dataloaders ##
