@@ -71,6 +71,7 @@ from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
 from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params, deactivate_r_params, Stage, StageIterator
 from slice_inflate.utils.nnunetv2_utils import get_segment_fn
 from slice_inflate.utils.nifti_utils import get_zooms
+from slice_inflate.models.nnunet_models import SkipConnector
 
 NOW_STR = datetime.now().strftime("%Y%m%d__%H_%M_%S")
 THIS_REPO = Repo(THIS_SCRIPT_DIR)
@@ -597,11 +598,11 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
     with amp.autocast(enabled=autocast_enabled):
         b_input, b_target, b_grid_affines = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module, segment_fn)
 
-        # from slice_inflate.models.nnunet_models import SkipConnector
-        # nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_sa.nii.gz")
-        # nib.save(nib.Nifti1Image(SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_hla.nii.gz")
-        # nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().int().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_sum_sa.nii.gz")
-        # nib.save(nib.Nifti1Image(b_target[0].argmax(0).cpu().int().numpy() + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).cpu().int().numpy(), affine=np.eye(4)), "out_sum_hla.nii.gz")
+        # nib.save(nib.Nifti1Image((
+        #     b_target[0].argmax(0)
+        #     + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).to(b_target)
+        #     + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).to(b_target)
+        # ).cpu().int().numpy(), affine=np.eye(4)), "out_sum_vol_slices.nii.gz")
 
         wanted_input_dim = 4 if 'hybrid' in config.model_type else 5
         assert b_input.dim() == wanted_input_dim, \
