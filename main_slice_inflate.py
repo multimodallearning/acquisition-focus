@@ -926,7 +926,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=())
 
     print()
-    output_dir = Path(f"data/output/{wandb.run.name}")
+    output_dir = Path(f"data/output/{wandb.run.name}/{phase}")
     output_dir.mkdir(exist_ok=True)
 
     mean_transform_dict = dict()
@@ -1001,12 +1001,10 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         else:
             save_input = save_input.argmax(0)
 
-        BI, DI, HI, WI = save_input.shape
+        # Build mean image and concat to individual sample views
+        save_input = torch.cat([save_input.float().mean(0, keepdim=True), save_input], dim=0)
         img_input = eo.rearrange(save_input, 'BI DI HI WI -> (DI WI) (BI HI)')
-        log_frameless_image(img_input.numpy(), output_dir / f"input_{phase}_epx_{epx}.png", dpi=150, cmap='gray')
-
-        focus_img_input = eo.rearrange(save_input.sum(0), 'DI HI WI -> (DI WI) HI')
-        log_frameless_image(focus_img_input.numpy(), output_dir / f"input_{phase}_epx_{epx}_focus.png", dpi=150, cmap='magma')
+        log_frameless_image(img_input.numpy(), output_dir / f"input_{phase}_epx_{epx:05d}.png", dpi=150, cmap='magma')
 
         lean_dct = {k:v for k,v in zip(epx_input.keys(), save_input.short())}
         torch.save(lean_dct, output_dir / f"input_{phase}_epx_{epx:05d}.pt")
@@ -1133,7 +1131,8 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
             if quality_metric < best_quality_metric:
                 best_quality_metric = quality_metric
                 save_path = f"{config.mdl_save_prefix}/{wandb.run.name}_best"
-                stage['save_path'] = save_path
+                if stage is not None:
+                    stage['save_path'] = save_path
                 save_model(
                     Path(THIS_SCRIPT_DIR, save_path),
                     epx=epx,
@@ -1150,7 +1149,8 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
 
         elif (epx % config.save_every == 0) or (epx+1 == config.epochs):
             save_path = f"{config.mdl_save_prefix}/{wandb.run.name}_epx{epx}"
-            stage['save_path'] = save_path
+            if stage is not None:
+                stage['save_path'] = save_path
             save_model(
                 Path(THIS_SCRIPT_DIR, save_path),
                 epx=epx,
