@@ -927,7 +927,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
     print()
     output_dir = Path(f"data/output/{wandb.run.name}/{phase}")
-    output_dir.mkdir(exist_ok=True)
+    output_dir.mkdir(exist_ok=True, parents=True)
 
     mean_transform_dict = dict()
 
