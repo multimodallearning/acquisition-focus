@@ -37,6 +37,7 @@ os.environ.update(get_vars('*'))
 
 import torch
 torch.set_printoptions(sci_mode=False)
+# torch.autograd.set_detect_anomaly(True)
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.cuda.amp as amp
