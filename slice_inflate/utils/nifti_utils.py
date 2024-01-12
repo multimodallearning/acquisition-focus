@@ -76,17 +76,27 @@ def extract_translation_matrix(affine_mat):
 
 
 
+def extract_translation_comp_only_matrix(affine_mat):
+    extractor = torch.zeros_like(affine_mat)
+    extractor[:,-1,-1] = 1.
+    offset = torch.eye(4).view(1,4,4).to(affine_mat)
+    return affine_mat @ extractor - extractor
+
+
+
 def get_grid_affine_and_nii_affine(
     volume_affine, ras_transform_mat, volume_shape, fov_mm, fov_vox, pre_grid_sample_affine
 ):
-    # TODO check new ops
     B = volume_affine.shape[0]
     pre_grid_sample_affine_rot = extract_rot_matrix(pre_grid_sample_affine) # should be ok...
     pre_grid_sample_affine_translation = pre_grid_sample_affine[:,:3,-1]
 
     # (IJK -> RAS+).inverse() @ (Slice -> RAS+) == Slice -> IJK
     affine_mat = volume_affine.inverse() @ ras_transform_mat
-    affine_mat = affine_mat @ switch_0_2_mat_dim(pre_grid_sample_affine_rot) @ extract_rot_matrix(affine_mat)
+    affine_mat = (
+        switch_0_2_mat_dim(pre_grid_sample_affine_rot) @ extract_rot_matrix(affine_mat)
+        + extract_translation_comp_only_matrix(affine_mat)
+    )
 
     # Rescale matrix for field of view
     affine_mat = rescale_rot_components_with_diag(affine_mat, fov_mm / volume_shape)
@@ -96,10 +106,10 @@ def get_grid_affine_and_nii_affine(
     # Adjust shape distortions for torch (torch space is always -1;+1 and not D,H,W)
     affine_mat = rescale_rot_components_with_shape_distortion(affine_mat, volume_shape)
     # Adjust offset and switch D,W dimension of matrix (needs two times switching on rows and on columns)
-    affine_mat[:,:3,-1] = get_torch_translation_from_pix_translation(affine_mat[:,:3,-1], volume_shape) # TODO fix
+    affine_mat[:,:3,-1] = get_torch_translation_from_pix_translation(affine_mat[:,:3,-1], volume_shape)
     affine_mat = switch_0_2_mat_dim(affine_mat)
 
-    affine_mat[:,:3,-1] = affine_mat[:,:3,-1] + pre_grid_sample_affine_translation # TODO fix
+    affine_mat[:,:3,-1] = affine_mat[:,:3,-1] + pre_grid_sample_affine_translation
 
     # Now get Nifti-matrix
     nii_affine = affine_mat_pix_space
