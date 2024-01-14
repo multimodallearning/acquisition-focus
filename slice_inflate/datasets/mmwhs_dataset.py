@@ -1,6 +1,7 @@
 import os
 import time
 import glob
+import json
 import re
 import warnings
 import torch
@@ -19,6 +20,9 @@ from slice_inflate.models.affine_transform import get_random_affine
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
 from slice_inflate.utils.nifti_utils import crop_around_label_center, nifti_grid_sample
 from slice_inflate.utils.torch_utils import cut_slice, soft_cut_slice
+from slice_inflate.datasets.clinical_cardiac_views import get_clinical_cardiac_view_affines
+from slice_inflate.utils.nnunetv2_utils import get_segment_fn
+
 
 cache = Memory(location=os.environ['CACHE_PATH'])
 THIS_SCRIPT_DIR = get_script_dir()
@@ -34,9 +38,7 @@ class MMWHSDataset(HybridIdDataset):
                     "RV",
                     "LA",
                     "RA",
-            # "ascending_aorta", # This label is currently purged from the data
-            # "pulmonary_artery" # This label is currently purged from the data
-                     ),
+                ),
                  **kwargs):
         self.state = state
 
@@ -51,16 +53,10 @@ class MMWHSDataset(HybridIdDataset):
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
 
     def extract_3d_id(self, _input):
-        # Match sth like 1001-HLA:mTS1
-        items = re.findall(r'^(\d{4})-(ct|mr)(:m[A-Z0-9a-z]{3,4})?', _input)[0]
-        items = list(filter(None, items))
-        return "-".join(items)
+        return _input
 
     def extract_short_3d_id(self, _input):
-        # Match sth like 1001-HLA:mTS1 and returns 1001-HLA
-        items = re.findall(r'^(\d{4})-(HLA)', _input)[0]
-        items = list(filter(None, items))
-        return "-".join(items)
+        return _input
 
     def __getitem__(self, dataset_id, use_2d_override=None):
         use_2d = self.use_2d(use_2d_override)
@@ -112,8 +108,6 @@ class MMWHSDataset(HybridIdDataset):
         modified_label, _ = ensure_dense(modified_label)
         modified_label = modified_label.to(device=self.device)
 
-        augment_affine = None
-
         if self.augment_at_collate:
             raise NotImplementedError()
             # hla_image, hla_label = image, label
@@ -138,9 +132,9 @@ class MMWHSDataset(HybridIdDataset):
             additional_data['known_augment_affine'] = known_augment_affine.view(4,4)
             additional_data['hidden_augment_affine'] = hidden_augment_affine.view(4,4)
 
-            D, H, W = label.shape
-
-        additional_data['label_distance_map'] = additional_data['label_distance_map'].to(device=self.device)
+        for key, val in additional_data.items():
+            if isinstance(val, torch.Tensor):
+                additional_data[key] = val.to(device=self.device)
 
         return dict(
             dataset_idx=dataset_idx,
@@ -229,9 +223,16 @@ class MMWHSDataset(HybridIdDataset):
 
         return collate_closure
 
+    @staticmethod
     def get_file_id(file_path):
-        raise NotImplementedError()
-        return mrxcat_id, is_label
+        file_path = Path(file_path)
+        modality, patient_id, type_str = re.findall(
+            r'(ct|mr)_.*_(\d{4})_(.*?).nii.gz', file_path.name)[0]
+        patient_id = int(patient_id)
+        mmwhs_id = f"{modality}_{patient_id:04d}"
+
+        is_label = type_str == 'label'
+        return mmwhs_id, is_label
 
     @staticmethod
     def extract_2d_data(self_attributes: dict):
@@ -331,10 +332,19 @@ class MMWHSDataset(HybridIdDataset):
         # Use only specific attributes of a dict to have a cacheable function
         self = DotDict(self_attributes)
 
-        IMAGE_ID = '_image'
+        segment_fn = get_segment_fn(self.nnunet_segment_model_path, 0, torch.device('cuda'))
 
         files = []
-        data_path = Path(self.base_dir)
+        data_path = Path(self.data_base_dir)
+
+        # Open split json
+        split_file = data_path / "metadata/data_split.json"
+        with(split_file.open('r')) as split_file:
+            split_dict = json.load(split_file)
+
+        metadata_file = data_path / "metadata/metadata.json"
+        with(metadata_file.open('r')) as metadata_file:
+            metadata_dict = json.load(metadata_file)
 
         if self.crop_3d_region is not None:
             self.crop_3d_region = torch.as_tensor(self.crop_3d_region)
@@ -344,20 +354,10 @@ class MMWHSDataset(HybridIdDataset):
         files = sorted(files)
 
         if self.state.lower() == "train":
-            state_phantoms = [
-                # 'phantom_001', # male, free-breathing
-                'phantom_002', # female, free-breathing
-                'phantom_003', # male, breath-hold
-                'phantom_004', # female, breath-hold
-            ]
+            files = split_dict['train_files']
 
         elif self.state.lower() == "test":
-            state_phantoms = [
-                'phantom_006', # female, apical thin, diaphragm-motion
-                'phantom_007', # male, lesion
-                # 'phantom_008', # male, lesion
-                # 'phantom_009', # male, free-breathing, other resp-period
-            ]
+            files = split_dict['test_files']
 
         elif self.state.lower() == "empty":
             state_phantoms = []
@@ -365,28 +365,23 @@ class MMWHSDataset(HybridIdDataset):
             raise Exception(
                 "Unknown data state. Choose either 'train or 'test'")
 
-        get_phantom_intersection = lambda e: len(set([p for p in e.parts]).intersection(set(state_phantoms))) == 1
-        files = list(filter(get_phantom_intersection, files))
-
         # First read filepaths
         img_paths = {}
         label_paths = {}
 
         if self.debug:
-            files = files[:2]
+            files = files[:30]
 
         for _path in files:
-            modality, patient_id = re.findall(
-                r'(ct|mr)_.*_(\d{4})_.*?.nii.gz', _path.name)[0]
-            patient_id = int(patient_id)
+            file_id, is_label = MMWHSDataset.get_file_id(_path)
+            if not 'mr' in file_id: continue
 
-            # Generate cmrxmotion id like 001-02-ES
-            mmwhs_id = f"{patient_id:04d}-{modality}"
-
-            if not IMAGE_ID in trailing_name:
-                label_paths[mmwhs_id] = str(_path)
+            if is_label:
+                label_paths[file_id] = str(_path)
             else:
-                img_paths[mmwhs_id] = str(_path)
+                img_paths[file_id] = str(_path)
+
+        assert len(img_paths) > 0
 
         if self.ensure_labeled_pairs:
             pair_idxs = set(img_paths).intersection(set(label_paths))
@@ -401,7 +396,7 @@ class MMWHSDataset(HybridIdDataset):
         additional_data_3d = {}
 
         # Load data from files
-        print(f"Loading MMWHS {self.state} images and labels... ({modalities})")
+        print(f"Loading MMWHS {self.state} images and labels...")
         id_paths_to_load = list(label_paths.items()) + list(img_paths.items())
 
         description = f"{len(img_paths)} images, {len(label_paths)} labels"
@@ -409,46 +404,63 @@ class MMWHSDataset(HybridIdDataset):
         for _3d_id, _file in tqdm(id_paths_to_load, desc=description):
             additional_data_3d[_3d_id] = additional_data_3d.get(_3d_id, {})
 
-            trailing_name = str(_file).split("/")[-1]
-            is_label = not IMAGE_ID in trailing_name
+            file_id, is_label = MMWHSDataset.get_file_id(_file)
             nib_tmp = nib.load(_file)
             tmp = torch.from_numpy(nib_tmp.get_fdata()).squeeze()
-
-            align_affine_path = str(Path(self.base_dir, "preprocessed",
-                                    f"f1002mr_m{_3d_id.split('-')[0]}{_3d_id.split('-')[1]}.mat"))
-            augment_affine = torch.from_numpy(np.loadtxt(align_affine_path))
-            affine = torch.as_tensor(nib_tmp.affine)
+            nii_affine = torch.as_tensor(nib_tmp.affine)
 
             if is_label:
-                tmp = MMWHSDataset.replace_label_values(tmp)
-
+                # tmp = MMWHSDataset.replace_label_values(tmp)
                 if self.use_binarized_labels:
                     tmp[tmp>0] = 1.0
-
-            tmp, _, affine = nifti_grid_sample(
-                tmp.unsqueeze(0).unsqueeze(0),
-                affine.view(1,4,4), ras_transform_mat=None,
-                fov_mm=torch.as_tensor(self.fov_mm), fov_vox=torch.as_tensor(self.fov_vox),
-                is_label=is_label,
-                pre_grid_sample_affine=None,
-                pre_grid_sample_hidden_affine=None,
-                dtype=torch.float32
-            )
-            tmp = tmp.squeeze(0).squeeze(0)
-            affine = affine.squeeze(0)
-
-            additional_data_3d[_3d_id]['nifti_affine'] = affine
-
-            if not IMAGE_ID in trailing_name:
                 label_data_3d[_3d_id] = tmp.long()
-                oh = torch.nn.functional.one_hot(tmp.long()).permute(3,0,1,2)
-                additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool(), mode='outer').squeeze(0)
 
             else:
                 if self.do_normalize:  # Normalize image to zero mean and unit std
                     tmp = (tmp - tmp.mean()) / tmp.std()
-
                 img_data_3d[_3d_id] = tmp
+
+            # Set additionals
+            if is_label:
+                additional_data_3d[_3d_id]['nifti_affine'] = nii_affine # Has to be set once, either for image or label
+                metadata_id = f"{_3d_id.split('_')[0]}_train_{_3d_id.split('_')[1]}_image"
+                view_affines = metadata_dict[metadata_id]['view_affines'] # Has to be set once, either for image or label
+                additional_data_3d[_3d_id]['gt_view_affines'] = {k:torch.as_tensor(v) for k,v in view_affines.items()}
+                # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
+                # display_clinical_views(tmp, tmp.to_sparse(), nii_affine, {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
+                #                         output_to_file="my_output.png", debug=False)
+                if self.use_distance_map_localization:
+                    oh = torch.nn.functional.one_hot(tmp.long()).permute(3,0,1,2)
+                    additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool(), mode='outer').squeeze(0)
+            else:
+                if self.clinical_view_affine_type == 'from-segmented-lores-prescan':
+                    # TODO improve speed for nnunet segmentation
+                    lores_prescan, _, lores_nii_affine = nifti_grid_sample(
+                        tmp.unsqueeze(0).unsqueeze(0),
+                        nii_affine.view(1,4,4), ras_transform_mat=None,
+                        fov_mm=torch.as_tensor(self.lores_fov_mm), fov_vox=torch.as_tensor(self.lores_fov_vox),
+                        is_label=False,
+                        pre_grid_sample_affine=None,
+                        pre_grid_sample_hidden_affine=None,
+                        dtype=torch.float32
+                    )
+
+                    # Segment using nnunet v2 model
+                    lores_spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
+                    lores_prescan_segmentation = segment_fn(lores_prescan.cuda(), lores_spacing.view(1,3)).cpu()
+
+                    additional_data_3d[_3d_id]['lores_nii_affine'] = lores_nii_affine
+                    additional_data_3d[_3d_id]['lores_prescan'] = lores_prescan.squeeze()
+                    additional_data_3d[_3d_id]['lores_prescan_segmentation'] = lores_prescan_segmentation.squeeze()
+
+                    class_dict = {tag:idx for idx,tag in enumerate(self.label_tags)}
+                    additional_data_3d[_3d_id]['lores_prescan_view_affines'] = get_clinical_cardiac_view_affines(
+                        lores_prescan_segmentation, nii_affine, class_dict,
+                        num_sa_slices=15, return_unrolled=True)
+                    # works
+                    # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
+                    # display_clinical_views(lores_prescan, lores_prescan_segmentation.to_sparse(), lores_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
+                    #                         output_to_file="my_output_lores.png", debug=False)
 
         # Initialize 3d modified labels as unmodified labels
         for label_id in label_data_3d.keys():

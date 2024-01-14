@@ -89,36 +89,16 @@ dirty_str = "!dirty-" if THIS_REPO.is_dirty() else ""
 config_dict['git_commit'] = f"{dirty_str}{THIS_REPO.commit().hexsha}"
 
 def prepare_data(config):
-    args = [config.data_base_path]
+    args = [config.dataset[1]]
 
-    if config.dataset == 'mmwhs':
+    if config.dataset[0] == 'mmwhs':
         dataset_class = MMWHSDataset
-        kwargs = dict(
-            state=config.state,
-            modality=config.modality,
-            do_align_global=True,
-            do_resample=False, # Prior to cropping, resample image?
-            crop_3d_region=None, # Crop or pad the images to these dimensions
-            fov_mm=config.fov_mm,
-            fov_vox=config.fov_vox,
-            crop_around_3d_label_center=config.crop_around_3d_label_center,
-            pre_interpolation_factor=1., # When getting the data, resize the data by this factor
-            ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
-            use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
-            use_binarized_labels=config.use_binarized_labels,
-            crop_around_2d_label_center=config.crop_around_2d_label_center,
-            max_load_3d_num=config.max_load_3d_num,
-            soft_cut_std=config.soft_cut_std,
-            sample_augment_strength=config.sample_augment_strength,
-            device=config.device,
-            debug=config.debug
-        )
-    elif config.dataset == 'mrxcat':
+    elif config.dataset[0] == 'mrxcat':
         dataset_class = MRXCATDataset
-        kwargs = {k:v for k,v in config.items()}
     else:
         raise ValueError()
 
+    kwargs = {k:v for k,v in config.items()}
 
     arghash = joblib.hash(joblib.hash(args)+joblib.hash(kwargs))
     cache_path = Path(os.environ['CACHE_PATH'], arghash, 'dataset.dil')
