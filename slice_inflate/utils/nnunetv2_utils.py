@@ -52,17 +52,17 @@ def run_inference_on_image(b_image: torch.Tensor, b_spacing: torch.Tensor,
     # assert b_spacing.ndim == 2, f"Expected 2D tensor, got {b_spacing.ndim}D"
     # assert b_spacing.shape[-1] == 3, f"Expected last dimension to be 3, got {b_spacing.shape[-1]}"
     assert (b_spacing - b_spacing.mean(0)).sum() == 0, "Spacing must be the same for all images"
-
-    properties = dict(spacing=b_spacing[0].tolist())
+    B = b_image.shape[0]
+    properties = B * [dict(spacing=b_spacing[0].tolist())]
 
     with suppress_stdout():
-        data = get_data_iterator_from_raw_npy_data(b_image.squeeze(1).cpu().numpy(), None, [properties], None,
+        data = get_data_iterator_from_raw_npy_data([im for im in b_image.cpu().numpy()], None, properties, None,
                                                    plans_manager, dataset_json, configuration_manager,
-                                                   num_processes=1, pin_memory=False)
+                                                   num_processes=NUM_PROCESSES, pin_memory=False)
         seg = run_inference(data, network, parameters,
             plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes,
             device=b_image.device)
-    return torch.as_tensor(seg[0]).to(b_image.device)
+    return torch.as_tensor(seg).to(b_image.device)
 
 
 def run_inference(data, network, parameters,
