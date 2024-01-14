@@ -21,8 +21,14 @@
     "cuts_mode": "sa+hla",
     "use_2d_normal_to": null,
     "use_binarized_labels": false,
-    "dataset0": ["mrxcat", "./data/datasets/MRXCAT/prepared_files"],
-    "dataset": ["mmwhs", "./data/datasets/MMWHS/prepared_files"],
+    "dataset0": [
+        "mrxcat",
+        "./data/datasets/MRXCAT/prepared_files"
+    ],
+    "dataset": [
+        "mmwhs",
+        "./data/datasets/MMWHS/prepared_files"
+    ],
     "crop_3d_region": null,
     "crop_2d_slices_gt_num_threshold": 0,
     "crop_around_3d_label_center": null,
@@ -59,7 +65,7 @@
     "mdl_save_prefix": "data/models",
     "debug": false,
     "wandb_mode": "online",
-    "sweep_type": "stage-sweep",
+    "sweep_type": null,
     "model_checkpoint_path": null,
     "transform_model_checkpoint_path": null,
     "do_output": true,
