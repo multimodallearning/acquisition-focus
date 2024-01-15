@@ -53,6 +53,7 @@ def get_inertia_tensor(label):
     # print("inertia\n", I)
     return center, I
 
+
 def get_main_principal_axes(I):
     assert I.shape == (3,3)
     eigenvectors = torch.linalg.eig(I).eigenvectors.real.T
@@ -61,11 +62,13 @@ def get_main_principal_axes(I):
 
     return sorted_vectors[0], sorted_vectors[1], sorted_vectors[2] #min, mid, max
 
+
 def proj_to_base_vect(vector, base_vector):
     _,D = vector.shape
     assert D == 3
     base_vector = base_vector / torch.linalg.vector_norm(base_vector,2)
     return vector @ base_vector.view(3,1) * base_vector
+
 
 def get_fact_min_dist(idxs, center, fact, dir):
     end_vect = center + fact * dir
@@ -81,6 +84,7 @@ def get_fact_min_dist(idxs, center, fact, dir):
     current_min_dist = current_dists.min()
     return current_min_dist
 
+
 def get_extent_vect(start_fact, end_fact, idxs, center, dir):
     MIN_DIST = 1.73/2 # sqrt(3) vox
 
@@ -94,6 +98,7 @@ def get_extent_vect(start_fact, end_fact, idxs, center, dir):
             start_fact += (end_fact - start_fact)/2.
 
     return (start_fact+end_fact)/2. * dir
+
 
 def get_min_max_extent_along_axis(label, dir):
     if label.is_sparse:
@@ -111,8 +116,8 @@ def get_min_max_extent_along_axis(label, dir):
     return  p_positive_extend, p_negative_extend
 
 
-
-def get_affine_from_center_and_plane_vects(px_center, main_plane_vect, plane_vect_two, shape, space='torch', do_return_normal_three=False):
+def get_affine_from_center_and_plane_vects(px_center, main_plane_vect, plane_vect_two, shape,
+                                           space='torch', do_return_normal_three=False):
     assert space in ['pixel', 'torch']
     shape = torch.as_tensor(shape)
     # Normalize
@@ -125,17 +130,18 @@ def get_affine_from_center_and_plane_vects(px_center, main_plane_vect, plane_vec
 
     affine = torch.eye(4)
     affine[:3,:3] = torch.stack([plane_vect_two, main_plane_vect, normal_three], dim=0)
-    affine[:3,-1] = px_center
 
     if space == 'torch':
         affine[:3,:3] = affine[:3,:3].flip(0,1).T
         # pt_affine[:3,:3] = torch.stack([main_plane_vect.flip(0), plane_vect_two.flip(0), normal_three.flip(0)], dim=1).flip(1) # works as well
-        affine[:3,-1] = (2.* affine[:3,-1] / shape - 1.).flip(0)
+        affine[:3,-1] = (2.* px_center / shape - 1.).flip(0)
 
     if do_return_normal_three:
         return affine, normal_three
 
     return affine
+
+
 def display_inertia(sp_label, affine=None):
 
     def plot_inertia(sp_label):
@@ -176,11 +182,14 @@ def display_clinical_views(volume:torch.Tensor, label:torch.Tensor, volume_affin
     clinical_view_affines = get_clinical_cardiac_view_affines(label, volume_affine, class_dict, num_sa_slices,
                                                               return_unrolled=True, debug=debug)
 
-    fov_mm = torch.tensor([200.,200.,1.])
-    fov_vox = torch.tensor([100,100,1])
+    fov_mm = torch.tensor([300.,300.,1.])
+    fov_vox = torch.tensor([128,128,1])
 
     fig, axs = plt.subplots(len(clinical_view_affines)//5+1, 5)
     axs = axs.flatten()
+
+    for ax in axs:
+        ax.axis('off')
 
     for ax, (view_name, pt_affine) in zip(axs, clinical_view_affines.items()):
 
@@ -196,13 +205,41 @@ def display_clinical_views(volume:torch.Tensor, label:torch.Tensor, volume_affin
         ax.set_title(view_name)
         ax.axis('off')
 
-    plt.tight_layout()
+    plt.subplots_adjust(left=0.2, right=.8, top=1.2)
+    # plt.tight_layout()
     if output_to_file is not None:
         plt.savefig(output_to_file)
     else:
         plt.show()
     plt.close()
 
+
+def get_slice_center_inertia_in_volume_space(sp_label, volume_affine, slicing_grid_affine, pix_affine, debug=False):
+    FOV_MM = torch.tensor([300.,300.,1.])
+    FOV_VOX = torch.tensor([128,128,1])
+
+    # Get slice
+    lbl_slice, *_ = nifti_grid_sample(sp_label.to_dense()[None,None], volume_affine[None],
+        fov_mm=FOV_MM, fov_vox=FOV_VOX,
+        is_label=True, pre_grid_sample_affine=slicing_grid_affine[None],
+        dtype=torch.float32
+    )
+    if debug:
+        display_inertia(lbl_slice[0,0]) # debug
+
+    # Analyze slice
+    slice_space_center, slc_I = get_inertia_tensor(lbl_slice[0,0])
+    (slice_space_min_principal,
+     slice_space_mid_principal,
+     slice_space_max_principal) = get_main_principal_axes(slc_I)
+
+    # Get volume space center and min-principal
+    volume_space_center = pix_affine.inverse()[:3,:3] @ slice_space_center
+    volume_space_min_principal = pix_affine.inverse()[:3,:3] @ slice_space_min_principal
+    volume_space_mid_principal = pix_affine.inverse()[:3,:3] @ slice_space_mid_principal
+    volume_space_max_principal = pix_affine.inverse()[:3,:3] @ slice_space_max_principal
+
+    return volume_space_center, (volume_space_min_principal, volume_space_mid_principal, volume_space_max_principal)
 
 
 def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_dict: dict,
@@ -225,6 +262,7 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
 
     sp_myolv_label = get_sub_sp_tensor(sp_label, eq_value=(class_dict['MYO'],class_dict['LV']))
     sp_myolvla_label = get_sub_sp_tensor(sp_label, eq_value=(class_dict['MYO'], class_dict['LV'], class_dict['LA']))
+    sp_myolvrv_label = get_sub_sp_tensor(sp_label, eq_value=(class_dict['MYO'], class_dict['LV'], class_dict['RV']))
     sp_heart_label = get_sub_sp_tensor(sp_label, eq_value=(class_dict.values()))
 
     # 0. Extract axial, sagittal, coronal views
@@ -243,12 +281,17 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
     # 2. Cut normal to cross(axial, LV centerline) -> p2ch
     # display_inertia(sp_myolv_label, pt_p2ch_affine) # debug
     pt_p2ch_affine, ortho_p2ch_vect = get_affine_from_center_and_plane_vects(myolv_center, lv_min_principal, axial_vect,
-                                                                                label_shape, do_return_normal_three=True)
+        label_shape, do_return_normal_three=True
+    )
     pix_p2ch_affine = get_affine_from_center_and_plane_vects(myolv_center, lv_min_principal, axial_vect,
-                                                                                label_shape, space='pixel')
+        label_shape, space='pixel'
+    )
 
-    pt_p4ch_affine, ortho_p4ch_vect = get_affine_from_center_and_plane_vects(myolv_center, lv_min_principal, ortho_p2ch_vect,
-                                                                                label_shape, do_return_normal_three=True)
+    pt_p4ch_affine, ortho_p4ch_vect = get_affine_from_center_and_plane_vects(myolv_center,
+        lv_min_principal, ortho_p2ch_vect,
+        label_shape, do_return_normal_three=True
+    )
+
     # 4. Cut normal to cross(p2ch_normal, p4ch_normal) from base to apex
     p1, p2 = get_min_max_extent_along_axis(sp_myolv_label, lv_min_principal)
     delta_p = p2 - p1
@@ -260,64 +303,45 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
 
     # 5. Get 4CH view
     # Find MYO,LV,RV min and mid-principals in center SA view
-    pix_center_sa_affine = get_affine_from_center_and_plane_vects(p1 + .5 * delta_p, ortho_p2ch_vect, ortho_p4ch_vect, label_shape, space='pixel')
-    pt_center_sa_affine = get_affine_from_center_and_plane_vects(p1 + .5 * delta_p, ortho_p2ch_vect, ortho_p4ch_vect, label_shape, space='torch')
-    myolvrv_class_nums = (class_dict['MYO'], class_dict['LV'], class_dict['RV'])
-    sp_myolvrv_label = get_sub_sp_tensor(sp_label, eq_value=myolvrv_class_nums)
-    # Get slice
-    center_sa_reoriented_slice_lbl, *_ = nifti_grid_sample(sp_myolvrv_label.to_dense()[None,None], volume_affine[None], None,
-        fov_mm=torch.tensor([200.,200.,1.]), fov_vox=torch.tensor([200,200,1]),
-        is_label=True, pre_grid_sample_affine=pt_center_sa_affine[None], pre_grid_sample_hidden_affine=None, dtype=torch.float32
+    pix_center_sa_affine = get_affine_from_center_and_plane_vects(p1 + .5 * delta_p,
+        ortho_p2ch_vect, ortho_p4ch_vect, label_shape, space='pixel'
     )
-    if debug:
-        display_inertia(center_sa_reoriented_slice_lbl[0,0]) # debug
+    pt_center_sa_affine = get_affine_from_center_and_plane_vects(p1 + .5 * delta_p,
+        ortho_p2ch_vect, ortho_p4ch_vect, label_shape, space='torch'
+    )
 
-    # Analyze slice
-    _, myo_lv_rv_I = get_inertia_tensor(center_sa_reoriented_slice_lbl[0,0])
-    sa_space_myo_lv_rv_min_principal, sa_space_myo_lv_rv_mid_principal, _ = get_main_principal_axes(myo_lv_rv_I) # lives in SA slice space
     # Get MYO,LV,RV min and mid principal direction with respect to volume
-    volume_space_sa_myolvrv_mid_principal = pix_center_sa_affine[:3,:3].inverse() @ sa_space_myo_lv_rv_mid_principal
-    volume_space_sa_myolvrv_min_principal = pix_center_sa_affine[:3,:3].inverse() @ sa_space_myo_lv_rv_min_principal
+    volume_space_sa_myolvrv_min_principal, volume_space_sa_myolvrv_mid_principal = get_slice_center_inertia_in_volume_space(
+        sp_myolvrv_label, volume_affine, pt_center_sa_affine, pix_center_sa_affine, debug=debug
+    )[1][:2]
 
     # Extract min-principal of MYO,LV,LA in p2CH slice view
-    # Get slice
-    p2ch_reoriented_slice_lbl, *_ = nifti_grid_sample(sp_myolvla_label.to_dense()[None,None], volume_affine[None], None,
-        fov_mm=torch.tensor([200.,200.,1.]), fov_vox=torch.tensor([200,200,1]),
-        is_label=True, pre_grid_sample_affine=pt_p2ch_affine[None], pre_grid_sample_hidden_affine=None, dtype=torch.float32
-    )
-    if debug:
-        display_inertia(p2ch_reoriented_slice_lbl[0,0]) # debug
-
-    # Analyze slice
-    _, p2ch_lv_I = get_inertia_tensor(p2ch_reoriented_slice_lbl[0,0])
-    p2CH_space_lv_min_principal, *_ = get_main_principal_axes(p2ch_lv_I)
-    # Get MYO,LV,LA min-principal direction with respect to volume
-    volume_space_p2CH_lv_min_principal = pix_p2ch_affine.inverse()[:3,:3] @ p2CH_space_lv_min_principal
+    volume_space_p2CH_lv_min_principal = get_slice_center_inertia_in_volume_space(
+        sp_myolvla_label, volume_affine, pt_p2ch_affine, pix_p2ch_affine, debug=debug
+    )[1][0]
 
     # Get 4CH affine
     pt_4ch_affine = get_affine_from_center_and_plane_vects(myolv_center, volume_space_sa_myolvrv_min_principal,
-                                                           volume_space_p2CH_lv_min_principal, label_shape)
+        volume_space_p2CH_lv_min_principal, label_shape
+    )
     pix_4ch_affine = get_affine_from_center_and_plane_vects(myolv_center, volume_space_sa_myolvrv_min_principal,
-                                                            volume_space_p2CH_lv_min_principal, label_shape, space='pixel')
+        volume_space_p2CH_lv_min_principal, label_shape, space='pixel'
+    )
 
     # 6. Get 2CH view
     # Find MYO,LV min-principal in 4CH view
-    # Get 4CH slice
-    _4CH_reoriented_slice_lbl, *_ = nifti_grid_sample(sp_myolvla_label.to_dense()[None,None], volume_affine[None], None,
-        fov_mm=torch.tensor([200.,200.,1.]), fov_vox=torch.tensor([200,200,1]),
-        is_label=True, pre_grid_sample_affine=pt_4ch_affine[None], pre_grid_sample_hidden_affine=None, dtype=torch.float32
-    )
-    if debug:
-        display_inertia(_4CH_reoriented_slice_lbl[0,0]) # debug
-    # Analyze slice
-    # TODO: There might be a but when reorienting with nifti-transform and backorienting principal(s) to volume space..
-    _, _4CH_myolvla_I = get_inertia_tensor(_4CH_reoriented_slice_lbl[0,0])
-    _4CH_space_myolvla_min_principal, *_  = get_main_principal_axes(_4CH_myolvla_I)
+
 
     # Get 4CH slice MYO,LV min-principal direction with respect to volume
     myolvla_center, _ = get_inertia_tensor(sp_myolvla_label)
-    volume_space_4CH_myolvrv_min_principal = pix_4ch_affine.inverse()[:3,:3] @ _4CH_space_myolvla_min_principal
-    pt_2ch_affine = get_affine_from_center_and_plane_vects(myolvla_center, volume_space_sa_myolvrv_mid_principal, volume_space_4CH_myolvrv_min_principal, label_shape)
+
+    volume_space_4CH_myolvrv_min_principal = get_slice_center_inertia_in_volume_space(
+        sp_myolvla_label, volume_affine, pt_4ch_affine, pix_4ch_affine, debug=debug
+    )[1][0]
+
+    pt_2ch_affine = get_affine_from_center_and_plane_vects(myolvla_center,
+        volume_space_sa_myolvrv_mid_principal, volume_space_4CH_myolvrv_min_principal, label_shape
+    )
 
     clinical_view_affines = {
         'axial': pt_axial_affine,
