@@ -92,7 +92,7 @@ def run_inference_on_image(b_image: torch.Tensor, b_spacing: torch.Tensor,
             target_spacing = nnunet_spacing
 
         target_fov_mm = input_spacing * torch.as_tensor(img_shape).to(target_spacing)
-        target_fov_vox = (torch.as_tensor(img_shape) * input_spacing / target_spacing).int()
+        target_fov_vox = (torch.as_tensor(img_shape).to(b_spacing) * input_spacing / target_spacing).int()
 
         volume_affine = torch.diag(
             torch.as_tensor(input_spacing.tolist() + [1.])

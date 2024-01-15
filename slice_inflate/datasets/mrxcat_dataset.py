@@ -433,7 +433,7 @@ class MRXCATDataset(HybridIdDataset):
                     additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool(), mode='outer').squeeze(0)
             else:
                 if self.clinical_view_affine_type == 'from-segmented-lores-prescan':
-                    # TODO improve speed for nnunet segmentation 
+                    # TODO improve speed for nnunet segmentation
                     lores_prescan, _, lores_nii_affine = nifti_grid_sample(
                         tmp.unsqueeze(0).unsqueeze(0),
                         nii_affine.view(1,4,4), ras_transform_mat=None,
@@ -454,7 +454,7 @@ class MRXCATDataset(HybridIdDataset):
 
                     class_dict = {tag:idx for idx,tag in enumerate(self.label_tags)}
                     additional_data_3d[_3d_id]['lores_prescan_view_affines'] = get_clinical_cardiac_view_affines(
-                        lores_prescan_segmentation, nii_affine, class_dict,
+                        lores_prescan_segmentation[0], nii_affine, class_dict,
                         num_sa_slices=15, return_unrolled=True)
                     # works
                     # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
