@@ -1,13 +1,34 @@
-import os
 import sys
+import os
 from copy import deepcopy
 from contextlib import contextmanager
+import traceback
+import warnings
+# os.environ['CUDA_VISIBLE_DEVICES'] = '15'
+from typing import List, Tuple, Union
+import numpy as np
 
-from torch._dynamo import OptimizedModule
 import torch
+import torch.nn as nn
+from torch._dynamo import OptimizedModule
+import torch.nn.functional as F
+import einops as eo
 
+from scipy.ndimage import gaussian_filter
+from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
+from nnunetv2.utilities.label_handling.label_handling import LabelManager
+from nnunetv2.utilities.helpers import empty_cache, dummy_context
+from batchgenerators.dataloading.multi_threaded_augmenter import MultiThreadedAugmenter
 from nnunetv2.inference.predict_from_raw_data import load_trained_model_for_inference #,predict_from_data_iterator
 # from nnunetv2.inference.data_iterators import get_data_iterator_from_raw_npy_data
+# from nnunetv2.inference.data_iterators import PreprocessAdapterFromNpy
+
+from slice_inflate.utils.nifti_utils import nifti_grid_sample
+# from slice_inflate.utils.nnunetv2_utils import get_segment_fn
+# from slice_inflate.utils.nifti_utils import get_zooms
+
+NUM_PROCESSES = 3
+
 
 @contextmanager
 def suppress_stdout():
@@ -48,21 +69,74 @@ def run_inference_on_image(b_image: torch.Tensor, b_spacing: torch.Tensor,
     network, parameters, plans_manager, configuration_manager, dataset_json,
     inference_allowed_mirroring_axes):
 
-    # assert b_image.ndim == 5, f"Expected 5D tensor, got {b_image.ndim}D"
-    # assert b_spacing.ndim == 2, f"Expected 2D tensor, got {b_spacing.ndim}D"
-    # assert b_spacing.shape[-1] == 3, f"Expected last dimension to be 3, got {b_spacing.shape[-1]}"
+    assert b_image.ndim == 5, f"Expected 5D tensor, got {b_image.ndim}D"
+    assert b_spacing.ndim == 2, f"Expected 2D tensor, got {b_spacing.ndim}D"
+    assert b_spacing.shape[-1] == 3, f"Expected last dimension to be 3, got {b_spacing.shape[-1]}"
     assert (b_spacing - b_spacing.mean(0)).sum() == 0, "Spacing must be the same for all images"
     B = b_image.shape[0]
     properties = B * [dict(spacing=b_spacing[0].tolist())]
+
+    is_2d_model = len(configuration_manager.patch_size) == 2
+    nnunet_spacing = torch.as_tensor(configuration_manager.spacing)
+
+    data = []
+    for idx_img, img in enumerate(b_image):
+
+        # Resample the image to fit the model requirements
+        input_spacing = b_spacing[idx_img]
+        img_shape = img.shape[-3:]
+        if is_2d_model:
+            # Add a dummy spacing
+            target_spacing = torch.cat([input_spacing[0:1], nnunet_spacing], dim=0)
+        else:
+            target_spacing = nnunet_spacing
+
+        target_fov_mm = target_spacing * torch.as_tensor(img_shape)
+        target_fov_vox = torch.as_tensor(img_shape)
+
+        volume_affine = torch.diag(
+            torch.as_tensor(input_spacing.tolist() + [1.])
+            * torch.as_tensor([1,-1,1,1]) # TODO: check why inverting middle axis is needed
+            )[None]
+        resampled, *_ = nifti_grid_sample(img.view(1,1,*img_shape), volume_affine,
+            fov_mm=target_fov_mm, fov_vox =target_fov_vox)
+
+        resampled = (resampled - resampled.mean()) / resampled.std()
+        data_elem = dict(
+            data=resampled[0],
+            data_properites=dict(
+                spacing=b_spacing[idx_img].tolist(),
+                shape_before_cropping=img_shape,
+                bbox_used_for_cropping=torch.stack([torch.zeros(3),torch.as_tensor(img_shape)], dim=0).T.int().tolist(),
+                shape_after_cropping_and_before_resampling=img_shape,
+            ),
+            ofile=None
+        )
+        data.append(data_elem)
+
+    seg = run_inference(data, network, parameters,
+        plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes,
+        device=b_image.device)
+
+    return torch.as_tensor(np.array(seg)).to(b_image.device)
 
     with suppress_stdout():
         data = get_data_iterator_from_raw_npy_data([im for im in b_image.cpu().numpy()], None, properties, None,
                                                    plans_manager, dataset_json, configuration_manager,
                                                    num_processes=NUM_PROCESSES, pin_memory=False)
+
+        # configuration_manager.spacing = [1.5,1.5]
+        # configuration_manager.patch_size = [128,128]
+        # configuration_manager.normalization_schemes = ['ZScoreNormalization']
+
+        # data[0]['data'].shape == [1,1,160,160]
+        # data[0]['data'].mean() == 0.0
+        # data[0]['data'].std() == 1.0
         seg = run_inference(data, network, parameters,
             plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes,
             device=b_image.device)
     return torch.as_tensor(seg).to(b_image.device)
+
 
 
 def run_inference(data, network, parameters,
@@ -90,64 +164,54 @@ def get_segment_fn(model_training_output_path, fold, device):
      inference_allowed_mirroring_axes, plans_manager, dataset_json) = load_network(model_training_output_path, fold)
 
     def segment_closure(b_image: torch.Tensor, b_spacing: torch.Tensor):
-        # assert b_image.ndim == 5, f"Expected 5D tensor, got {b_image.ndim}"
+        assert b_image.ndim == 5, f"Expected 5D tensor, got {b_image.ndim}"
+        return run_inference_on_image(b_image, b_spacing, network, parameters,
+            plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes
+        )
+
         return run_inference_on_image(b_image, b_spacing, network, parameters,
             plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes
         )
 
     return segment_closure
 
-
-from typing import List, Tuple, Union
-import numpy as np
-import  torch.nn as nn
-import  torch.nn.functional as F
-default_num_processes = 0
-import warnings
-from nnunetv2.utilities.helpers import empty_cache, dummy_context
-import traceback
-from scipy.ndimage import gaussian_filter
-from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
-from nnunetv2.inference.data_iterators import PreprocessAdapterFromNpy
-from nnunetv2.utilities.label_handling.label_handling import LabelManager
-
 def bounding_box_to_slice(bounding_box: List[List[int]]):
     return tuple([slice(*i) for i in bounding_box])
 
-def get_data_iterator_from_raw_npy_data(image_or_list_of_images: Union[np.ndarray, List[np.ndarray]],
-                                        segs_from_prev_stage_or_list_of_segs_from_prev_stage: Union[None,
-                                                                                                    np.ndarray,
-                                                                                                    List[np.ndarray]],
-                                        properties_or_list_of_properties: Union[dict, List[dict]],
-                                        truncated_ofname: Union[str, List[str], None],
-                                        plans_manager: PlansManager,
-                                        dataset_json: dict,
-                                        configuration_manager: ConfigurationManager,
-                                        num_processes: int = 3,
-                                        pin_memory: bool = False
-                                        ):
-    list_of_images = [image_or_list_of_images] if not isinstance(image_or_list_of_images, list) else \
-        image_or_list_of_images
+# def get_data_iterator_from_raw_npy_data(image_or_list_of_images: Union[np.ndarray, List[np.ndarray]],
+#                                         segs_from_prev_stage_or_list_of_segs_from_prev_stage: Union[None,
+#                                                                                                     np.ndarray,
+#                                                                                                     List[np.ndarray]],
+#                                         properties_or_list_of_properties: Union[dict, List[dict]],
+#                                         truncated_ofname: Union[str, List[str], None],
+#                                         plans_manager: PlansManager,
+#                                         dataset_json: dict,
+#                                         configuration_manager: ConfigurationManager,
+#                                         num_processes: int = 3,
+#                                         pin_memory: bool = False
+#                                         ):
+#     list_of_images = [image_or_list_of_images] if not isinstance(image_or_list_of_images, list) else \
+#         image_or_list_of_images
 
-    if isinstance(segs_from_prev_stage_or_list_of_segs_from_prev_stage, np.ndarray):
-        segs_from_prev_stage_or_list_of_segs_from_prev_stage = [segs_from_prev_stage_or_list_of_segs_from_prev_stage]
+#     if isinstance(segs_from_prev_stage_or_list_of_segs_from_prev_stage, np.ndarray):
+#         segs_from_prev_stage_or_list_of_segs_from_prev_stage = [segs_from_prev_stage_or_list_of_segs_from_prev_stage]
 
-    if isinstance(truncated_ofname, str):
-        truncated_ofname = [truncated_ofname]
+#     if isinstance(truncated_ofname, str):
+#         truncated_ofname = [truncated_ofname]
 
-    if isinstance(properties_or_list_of_properties, dict):
-        properties_or_list_of_properties = [properties_or_list_of_properties]
+#     if isinstance(properties_or_list_of_properties, dict):
+#         properties_or_list_of_properties = [properties_or_list_of_properties]
 
-    num_processes = min(num_processes, len(list_of_images))
-    ppa = PreprocessAdapterFromNpy(list_of_images, segs_from_prev_stage_or_list_of_segs_from_prev_stage,
-                                   properties_or_list_of_properties, truncated_ofname,
-                                   plans_manager, dataset_json, configuration_manager, num_processes)
-    if num_processes == 0:
-        mta = SingleThreadedAugmenter(ppa, None)
-    else:
-        raise NotImplementedError()
-        # mta = MultiThreadedAugmenter(ppa, None, num_processes, 1, None, pin_memory=pin_memory)
-    return mta
+#     num_processes = min(num_processes, len(list_of_images))
+#     ppa = PreprocessAdapterFromNpy(list_of_images, segs_from_prev_stage_or_list_of_segs_from_prev_stage,
+#                                    properties_or_list_of_properties, truncated_ofname,
+#                                    plans_manager, dataset_json, configuration_manager, num_processes)
+#     if num_processes == 0:
+#         mta = SingleThreadedAugmenter(ppa, None)
+#     else:
+#         # raise NotImplementedError()
+#         mta = MultiThreadedAugmenter(ppa, None, num_processes, 1, None, pin_memory=pin_memory)
+#     return mta
 
 
 class SingleThreadedAugmenter(object):
@@ -193,7 +257,7 @@ def predict_from_data_iterator(data_iterator,
                                perform_everything_on_gpu: bool = True,
                                verbose: bool = True,
                                save_probabilities: bool = False,
-                               num_processes_segmentation_export: int = default_num_processes,
+                               num_processes_segmentation_export: int = NUM_PROCESSES,
                                device: torch.device = torch.device('cuda')):
     """
     each element returned by data_iterator must be a dict with 'data', 'ofile' and 'data_properites' keys!
@@ -251,79 +315,6 @@ def predict_from_data_iterator(data_iterator,
 
     else:
         raise NotImplementedError()
-        # with multiprocessing.get_context("spawn").Pool(num_processes_segmentation_export) as export_pool:
-        #     network = network.to(device)
-
-        #     r = []
-        #     with torch.no_grad():
-        #         for preprocessed in data_iterator:
-        #             data = preprocessed['data']
-        #             if isinstance(data, str):
-        #                 delfile = data
-        #                 data = torch.from_numpy(np.load(data))
-        #                 os.remove(delfile)
-
-        #             ofile = preprocessed['ofile']
-        #             if ofile is not None:
-        #                 print(f'\nPredicting {os.path.basename(ofile)}:')
-        #             else:
-        #                 print(f'\nPredicting image of shape {data.shape}:')
-        #             print(f'perform_everything_on_gpu: {perform_everything_on_gpu}')
-
-        #             properties = preprocessed['data_properites']
-
-        #             # let's not get into a runaway situation where the GPU predicts so fast that the disk has to b swamped with
-        #             # npy files
-        #             proceed = not check_workers_busy(export_pool, r, allowed_num_queued=2 * len(export_pool._pool))
-        #             while not proceed:
-        #                 sleep(0.1)
-        #                 proceed = not check_workers_busy(export_pool, r, allowed_num_queued=2 * len(export_pool._pool))
-
-        #             prediction = predict_logits_from_preprocessed_data(data, network, parameter_list, plans_manager,
-        #                                                             configuration_manager, dataset_json,
-        #                                                             inference_allowed_mirroring_axes, tile_step_size,
-        #                                                             use_gaussian, use_mirroring,
-        #                                                             perform_everything_on_gpu,
-        #                                                             verbose, device)
-        #             prediction = prediction.numpy()
-
-        #             if ofile is not None:
-        #                 # this needs to go into background processes
-        #                 # export_prediction_from_logits(prediction, properties, configuration_manager, plans_manager,
-        #                 #                               dataset_json, ofile, save_probabilities)
-        #                 print('sending off prediction to background worker for resampling and export')
-        #                 r.append(
-        #                     export_pool.starmap_async(
-        #                         export_prediction_from_logits, ((prediction, properties, configuration_manager, plans_manager,
-        #                                                         dataset_json, ofile, save_probabilities),)
-        #                     )
-        #                 )
-        #             else:
-        #                 label_manager = plans_manager.get_label_manager(dataset_json)
-        #                 # convert_predicted_logits_to_segmentation_with_correct_shape(prediction, plans_manager,
-        #                 #                                                             configuration_manager, label_manager,
-        #                 #                                                             properties,
-        #                 #                                                             save_probabilities)
-        #                 r.append(
-        #                     export_pool.starmap_async(
-        #                         convert_predicted_logits_to_segmentation_with_correct_shape, (
-        #                             (prediction, plans_manager,
-        #                             configuration_manager, label_manager,
-        #                             properties,
-        #                             save_probabilities),)
-        #                     )
-        #                 )
-        #             if ofile is not None:
-        #                 print(f'done with {os.path.basename(ofile)}')
-        #             else:
-        #                 print(f'\nDone with image of shape {data.shape}:')
-        #     ret = [i.get()[0] for i in r]
-
-        # if isinstance(data_iterator, MultiThreadedAugmenter):
-        #     data_iterator._finish()
-
-    # clear lru cache
-    compute_gaussian.cache_clear()
     # clear device cache
     empty_cache(device)
     return ret
