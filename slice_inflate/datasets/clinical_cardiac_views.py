@@ -345,13 +345,13 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
 
 
 
-def get_class_volume(b_label, b_spacing, num_classes, unit='ml'):
+def get_class_volumes(b_label, b_spacing, num_classes, unit='ml'):
     '''
         Calculate the volume classes of a batched tensor of labels
         Unit of b_spacing is mm
     '''
     assert b_label.dim() == 5
-    
+
     if unit == 'mm3':
         unit_fact = 1.
     elif unit in ['cm3', 'ml']:
@@ -368,8 +368,7 @@ def get_class_volume(b_label, b_spacing, num_classes, unit='ml'):
 
     for b_idx, (lbl, sp) in enumerate(zip(b_label, b_spacing)):
         class_idxs, num_voxels = lbl.unique(return_counts=True)
-        class_idxs = class_idxs[class_idxs != 0]
-        class_volume = num_voxels * sp.prod()
+        class_volume = num_voxels * sp.prod().to(b_volume)
 
         b_volume.view(-1).scatter_(dim=0,
                           index=(b_idx * num_classes) + class_idxs.long(),
