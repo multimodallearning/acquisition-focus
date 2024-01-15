@@ -53,6 +53,7 @@ from mpl_toolkits.axes_grid1 import ImageGrid
 from slice_inflate.utils.nifti_utils import crop_around_label_center
 from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, \
     log_oa_metrics, log_affine_param_stats, log_frameless_image, get_cuda_mem_info_str
+from slice_inflate.datasets.clinical_cardiac_views import get_class_volumes
 from sklearn.model_selection import KFold
 import numpy as np
 import monai
@@ -751,6 +752,16 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             b_hd95 = torch.cat([torch.zeros(b_sz,1).to(b_hd95), b_hd95], dim=1) # Add zero score for background
             label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd95',
                 b_hd95, training_dataset.label_tags, exclude_bg=True)
+
+            b_vol_ml = get_class_volumes(pred_seg, nifti_zooms, len(training_dataset.label_tags), unit='ml')
+            b_vol_ml_target = get_class_volumes(b_target.argmax(1), nifti_zooms, len(training_dataset.label_tags), unit='ml')
+
+            b_vol_diff = (b_vol_ml - b_vol_ml_target).abs()
+            b_vol_rel_diff = (b_vol_diff / b_vol_ml_target)
+            label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'delta_vol_ml',
+                b_vol_diff, training_dataset.label_tags, exclude_bg=True)
+            label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'delta_vol_rel',
+                b_vol_rel_diff, training_dataset.label_tags, exclude_bg=True)
 
         if store_net_output_to not in ["", None]:
             store_path = Path(store_net_output_to, f"output_batch{batch_idx:05d}.pth")

@@ -350,7 +350,6 @@ def get_class_volumes(b_label, b_spacing, num_classes, unit='ml'):
         Calculate the volume classes of a batched tensor of labels
         Unit of b_spacing is mm
     '''
-    assert b_label.dim() == 5
 
     if unit == 'mm3':
         unit_fact = 1.
