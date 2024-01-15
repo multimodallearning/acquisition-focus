@@ -91,8 +91,8 @@ def run_inference_on_image(b_image: torch.Tensor, b_spacing: torch.Tensor,
         else:
             target_spacing = nnunet_spacing
 
-        target_fov_mm = target_spacing * torch.as_tensor(img_shape).to(target_spacing)
-        target_fov_vox = torch.as_tensor(img_shape)
+        target_fov_mm = input_spacing * torch.as_tensor(img_shape).to(target_spacing)
+        target_fov_vox = (torch.as_tensor(img_shape) * input_spacing / target_spacing).int()
 
         volume_affine = torch.diag(
             torch.as_tensor(input_spacing.tolist() + [1.])
@@ -114,9 +114,10 @@ def run_inference_on_image(b_image: torch.Tensor, b_spacing: torch.Tensor,
         )
         data.append(data_elem)
 
-    seg = run_inference(data, network, parameters,
-        plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes,
-        device=b_image.device)
+    with suppress_stdout():
+        seg = run_inference(data, network, parameters,
+            plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes,
+            device=b_image.device)
 
     return torch.as_tensor(np.array(seg)).to(b_image.device)
 

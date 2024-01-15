@@ -408,8 +408,8 @@ def get_transformed(config, label, soft_label, nifti_affine, known_augment_affin
         pred_slc = eo.rearrange(pred_slc, 'B 1 D H -> B D H 1').long()
         label_slc = eo.rearrange(F.one_hot(pred_slc, num_classes),
             'B D H 1 OH -> B OH D H 1')
-        # plt.imshow(image_slc.squeeze().cpu(), cmap='gray')
-        # plt.imshow(label_slc.argmax(1).squeeze().cpu(), cmap='magma', alpha=.5, interpolation='none')
+        # plt.imshow(image_slc[0].squeeze().cpu(), cmap='gray')
+        # plt.imshow(label_slc[0].argmax(1).squeeze().cpu(), cmap='magma', alpha=.5, interpolation='none')
         # plt.savefig('slice_seg.png')
 
     # if config.crop_around_2d_label_center is not None:
