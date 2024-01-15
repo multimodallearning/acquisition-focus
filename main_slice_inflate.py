@@ -1195,11 +1195,11 @@ else:
             [idx for idx in train_idxs if idx is not None],
             [idx for idx in val_idxs if idx is not None]
         ))
-    fold_iter = enumerate(fold_iter)
+    fold_iter = list(enumerate(fold_iter))
 
     if config_dict.get('fold_override', None):
         selected_fold = config_dict.get('fold_override', 0)
-        fold_iter = list(fold_iter)[selected_fold:selected_fold+1]
+        fold_iter = fold_iter[selected_fold:selected_fold+1]
 
 
 for fold_properties in fold_iter:

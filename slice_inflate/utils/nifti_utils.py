@@ -229,8 +229,8 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
     augmented_grid_affine = (grid_affine @ pre_grid_sample_hidden_affine)
 
     grid = torch.nn.functional.affine_grid(
-        augmented_grid_affine[:,:3,:].view(B,3,4), target_shape, align_corners=False
-    ).to(device=volume.device)
+        augmented_grid_affine.to(volume)[:,:3,:].view(B,3,4), target_shape, align_corners=False
+    )
 
     if is_label:
         gs_kwargs = dict(

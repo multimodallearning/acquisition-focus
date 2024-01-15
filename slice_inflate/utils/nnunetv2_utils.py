@@ -77,7 +77,7 @@ def run_inference_on_image(b_image: torch.Tensor, b_spacing: torch.Tensor,
     properties = B * [dict(spacing=b_spacing[0].tolist())]
 
     is_2d_model = len(configuration_manager.patch_size) == 2
-    nnunet_spacing = torch.as_tensor(configuration_manager.spacing)
+    nnunet_spacing = torch.as_tensor(configuration_manager.spacing).to(b_spacing)
 
     data = []
     for idx_img, img in enumerate(b_image):
@@ -91,7 +91,7 @@ def run_inference_on_image(b_image: torch.Tensor, b_spacing: torch.Tensor,
         else:
             target_spacing = nnunet_spacing
 
-        target_fov_mm = target_spacing * torch.as_tensor(img_shape)
+        target_fov_mm = target_spacing * torch.as_tensor(img_shape).to(target_spacing)
         target_fov_vox = torch.as_tensor(img_shape)
 
         volume_affine = torch.diag(
@@ -99,7 +99,7 @@ def run_inference_on_image(b_image: torch.Tensor, b_spacing: torch.Tensor,
             * torch.as_tensor([1,-1,1,1]) # TODO: check why inverting middle axis is needed
             )[None]
         resampled, *_ = nifti_grid_sample(img.view(1,1,*img_shape), volume_affine,
-            fov_mm=target_fov_mm, fov_vox =target_fov_vox)
+            fov_mm=target_fov_mm, fov_vox=target_fov_vox)
 
         resampled = (resampled - resampled.mean()) / resampled.std()
         data_elem = dict(
