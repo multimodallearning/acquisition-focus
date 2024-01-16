@@ -397,6 +397,8 @@ class MMWHSDataset(HybridIdDataset):
 
         description = f"{len(img_paths)} images, {len(label_paths)} labels"
 
+        class_dict = {tag:idx for idx,tag in enumerate(self.label_tags)}
+
         for _3d_id, _file in tqdm(id_paths_to_load, desc=description):
             additional_data_3d[_3d_id] = additional_data_3d.get(_3d_id, {})
 
@@ -410,7 +412,9 @@ class MMWHSDataset(HybridIdDataset):
                 if self.use_binarized_labels:
                     bin_tmp = tmp.clone()
                     bin_tmp[bin_tmp>0] = 1.0
-                label_data_3d[_3d_id] = bin_tmp.long()
+                    label_data_3d[_3d_id] = bin_tmp.long()
+                else:
+                    label_data_3d[_3d_id] = tmp.long()
 
             else:
                 if self.do_normalize:  # Normalize image to zero mean and unit std
@@ -451,7 +455,6 @@ class MMWHSDataset(HybridIdDataset):
                     additional_data_3d[_3d_id]['lores_prescan'] = lores_prescan.squeeze()
                     additional_data_3d[_3d_id]['lores_prescan_segmentation'] = lores_prescan_segmentation.squeeze()
 
-                    class_dict = {tag:idx for idx,tag in enumerate(self.label_tags)}
                     additional_data_3d[_3d_id]['lores_prescan_view_affines'] = get_clinical_cardiac_view_affines(
                         lores_prescan_segmentation, nii_affine, class_dict,
                         num_sa_slices=15, return_unrolled=True)
