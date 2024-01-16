@@ -342,10 +342,6 @@ class MMWHSDataset(HybridIdDataset):
         with(split_file.open('r')) as split_file:
             split_dict = json.load(split_file)
 
-        metadata_file = data_path / "metadata/metadata.json"
-        with(metadata_file.open('r')) as metadata_file:
-            metadata_dict = json.load(metadata_file)
-
         if self.crop_3d_region is not None:
             self.crop_3d_region = torch.as_tensor(self.crop_3d_region)
 
@@ -412,8 +408,9 @@ class MMWHSDataset(HybridIdDataset):
             if is_label:
                 # tmp = MMWHSDataset.replace_label_values(tmp)
                 if self.use_binarized_labels:
-                    tmp[tmp>0] = 1.0
-                label_data_3d[_3d_id] = tmp.long()
+                    bin_tmp = tmp.clone()
+                    bin_tmp[bin_tmp>0] = 1.0
+                label_data_3d[_3d_id] = bin_tmp.long()
 
             else:
                 if self.do_normalize:  # Normalize image to zero mean and unit std
@@ -423,9 +420,10 @@ class MMWHSDataset(HybridIdDataset):
             # Set additionals
             if is_label:
                 additional_data_3d[_3d_id]['nifti_affine'] = nii_affine # Has to be set once, either for image or label
-                metadata_id = f"{_3d_id.split('_')[0]}_train_{_3d_id.split('_')[1]}_image"
-                view_affines = metadata_dict[metadata_id]['view_affines'] # Has to be set once, either for image or label
-                additional_data_3d[_3d_id]['gt_view_affines'] = {k:torch.as_tensor(v) for k,v in view_affines.items()}
+                view_affines = get_clinical_cardiac_view_affines(
+                    tmp, nii_affine, class_dict,
+                    num_sa_slices=15, return_unrolled=True)
+                additional_data_3d[_3d_id]['gt_view_affines'] = view_affines
                 # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
                 # display_clinical_views(tmp, tmp.to_sparse(), nii_affine, {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
                 #                         output_to_file="my_output.png", debug=False)
