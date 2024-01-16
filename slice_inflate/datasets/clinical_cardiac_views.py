@@ -216,7 +216,7 @@ def display_clinical_views(volume:torch.Tensor, sp_label:torch.Tensor, volume_af
 
     plt.subplots_adjust(left=0.2, right=.8, top=1.2)
     if output_to_file is not None:
-        plt.savefig(output_to_file)
+        fig.savefig(output_to_file, bbox_inches="tight")
     else:
         plt.show()
     plt.close()
@@ -305,9 +305,15 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
     myolv_center, lv_I = get_inertia_tensor(sp_myolv_label)
     lv_min_principal, *_ = get_main_principal_axes(lv_I)
 
-    if get_angle_between_vectors(lv_min_principal[:3], axial_vect[:3]) < np.pi/2:
+    if get_angle_between_vectors(lv_min_principal[:3], sagittal_vect[:3]) < np.pi/2:
         # Invert min principal if it is not pointing to the heart base
+        # print("inverted")
         lv_min_principal = -1 * lv_min_principal
+
+    # print("ax", get_angle_between_vectors(lv_min_principal[:3], axial_vect[:3]))
+    # print("cor", get_angle_between_vectors(lv_min_principal[:3], coronal_vect[:3]))
+    # print("sag", get_angle_between_vectors(lv_min_principal[:3], sagittal_vect[:3]))
+
     # 2. Cut normal to cross(axial, LV centerline) -> p2ch
     # Get pseudo 2CH view
     # display_inertia(sp_myolv_label, pt_p2ch_affine) # debug
