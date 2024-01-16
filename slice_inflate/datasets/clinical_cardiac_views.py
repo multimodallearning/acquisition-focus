@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from matplotlib import pyplot as plt
 from slice_inflate.utils.nifti_utils import nifti_grid_sample
@@ -183,14 +184,11 @@ def display_inertia(sp_label, affine=None):
         plot_inertia(tr_label)
 
 
-def display_clinical_views(volume:torch.Tensor, sp_label:torch.Tensor, volume_affine:torch.Tensor, class_dict: dict, num_sa_slices=3,
-                           output_to_file=None, debug=False):
+def display_clinical_views(volume:torch.Tensor, sp_label:torch.Tensor, volume_affine:torch.Tensor,
+                           clinical_view_affines: dict, output_to_file=None):
     assert volume.dim() == 3
     assert sp_label.dim() == 3
     assert sp_label.is_sparse
-
-    clinical_view_affines = get_clinical_cardiac_view_affines(sp_label, volume_affine, class_dict, num_sa_slices,
-                                                              return_unrolled=True, debug=debug)
 
     fov_mm = torch.tensor([300.,300.,1.])
     fov_vox = torch.tensor([128,128,1])
@@ -217,7 +215,6 @@ def display_clinical_views(volume:torch.Tensor, sp_label:torch.Tensor, volume_af
         ax.axis('off')
 
     plt.subplots_adjust(left=0.2, right=.8, top=1.2)
-    # plt.tight_layout()
     if output_to_file is not None:
         plt.savefig(output_to_file)
     else:
@@ -261,6 +258,12 @@ def get_vector_projection(projectee, base_vect, orthogonal_to_base=False):
     return projectee @ base_vect * base_vect
 
 
+def get_angle_between_vectors(v1, v2):
+    v1 = v1 / torch.linalg.norm(v1,2)
+    v2 = v2 / torch.linalg.norm(v2,2)
+    return torch.acos(v1 @ v2)
+
+
 def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_dict: dict,
                                       num_sa_slices:int = 3, return_unrolled=False, debug=False):
     assert label.dim() == 3
@@ -302,6 +305,9 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
     myolv_center, lv_I = get_inertia_tensor(sp_myolv_label)
     lv_min_principal, *_ = get_main_principal_axes(lv_I)
 
+    if get_angle_between_vectors(lv_min_principal[:3], axial_vect[:3]) < np.pi/2:
+        # Invert min principal if it is not pointing to the heart base
+        lv_min_principal = -1 * lv_min_principal
     # 2. Cut normal to cross(axial, LV centerline) -> p2ch
     # Get pseudo 2CH view
     # display_inertia(sp_myolv_label, pt_p2ch_affine) # debug
