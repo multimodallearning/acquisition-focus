@@ -34,24 +34,24 @@
     "crop_around_3d_label_center": null,
     "crop_around_2d_label_center": null,
     "hires_fov_mm": [
-        240.0,
-        240.0,
-        240.0
+        192.0,
+        192.0,
+        192.0
     ],
     "hires_fov_vox": [
-        160,
-        160,
-        160
+        128,
+        128,
+        128
     ],
     "lores_fov_mm": [
-        240.0,
-        240.0,
-        240.0
+        192.0,
+        192.0,
+        192.0
     ],
     "lores_fov_vox": [
-        40,
-        40,
-        40
+        32,
+        32,
+        32
     ],
     "clinical_view_affine_type": "from-gt",
     "label_slice_type": "from-gt",
