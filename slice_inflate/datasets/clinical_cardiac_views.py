@@ -124,11 +124,9 @@ def get_torch_grid_affine_from_pix_affine(pix_affine, shape):
     return pt_affine
 
 
-def get_affine_from_center_and_plane_vects(px_center, main_plane_vect, plane_vect_two, shape,
-                                           px_center_projected=None,
-                                           space='torch', do_return_normal_three=False):
-    assert space in ['pixel', 'torch']
-    shape = torch.as_tensor(shape)
+def get_pix_affine_from_center_and_plane_vects(px_center, main_plane_vect, plane_vect_two,
+                                           px_center_projected=None, do_return_normal_three=False):
+
     # Normalize
     main_plane_vect /=torch.linalg.norm(main_plane_vect,2)
     plane_vect_two /=torch.linalg.norm(plane_vect_two,2)
@@ -147,11 +145,6 @@ def get_affine_from_center_and_plane_vects(px_center, main_plane_vect, plane_vec
         affine[:3,-1] = projected_center
     else:
         affine[:3,-1] = px_center
-
-    if space == 'torch':
-        affine[:3,:3] = affine[:3,:3].flip(0,1).T
-        # pt_affine[:3,:3] = torch.stack([main_plane_vect.flip(0), plane_vect_two.flip(0), normal_three.flip(0)], dim=1).flip(1) # works as well
-        affine[:3,-1] = (2.* affine[:3,-1] / shape - 1.).flip(0)
 
     if do_return_normal_three:
         return affine, normal_three
@@ -296,9 +289,14 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
     sagittal_vect = torch.tensor([1.,0.,0.])
     coronal_vect = torch.tensor([0.,1.,0.])
     axial_vect = torch.tensor([0.,0.,1.])
-    pt_axial_affine = get_affine_from_center_and_plane_vects(heart_center, sagittal_vect, coronal_vect, label_shape)
-    pt_coronal_affine = get_affine_from_center_and_plane_vects(heart_center, axial_vect, sagittal_vect, label_shape)
-    pt_sagittal_affine = get_affine_from_center_and_plane_vects(heart_center, coronal_vect, axial_vect, label_shape)
+
+    pix_axial_affine = get_pix_affine_from_center_and_plane_vects(heart_center, sagittal_vect, coronal_vect)
+    pix_coronal_affine = get_pix_affine_from_center_and_plane_vects(heart_center, axial_vect, sagittal_vect)
+    pix_sagittal_affine = get_pix_affine_from_center_and_plane_vects(heart_center, coronal_vect, axial_vect)
+
+    pt_axial_affine = get_torch_grid_affine_from_pix_affine(pix_axial_affine, label_shape)
+    pt_coronal_affine = get_torch_grid_affine_from_pix_affine(pix_coronal_affine, label_shape)
+    pt_sagittal_affine = get_torch_grid_affine_from_pix_affine(pix_sagittal_affine, label_shape)
 
     # 1. Extract LV+MYO centerline
     myolv_center, lv_I = get_inertia_tensor(sp_myolv_label)
@@ -307,16 +305,16 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
     # 2. Cut normal to cross(axial, LV centerline) -> p2ch
     # Get pseudo 2CH view
     # display_inertia(sp_myolv_label, pt_p2ch_affine) # debug
-    pix_p2ch_affine, ortho_p2ch_vect = get_affine_from_center_and_plane_vects(
+    pix_p2ch_affine, ortho_p2ch_vect = get_pix_affine_from_center_and_plane_vects(
         myolv_center, lv_min_principal, axial_vect,
-        label_shape, space='pixel', px_center_projected=heart_center, do_return_normal_three=True
+        px_center_projected=heart_center, do_return_normal_three=True
     )
     pt_p2ch_affine = get_torch_grid_affine_from_pix_affine(pix_p2ch_affine, label_shape)
 
     # Get pseudo 4CH view
-    pix_p4ch_affine, ortho_p4ch_vect = get_affine_from_center_and_plane_vects(
+    pix_p4ch_affine, ortho_p4ch_vect = get_pix_affine_from_center_and_plane_vects(
         myolv_center, lv_min_principal, ortho_p2ch_vect,
-        label_shape, px_center_projected=heart_center, space='pixel', do_return_normal_three=True
+        px_center_projected=heart_center, do_return_normal_three=True
     )
     pt_p4ch_affine = get_torch_grid_affine_from_pix_affine(pix_p4ch_affine, label_shape)
 
@@ -328,17 +326,16 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
     for sa_idx in range(num_sa_slices):
         p_along_sa = p1 + delta_p * sa_idx/(num_sa_slices-1)
 
-        current_pix_sa_affine = get_affine_from_center_and_plane_vects(
-            p_along_sa, ortho_p2ch_vect, ortho_p4ch_vect, label_shape,
-            px_center_projected=heart_center, space='pixel')
+        current_pix_sa_affine = get_pix_affine_from_center_and_plane_vects(
+            p_along_sa, ortho_p2ch_vect, ortho_p4ch_vect, px_center_projected=heart_center)
 
         current_pt_sa_affine = get_torch_grid_affine_from_pix_affine(current_pix_sa_affine, label_shape)
         pt_sa_affines.append(current_pt_sa_affine)
 
     # 5. Get 4CH view
     # Find MYO,LV,RV min and mid-principals in center SA view
-    pix_center_sa_affine = get_affine_from_center_and_plane_vects(p1 + .5 * delta_p,
-        ortho_p2ch_vect, ortho_p4ch_vect, label_shape, space='pixel', px_center_projected=heart_center
+    pix_center_sa_affine = get_pix_affine_from_center_and_plane_vects(p1 + .5 * delta_p,
+        ortho_p2ch_vect, ortho_p4ch_vect, px_center_projected=heart_center
     )
 
     # Get MYO,LV,RV min and mid principal direction with respect to volume
@@ -352,8 +349,8 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
     )[0]
 
     # Get 4CH affine
-    pix_4ch_affine = get_affine_from_center_and_plane_vects(myolv_center, volume_space_sa_myolvrv_min_principal,
-        volume_space_p2CH_lv_min_principal, label_shape, space='pixel', px_center_projected=heart_center
+    pix_4ch_affine = get_pix_affine_from_center_and_plane_vects(myolv_center, volume_space_sa_myolvrv_min_principal,
+        volume_space_p2CH_lv_min_principal, px_center_projected=heart_center
     )
     pt_4ch_affine = get_torch_grid_affine_from_pix_affine(pix_4ch_affine, label_shape)
 
@@ -365,9 +362,9 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
         sp_myolvla_label, volume_affine, pix_4ch_affine, label_shape, debug=debug
     )[0]
 
-    pix_2ch_affine = get_affine_from_center_and_plane_vects(myolvla_center,
-        volume_space_sa_myolvrv_mid_principal, volume_space_4CH_myolvrv_min_principal, label_shape,
-        space='pixel', px_center_projected=heart_center
+    pix_2ch_affine = get_pix_affine_from_center_and_plane_vects(myolvla_center,
+        volume_space_sa_myolvrv_mid_principal, volume_space_4CH_myolvrv_min_principal,
+        px_center_projected=heart_center
     )
     pt_2ch_affine = get_torch_grid_affine_from_pix_affine(pix_2ch_affine, label_shape)
 
