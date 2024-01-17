@@ -1,6 +1,6 @@
 import torch
 import collections
-from slice_inflate.models.affine_transform import get_theta_params
+from slice_inflate.models.learnable_transform import get_theta_params
 
 class StageIterator(collections.abc.Iterator):
     def __init__(self, stages, verbose=False):
