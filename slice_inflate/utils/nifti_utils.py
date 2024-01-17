@@ -184,6 +184,11 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
     if pre_grid_sample_hidden_affine is not None:
         assert isinstance(pre_grid_sample_hidden_affine, torch.Tensor)
 
+    if fov_mm is None:
+        fov_mm = get_zooms(volume_affine)
+    if fov_vox is None:
+        fov_vox = torch.as_tensor(volume.shape[-3:])
+
     DIM = volume.dim()
     assert DIM == 5
 
@@ -211,7 +216,7 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
         ras_transform_mat = get_noop_ras_transfrom_mat(volume_affine, volume_shape)
 
     ras_transform_mat = ras_transform_mat.to(volume_affine)
-    
+
     assert volume_affine.dim() == ras_transform_mat.dim() == 3 \
         and B == volume_affine.shape[0] \
         and B == ras_transform_mat.shape[0]

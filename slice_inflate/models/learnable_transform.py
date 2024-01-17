@@ -1,3 +1,4 @@
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -11,7 +12,8 @@ import dill
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.utils.common_utils import get_script_dir
 from slice_inflate.utils.torch_utils import torch_manual_seeded
-from pathlib import Path
+from slice_inflate.datasets.clinical_cardiac_views import get_inertia_tensor, get_main_principal_axes, get_pix_affine_from_center_and_plane_vects, get_torch_grid_affine_from_pix_affine
+
 
 class ConvNet(torch.nn.Module):
     def __init__(self, input_channels, kernel_size, padding, norm_op=nn.InstanceNorm3d):
@@ -98,7 +100,8 @@ class AffineTransformModule(torch.nn.Module):
 
         self.fov_mm = fov_mm
         self.fov_vox = fov_vox
-        self.slice_fov_vox = torch.cat([fov_vox[:2], torch.tensor([1])], dim=0)
+        self.slice_fov_vox = torch.as_tensor(fov_vox[:2].tolist() + [1])
+        self.slice_fov_mm = torch.as_tensor(fov_mm[:2].tolist() + [fov_mm[-1]/fov_vox[-1]])
         self.spat = int(fov_vox[-1])
 
         self.use_affine_theta = use_affine_theta
@@ -243,7 +246,7 @@ class AffineTransformModule(torch.nn.Module):
 
         return theta_a, theta_t, theta_z
 
-    def forward(self, x_image, x_label, nifti_affine, grid_affine_pre_mlp, grid_affine_augment, theta_override=None):
+    def forward(self, x_image, x_label, nifti_affine, grid_affine_pre_mlp, grid_affine_augment, theta_override=None, align_affine_override=None):
 
         x_image_is_none = x_image is None or x_image.numel() == 0
         x_label_is_none = x_label is None or x_label.numel() == 0
@@ -299,14 +302,14 @@ class AffineTransformModule(torch.nn.Module):
         if not x_image_is_none:
             # nifti_affine is the affine of the original volume
             y_image, grid_affine, transformed_nii_affine = nifti_grid_sample(x_image, nifti_affine,
-                                        fov_mm=self.fov_mm, fov_vox=self.slice_fov_vox, is_label=False,
+                                        fov_mm=self.slice_fov_mm, fov_vox=self.slice_fov_vox, is_label=False,
                                         pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
                                         pre_grid_sample_hidden_affine=grid_affine_augment)
 
         if not x_label_is_none:
             # nifti_affine is the affine of the original volume
             y_label, grid_affine, transformed_nii_affine = nifti_grid_sample(x_label, nifti_affine,
-                                        fov_mm=self.fov_mm, fov_vox=self.slice_fov_vox, is_label=True,
+                                        fov_mm=self.slice_fov_mm, fov_vox=self.slice_fov_vox, is_label=True,
                                         pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
                                         pre_grid_sample_hidden_affine=grid_affine_augment)
 
@@ -314,9 +317,16 @@ class AffineTransformModule(torch.nn.Module):
         self.last_transformed_nii_affine = transformed_nii_affine
 
         # Rotate to main principle of slice to constrain the output
-        # rotate_slice_to_main_principle(y_label, transformed_nii_affine, y_image=None)
+        align_affine = align_affine_override
+        if not x_image is None:
+            y_image, align_affine, transformed_nii_affine = rotate_slice_to_main_principle(y_image,
+                transformed_nii_affine, is_label=False, align_affine_override=align_affine)
+        if not y_label is None:
+            y_label, align_affine, transformed_nii_affine = rotate_slice_to_main_principle(y_label,
+                transformed_nii_affine, is_label=True, align_affine_override=align_affine)
 
-        return y_image, y_label, grid_affine, transformed_nii_affine
+        grid_affine = grid_affine @ align_affine
+        return y_image, y_label, grid_affine, align_affine, transformed_nii_affine
 
 
 
@@ -737,8 +747,34 @@ def get_mean_theta(b_theta, as_B=False):
     return mean_theta
 
 
-def rotate_slice_to_main_principle(y_label, nii_affine, y_image=None):
-    from slice_inflate.datasets.clinical_cardiac_views import get_inertia_tensor_batched, get_inertia_tensor
-    get_inertia_tensor_batched(y_label)
+def rotate_slice_to_main_principle(x_input, nii_affine, is_label=False, align_affine_override=None):
+    assert x_input.shape[-1] == 1
+    B = x_input.shape[0]
+    sample_mode='nearest' if is_label else 'bilinear'
 
-    return y_image, y_label, grid_affine, transformed_nii_affine
+    if align_affine_override is None:
+        b_align_affines = torch.zeros(B,4,4).to(x_input.device)
+
+        for b_idx, lbl in enumerate(x_input):
+            center, I = get_inertia_tensor(lbl.argmax(0))
+            center[-1] = 0.5
+            min_principal, *_ = get_main_principal_axes(I)
+            second_vect = min_principal.cross(torch.tensor([0.,0.,1.]))
+            pix_align_affine = get_pix_affine_from_center_and_plane_vects(
+                center, min_principal, second_vect,
+                do_return_normal_three=False
+            )
+            pt_align_affine = get_torch_grid_affine_from_pix_affine(pix_align_affine, x_input.shape[-3:])
+            b_align_affines[b_idx] = pt_align_affine
+    else:
+        b_align_affines = align_affine_override
+
+    align_grid = torch.nn.functional.affine_grid(b_align_affines[:,:3], x_input.shape, align_corners=False)
+
+    # y_output, grid_affine, transformed_nii_affine = nifti_grid_sample(x_input, nii_affine,
+    #                                                                 pre_grid_sample_affine=b_align_affines,
+    #                                                                 is_label=True)
+    y_output = torch.nn.functional.grid_sample(x_input, align_grid, align_corners=False, mode=sample_mode)
+
+    transformed_nii_affine = None # TODO nii affine is not used and returned and updated
+    return y_output, b_align_affines, transformed_nii_affine
