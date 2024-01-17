@@ -16,7 +16,7 @@ from torch.utils.checkpoint import checkpoint
 
 from slice_inflate.utils.common_utils import DotDict, get_script_dir
 from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, calc_dist_map, get_rotation_matrix_3d_from_angles
-from slice_inflate.models.affine_transform import get_random_affine
+from slice_inflate.models.learnable_transform import get_random_affine
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
 from slice_inflate.utils.nifti_utils import crop_around_label_center, nifti_grid_sample
 from slice_inflate.utils.torch_utils import cut_slice, soft_cut_slice
