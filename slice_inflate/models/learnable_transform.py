@@ -98,6 +98,7 @@ class AffineTransformModule(torch.nn.Module):
 
         self.fov_mm = fov_mm
         self.fov_vox = fov_vox
+        self.slice_fov_vox = torch.cat([fov_vox[:2], torch.tensor([1])], dim=0)
         self.spat = int(fov_vox[-1])
 
         self.use_affine_theta = use_affine_theta
@@ -263,13 +264,6 @@ class AffineTransformModule(torch.nn.Module):
                     pre_grid_sample_affine=grid_affine_pre_mlp
                 )
 
-            # if not x_label_is_none:
-            #     # nifti_affine is the affine of the original volume
-            #     x_label_pre_mlp, grid_affine, transformed_nii_affine = nifti_grid_sample(x_label, nifti_affine,
-            #         fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=True,
-            #         pre_grid_sample_affine=grid_affine_pre_mlp
-            #     )
-
         if theta_override is not None:
             theta = theta_override.detach().clone() # Caution: this is a non-differentiable theta
         else:
@@ -305,19 +299,22 @@ class AffineTransformModule(torch.nn.Module):
         if not x_image_is_none:
             # nifti_affine is the affine of the original volume
             y_image, grid_affine, transformed_nii_affine = nifti_grid_sample(x_image, nifti_affine,
-                                        fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=False,
+                                        fov_mm=self.fov_mm, fov_vox=self.slice_fov_vox, is_label=False,
                                         pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
                                         pre_grid_sample_hidden_affine=grid_affine_augment)
 
         if not x_label_is_none:
             # nifti_affine is the affine of the original volume
             y_label, grid_affine, transformed_nii_affine = nifti_grid_sample(x_label, nifti_affine,
-                                        fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=True,
+                                        fov_mm=self.fov_mm, fov_vox=self.slice_fov_vox, is_label=True,
                                         pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
                                         pre_grid_sample_hidden_affine=grid_affine_augment)
 
         self.last_grid_affine = grid_affine
         self.last_transformed_nii_affine = transformed_nii_affine
+
+        # Rotate to main principle of slice to constrain the output
+        # rotate_slice_to_main_principle(y_label, transformed_nii_affine, y_image=None)
 
         return y_image, y_label, grid_affine, transformed_nii_affine
 
@@ -336,85 +333,6 @@ class HardCutModule(torch.nn.Module):
         cut = b_volume[center:center+1, ...]
         return eo.rearrange(cut, ' W B C D H -> B C D H W')
 
-
-
-# class LearnCutModule(torch.nn.Module):
-
-#     def __init__(self, input_channels, size_3d, align_corners=False, mode='linear'):
-#         super().__init__()
-#         assert mode in ['linear', 'nearest']
-#         assert size_3d[0] == size_3d[1] == size_3d[2]
-#         self.localisation_net = LocalisationNet(
-#             input_channels,
-#             size_3d[-1],
-#             size_3d=size_3d[-1]*3) # 3 for three translational parameters
-#         self.size_3d = size_3d
-#         self.arra = torch.arange(0, size_3d[-1])
-#         self.align_corners = align_corners
-#         self.mode = mode
-
-    # def forward(self, b_volume, slice_posxs_override=None):
-    #     assert b_volume.dim() == 5
-    #     B,C,D,H,W = b_volume.shape
-    #     assert D == H == W
-    #     assert W == self.size_3d[-1]
-
-    #     if slice_pos_override is None:
-    #         b_slice_selector = self.localisation_net(b_volume).view(B,3,W)
-    #         slice_posxs = (
-    #             torch.nn.functional.softmax(b_slice_selector, dim=2)
-    #             * self.arra.to(b_volume).view(1,1,W)
-    #         ).sum(-1)
-    #     else:
-    #         slice_posxs = slice_posxs_override
-
-    #     slice_posxs[:,0] = slice_posxs[:,0].clamp(0,W-1)
-    #     slice_posxs[:,1] = slice_posxs[:,1].clamp(0,W-1)
-    #     slice_posxs[:,2] = slice_posxs[:,2].clamp(0,W-1)
-
-    #     slice_posxs = torch.tensor([0, 0, 80.]).to(b_volume) # TODO remove!
-
-    #     gs_space_affine = torch.eye(4).repeat(B,1,1).to(b_volume)
-
-    #     if self.align_corners:
-    #         # see https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/GridSampler.h
-    #         gs_offsets = 2./(W-1)*slice_posxs - 1.0
-    #     else:
-    #         gs_offsets = (2.0*slice_posxs + 1.0)/W - 1.0
-
-    #     gs_space_affine[:,:3,-1] = gs_offsets # Caution: W is at row index 0
-
-    #     grid = torch.nn.functional.affine_grid(
-    #         gs_space_affine[:,:3,:].view(B,3,4), (B,C,D,H,1), align_corners=self.align_corners
-    #     ).to(device=volume.device)
-
-    #     cut_slice = checkpoint(
-    #         torch.nn.functional.grid_sample,
-    #         volume.to(dtype=dtype), grid.to(dtype=dtype), self.mode, 'zeros', align_corners=self.align_corners
-    #     )
-
-    #     # slice_lower_posxs = slice_posxs.floor().clamp(0,W-1)
-    #     # slice_upper_posxs = (slice_lower_posxs+1).clamp(0,W-1)
-    #     # upper_factor = slice_posxs - slice_lower_posxs
-    #     # lower_factor = 1.0 - upper_factor
-
-    #     # if self.mode == 'nearest':
-    #     #     if lower_factor >= upper_factor:
-    #     #         slice_upper_posxs = slice_lower_posxs
-    #     #     else:
-    #     #         slice_lower_posxs = slice_upper_posxs
-    #     #     lower_factor = upper_factor = 0.5
-
-    #     # # Gradient flows through slice interpolation factors
-    #     # slice_lower_posxs = slice_lower_posxs.long()
-    #     # slice_upper_posxs = slice_upper_posxs.long()
-
-    #     # interpolated_slice = (
-    #     #     lower_factor * b_volume[..., slice_lower_posxs[2]]
-    #     #     + upper_factor * b_volume[..., slice_upper_posxs[2]]
-    #     # )
-
-    #     return cut_slice, gs_space_affine
 
 
 class SoftCutModule(torch.nn.Module):
@@ -817,3 +735,10 @@ def get_mean_theta(b_theta, as_B=False):
         mean_theta = mean_theta.view(1,4,4).repeat(bsz,1,1)
 
     return mean_theta
+
+
+def rotate_slice_to_main_principle(y_label, nii_affine, y_image=None):
+    from slice_inflate.datasets.clinical_cardiac_views import get_inertia_tensor_batched, get_inertia_tensor
+    get_inertia_tensor_batched(y_label)
+
+    return y_image, y_label, grid_affine, transformed_nii_affine

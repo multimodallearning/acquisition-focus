@@ -55,6 +55,32 @@ def get_inertia_tensor(label):
     return center, I
 
 
+
+def get_inertia_tensor_batched(b_label):
+    # see https://en.wikipedia.org/wiki/Moment_of_inertia#Inertia_tensor
+    assert b_label.dim() == 4
+    B = b_label.shape[0]
+
+    if b_label.is_sparse:
+        b_sp_label = b_label
+    else:
+        b_sp_label = b_label.to_sparse()
+    idxs = b_sp_label._indices()
+    center = idxs.float().mean(2)
+    dists = idxs - center.view(B,3,1)
+    r2 = torch.linalg.vector_norm(dists, 2, dim=0)**2
+    I = torch.zeros(B,3,3)
+
+    for i in range(3):
+        x_i = dists[:,i]
+        for j in range(3):
+            x_j = dists[:,j]
+            kron = float(i==j)
+            I[:,i,j] = (r2 * kron - x_i * x_j).sum()
+    # print("inertia\n", I)
+    return center, I
+
+
 def get_main_principal_axes(I):
     assert I.shape == (3,3)
     eigenvectors = torch.linalg.eig(I).eigenvectors.real.T

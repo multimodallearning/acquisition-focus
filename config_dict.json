@@ -70,5 +70,5 @@
     "transform_model_checkpoint_path": null,
     "do_output": true,
     "device": "cuda",
-    "use_autocast": true
+    "use_autocast": false
 }
