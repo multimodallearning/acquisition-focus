@@ -11,7 +11,9 @@
             "program": "${workspaceFolder}/main_slice_inflate.py",
             "console": "integratedTerminal",
             "justMyCode": false,
-            "env": {"PYDEVD_WARN_SLOW_RESOLVE_TIMEOUT": "3"}
+            "env": {
+                "PYDEVD_WARN_SLOW_RESOLVE_TIMEOUT": "3"
+            }
         }
     ]
 }
