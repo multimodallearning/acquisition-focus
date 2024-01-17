@@ -29,6 +29,7 @@ class SkipConnector(torch.nn.Module):
 
         assert mode in ['repeat', 'fill-sparse']
         self.mode = mode
+        self.dtype = torch.float32
 
     def forward(self, x, b_grid_affines):
         B,C,SPAT,_ = x.shape
@@ -48,7 +49,7 @@ class SkipConnector(torch.nn.Module):
 
         # Grid sample first channel chunk with inverse SA affines
         sa_grid = torch.nn.functional.affine_grid(
-            b_grid_affines[0].inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
+            b_grid_affines[0].to(self.dtype).inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
         )
         transformed_sa = checkpoint(torch.nn.functional.grid_sample,
             x_sa, sa_grid.to(x_sa), 'bilinear', 'border', False
@@ -56,7 +57,7 @@ class SkipConnector(torch.nn.Module):
 
         # Grid sample second channel chunk with inverse HLA affines
         hla_grid = torch.nn.functional.affine_grid(
-            b_grid_affines[1].inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
+            b_grid_affines[1].to(self.dtype).inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
         )
         transformed_hla = checkpoint(torch.nn.functional.grid_sample,
             x_hla, hla_grid.to(x_hla), 'bilinear', 'border', False

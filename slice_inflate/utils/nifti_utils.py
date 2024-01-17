@@ -192,15 +192,8 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
 
     # Prepare shapes
     B,C,D,H,W = volume.shape
-    volume_shape = torch.tensor([D,H,W], device=device)
+    volume_shape = torch.tensor([D,H,W])
     target_shape = torch.Size([B,C] + fov_vox.tolist())
-
-    if ras_transform_mat is None:
-        ras_transform_mat = get_noop_ras_transfrom_mat(volume_affine, volume_shape)
-
-    assert volume_affine.dim() == ras_transform_mat.dim() == 3 \
-        and B == volume_affine.shape[0] \
-        and B == ras_transform_mat.shape[0]
 
     if pre_grid_sample_affine is not None:
         assert pre_grid_sample_affine.dim() == 3 \
@@ -209,10 +202,20 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
         assert pre_grid_sample_hidden_affine.dim() == 3 \
             and B == pre_grid_sample_hidden_affine.shape[0]
 
-    fov_mm = fov_mm.to(device)
-    fov_vox = fov_vox.to(device)
-    volume_affine = volume_affine.to(device)
+    fov_mm = fov_mm.to(dtype=dtype, device=device)
+    fov_vox = fov_vox.to(dtype=dtype, device=device)
+    volume_affine = volume_affine.to(dtype=dtype, device=device)
+    volume_shape = volume_shape.to(dtype=dtype, device=device)
+
+    if ras_transform_mat is None:
+        ras_transform_mat = get_noop_ras_transfrom_mat(volume_affine, volume_shape)
+
     ras_transform_mat = ras_transform_mat.to(volume_affine)
+    
+    assert volume_affine.dim() == ras_transform_mat.dim() == 3 \
+        and B == volume_affine.shape[0] \
+        and B == ras_transform_mat.shape[0]
+
 
     if pre_grid_sample_affine is None:
         pre_grid_sample_affine = torch.eye(4)[None]
