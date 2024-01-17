@@ -67,7 +67,7 @@ from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
     get_batch_dice_over_all, get_batch_score_per_label, save_model, \
     reduce_label_scores_epoch, get_test_func_all_parameters_updated, anomaly_hook, cut_slice
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
-from slice_inflate.models.affine_transform import AffineTransformModule, SoftCutModule, HardCutModule, get_random_ortho6_vector
+from slice_inflate.models.learnable_transform import AffineTransformModule, SoftCutModule, HardCutModule, get_random_ortho6_vector
 from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
 from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params, deactivate_r_params, Stage, StageIterator
 from slice_inflate.utils.nnunetv2_utils import get_segment_fn
@@ -277,7 +277,6 @@ def get_atm(config, num_classes, size_3d, view, this_script_dir, _path=None, ran
         torch.tensor(config.hires_fov_vox),
         offset_clip_value=config['offset_clip_value'],
         zoom_clip_value=config['zoom_clip_value'],
-        view_affine=None,
         optim_method=config.affine_theta_optim_method,
         tag=view)
 
@@ -368,7 +367,7 @@ def get_transform_model(config, num_classes, size_3d, this_script_dir, _path=Non
 
 
 # %%
-def get_transformed(config, label, soft_label, nifti_affine, known_augment_affine, hidden_augment_affine,
+def get_transformed(config, label, soft_label, nifti_affine, grid_affine_pre_mlp, hidden_augment_affine,
                     atm, cut_module, image=None, segment_fn=None):
 
     img_is_invalid = image is None or image.dim() == 0
@@ -380,27 +379,14 @@ def get_transformed(config, label, soft_label, nifti_affine, known_augment_affin
 
     # Transform  label with 'bilinear' interpolation to have gradients
     soft_label, label, grid_affine, _ = atm(soft_label.view(B, num_classes, D, H, W), label.view(B, num_classes, D, H, W),
-        nifti_affine, known_augment_affine, hidden_augment_affine)
+        nifti_affine, grid_affine_pre_mlp, hidden_augment_affine)
 
     image, _, _, _ = atm(image.view(B, 1, D, H, W), None,
-        nifti_affine, known_augment_affine, hidden_augment_affine, theta_override=atm.last_theta)
-
-    # if config.crop_around_3d_label_center is not None:
-    #     _3d_vox_size = torch.as_tensor(
-    #         crop_around_3d_label_center)
-    #     label, image, _ = crop_around_label_center(
-    #         label, _3d_vox_size, image)
-    #     _, soft_label, _ = crop_around_label_center(
-    #         label, _3d_vox_size, soft_label)
-
-    # label_slc, slice_pos , gs_space_affine = cut_module(soft_label)
-    # grid_affine = grid_affine @ gs_space_affine.to(grid_affine)
-    # image_slc, *_ = cut_module(image, slice_pos_override=slice_pos)
+        nifti_affine, grid_affine_pre_mlp, hidden_augment_affine, theta_override=atm.last_theta)
 
     label_slc = cut_module(soft_label)
     image_slc = cut_module(image)
 
-    # TODO Add slice segmentation
     if config.label_slice_type == 'from-gt':
         pass
     elif config.label_slice_type == 'from-segmented-hires':
@@ -414,12 +400,6 @@ def get_transformed(config, label, soft_label, nifti_affine, known_augment_affin
         # plt.imshow(label_slc[0].argmax(1).squeeze().cpu(), cmap='magma', alpha=.5, interpolation='none')
         # plt.savefig('slice_seg.png')
 
-    # if config.crop_around_2d_label_center is not None:
-    #     _2d_vox_size = torch.as_tensor(
-    #         crop_around_2d_label_center+[1])
-    #     label_slc, image_slc, _ = crop_around_label_center(
-    #         label_slc, _2d_vox_size, image_slc)
-
     if img_is_invalid:
         image = torch.empty([])
         image_slc = torch.empty([])
@@ -430,7 +410,6 @@ def get_transformed(config, label, soft_label, nifti_affine, known_augment_affin
 
 
 def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, hla_cut_module, segment_fn):
-
     b_label = batch['label']
     b_image = batch['image']
 
@@ -462,37 +441,16 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
             # Use case dependent grid affine of p2CH view
             sa_input_grid_affine = torch.as_tensor(b_view_affines['p2CH']).view(B,4,4).to(known_augment_affine)
 
-            # TODO add volume transformation step here
-            with torch.no_grad():
-                # Reorient volumes based on clinical view
-                sai_b_label, *_ = nifti_grid_sample(
-                    b_label.view(B, NUM_CLASSES, D, H, W), nifti_affine,
-                    fov_mm=torch.as_tensor(config.hires_fov_mm), fov_vox=torch.as_tensor(config.hires_fov_vox),
-                    pre_grid_sample_affine=sa_input_grid_affine, is_label=True
-                )
-                sai_b_soft_label, *_ = nifti_grid_sample(
-                    b_soft_label.view(B, NUM_CLASSES, D, H, W), nifti_affine,
-                    fov_mm=torch.as_tensor(config.hires_fov_mm), fov_vox=torch.as_tensor(config.hires_fov_vox),
-                    pre_grid_sample_affine=sa_input_grid_affine, is_label=True
-                )
-                sai_b_image, _, sai_nifti_affine = nifti_grid_sample(
-                    b_image.view(B, 1, D, H, W), nifti_affine,
-                    fov_mm=torch.as_tensor(config.hires_fov_mm), fov_vox=torch.as_tensor(config.hires_fov_vox),
-                    pre_grid_sample_affine=sa_input_grid_affine, is_label=False
-                )
-
             sa_image, sa_label, sa_image_slc, sa_label_slc, sa_grid_affine = \
                 get_transformed(
                     config,
-                    sai_b_label.view(B, NUM_CLASSES, D, H, W),
-                    sai_b_soft_label.view(B, NUM_CLASSES, D, H, W),
-                    sai_nifti_affine,
-                    known_augment_affine,
+                    b_label.view(B, NUM_CLASSES, D, H, W),
+                    b_soft_label.view(B, NUM_CLASSES, D, H, W),
+                    nifti_affine,
+                    known_augment_affine, # @ sa_input_grid_affine,
                     hidden_augment_affine,
                     sa_atm, sa_cut_module,
-                    image=sai_b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
-
-            sa_grid_affine = sa_input_grid_affine @ sa_grid_affine # Compensate the initial reorientation
+                    image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
 
     if 'hla' in config.cuts_mode:
         # Use case dependent grid affine of p2CH view
@@ -503,7 +461,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
                 b_label.view(B, NUM_CLASSES, D, H, W),
                 b_soft_label.view(B, NUM_CLASSES, D, H, W),
                 nifti_affine,
-                known_augment_affine @ hla_input_grid_affine,
+                known_augment_affine, # @ hla_input_grid_affine,
                 hidden_augment_affine,
                 hla_atm, hla_cut_module,
                 image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)

@@ -66,7 +66,7 @@ class LocalisationNet(torch.nn.Module):
 
 class AffineTransformModule(torch.nn.Module):
     def __init__(self, input_channels, size_3d,
-        fov_mm, fov_vox, view_affine,
+        fov_mm, fov_vox,
         optim_method='angle-axis', use_affine_theta=True,
         offset_clip_value=1., zoom_clip_value=2., tag=None,
         align_corners=False):
@@ -99,11 +99,6 @@ class AffineTransformModule(torch.nn.Module):
         self.fov_mm = fov_mm
         self.fov_vox = fov_vox
         self.spat = int(fov_vox[-1])
-
-        if isinstance(view_affine, torch.Tensor):
-            self.view_affine = view_affine.view(1,4,4)
-        else:
-            self.view_affine = None
 
         self.use_affine_theta = use_affine_theta
         self.align_corners = align_corners
@@ -247,7 +242,7 @@ class AffineTransformModule(torch.nn.Module):
 
         return theta_a, theta_t, theta_z
 
-    def forward(self, x_image, x_label, nifti_affine, fix_input_grid_affine, hidden_fix_input_grid_affine, theta_override=None):
+    def forward(self, x_image, x_label, nifti_affine, grid_affine_pre_mlp, grid_affine_augment, theta_override=None):
 
         x_image_is_none = x_image is None or x_image.numel() == 0
         x_label_is_none = x_label is None or x_label.numel() == 0
@@ -259,6 +254,22 @@ class AffineTransformModule(torch.nn.Module):
         device = x_label.device if not x_label_is_none else x_image.device
         B = x_label.shape[0] if not x_label_is_none else x_image.shape[0]
 
+        with torch.no_grad():
+            # This is the affine that is applied to the volume before the grid sampling -> Input of MLP must be reoriented to a common space
+            if not x_image_is_none:
+                # nifti_affine is the affine of the original volume
+                x_image_pre_mlp, check_affine, transformed_nii_affine = nifti_grid_sample(x_image, nifti_affine,
+                    fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=False,
+                    pre_grid_sample_affine=grid_affine_pre_mlp
+                )
+
+            # if not x_label_is_none:
+            #     # nifti_affine is the affine of the original volume
+            #     x_label_pre_mlp, grid_affine, transformed_nii_affine = nifti_grid_sample(x_label, nifti_affine,
+            #         fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=True,
+            #         pre_grid_sample_affine=grid_affine_pre_mlp
+            #     )
+
         if theta_override is not None:
             theta = theta_override.detach().clone() # Caution: this is a non-differentiable theta
         else:
@@ -267,7 +278,7 @@ class AffineTransformModule(torch.nn.Module):
             theta_a, theta_t, theta_z = theta_a.repeat(B,1,1), theta_t.repeat(B,1,1), theta_z.repeat(B,1,1)
 
             if self.use_affine_theta:
-                theta_a_b, theta_t_b, theta_z_b = self.get_batch_affines(x_image) # Initial parameters are applied here as well
+                theta_a_b, theta_t_b, theta_z_b = self.get_batch_affines(x_image_pre_mlp) # Initial parameters are applied here as well
                 theta_a = theta_a_b @ theta_a
                 theta_t = theta_t_b @ theta_t
                 theta_z = theta_z_b @ theta_z
@@ -290,24 +301,20 @@ class AffineTransformModule(torch.nn.Module):
         # globabl_prelocate_affine : Affine for prelocating the volume (slice orientation and augmentation)
         # theta   : Affine for the learnt transformation
 
-        if self.view_affine is not None:
-            global_prelocate_affine = self.view_affine.repeat(B,1,1).to(device)
-        else:
-            global_prelocate_affine = None
-
+        # Here is the learnable grid_sampling
         if not x_image_is_none:
             # nifti_affine is the affine of the original volume
-            y_image, grid_affine, transformed_nii_affine = nifti_grid_sample(x_image, nifti_affine, global_prelocate_affine,
+            y_image, grid_affine, transformed_nii_affine = nifti_grid_sample(x_image, nifti_affine,
                                         fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=False,
-                                        pre_grid_sample_affine=theta @ fix_input_grid_affine.to(theta.device),
-                                        pre_grid_sample_hidden_affine=hidden_fix_input_grid_affine)
+                                        pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
+                                        pre_grid_sample_hidden_affine=grid_affine_augment)
 
         if not x_label_is_none:
             # nifti_affine is the affine of the original volume
-            y_label, grid_affine, transformed_nii_affine = nifti_grid_sample(x_label, nifti_affine, global_prelocate_affine,
+            y_label, grid_affine, transformed_nii_affine = nifti_grid_sample(x_label, nifti_affine,
                                         fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=True,
-                                        pre_grid_sample_affine=theta @ fix_input_grid_affine.to(theta.device),
-                                        pre_grid_sample_hidden_affine=hidden_fix_input_grid_affine)
+                                        pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
+                                        pre_grid_sample_hidden_affine=grid_affine_augment)
 
         self.last_grid_affine = grid_affine
         self.last_transformed_nii_affine = transformed_nii_affine
