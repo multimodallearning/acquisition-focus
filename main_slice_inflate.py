@@ -280,7 +280,8 @@ def get_atm(config, num_classes, size_3d, view, this_script_dir, _path=None, ran
         offset_clip_value=config['offset_clip_value'],
         zoom_clip_value=config['zoom_clip_value'],
         optim_method=config.affine_theta_optim_method,
-        tag=view)
+        tag=view,
+        rotate_slice_to_main_principle=config.rotate_slice_to_main_principle)
 
     if random_ap_init:
         atm.set_init_theta_ap(get_random_ortho6_vector(rotation_strength=0.5, constrained=False))
@@ -1102,7 +1103,8 @@ def stage_sweep_run(config_dict, fold_properties, all_stages, training_dataset, 
         # Update intersecting keys of both
         stage_config.update((key, stage[key]) for key in set(stage).intersection(stage_config))
         print()
-
+        
+        torch.cuda.empty_cache()
         with wandb.init(project=PROJECT_NAME, config=stage_config, settings=wandb.Settings(start_method="thread"),
             mode=stage_config['wandb_mode']) as run:
 

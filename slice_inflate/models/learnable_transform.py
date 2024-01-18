@@ -71,7 +71,7 @@ class AffineTransformModule(torch.nn.Module):
         fov_mm, fov_vox,
         optim_method='angle-axis', use_affine_theta=True,
         offset_clip_value=1., zoom_clip_value=2., tag=None,
-        align_corners=False):
+        align_corners=False, rotate_slice_to_min_principal=False):
 
         super().__init__()
         assert fov_vox[0] == fov_vox[1] == fov_vox[2]
@@ -106,6 +106,7 @@ class AffineTransformModule(torch.nn.Module):
 
         self.use_affine_theta = use_affine_theta
         self.align_corners = align_corners
+        self.rotate_slice_to_min_principal = rotate_slice_to_min_principal
 
         self.offset_clip_value = offset_clip_value
         self.zoom_clip_value = zoom_clip_value
@@ -204,7 +205,6 @@ class AffineTransformModule(torch.nn.Module):
 
         # Apply initial values
         theta_ap = theta_ap + self.init_theta_ap.view(1,self.ap_space).to(device)
-        # TODO: What about translational values?
         theta_zp = theta_zp + self.init_theta_zp.view(1,1).to(device)
 
         # Rotation matrix definition
@@ -331,19 +331,21 @@ class AffineTransformModule(torch.nn.Module):
         #     atol=1e-4
         # )
 
-        # Rotate to main principle of slice to constrain the output
-        y_soft_label, align_affine, transformed_nii_affine = rotate_slice_to_main_principle(y_soft_label,
-            transformed_nii_affine, is_label=False)
+        if self.rotate_slice_to_min_principal:
+            # Rotate to main principle of slice to constrain the output
+            y_soft_label, align_affine, transformed_nii_affine = rotate_slice_to_min_principal(y_soft_label,
+                transformed_nii_affine, is_label=False)
 
-        with torch.no_grad():
-            if not x_label_is_none:
-                y_label, _, transformed_nii_affine = rotate_slice_to_main_principle(y_label,
-                    transformed_nii_affine, is_label=True, align_affine_override=align_affine)
-            if not x_image_is_none:
-                y_image, _, transformed_nii_affine = rotate_slice_to_main_principle(y_image,
-                    transformed_nii_affine, is_label=False, align_affine_override=align_affine)
+            with torch.no_grad():
+                if not x_label_is_none:
+                    y_label, _, transformed_nii_affine = rotate_slice_to_min_principal(y_label,
+                        transformed_nii_affine, is_label=True, align_affine_override=align_affine)
+                if not x_image_is_none:
+                    y_image, _, transformed_nii_affine = rotate_slice_to_min_principal(y_image,
+                        transformed_nii_affine, is_label=False, align_affine_override=align_affine)
 
         grid_affine = grid_affine @ align_affine
+
         self.last_grid_affine = grid_affine
         self.last_transformed_nii_affine = transformed_nii_affine
 
@@ -768,7 +770,7 @@ def get_mean_theta(b_theta, as_B=False):
     return mean_theta
 
 
-def rotate_slice_to_main_principle(x_input, nii_affine, is_label=False, align_affine_override=None):
+def rotate_slice_to_min_principal(x_input, nii_affine, is_label=False, align_affine_override=None):
     assert x_input.shape[-1] == 1
     B = x_input.shape[0]
 
