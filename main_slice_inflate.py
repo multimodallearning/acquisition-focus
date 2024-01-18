@@ -27,6 +27,8 @@ import joblib
 import copy
 from enum import Enum
 
+import randomname
+
 from slice_inflate.utils.common_utils import get_script_dir
 THIS_SCRIPT_DIR = get_script_dir()
 
@@ -1076,11 +1078,12 @@ sweep_config_dict = dict(
 
 # %%
 def normal_run(config_dict, fold_properties, training_dataset, test_dataset):
+    rnd_name = randomname.get_name()
     with wandb.init(project=PROJECT_NAME, group="training", job_type="train",
             config=config_dict, settings=wandb.Settings(start_method="thread"),
             mode=config_dict['wandb_mode']
         ) as run:
-        run.name = f"{NOW_STR}_{run.name}_{get_fold_postfix(fold_properties)}"
+        run.name = f"{NOW_STR}_{rnd_name}_{get_fold_postfix(fold_properties)}"
         print("Running", run.name)
         config = wandb.config
         run_dl(run.name, config, fold_properties, training_dataset=training_dataset, test_dataset=test_dataset)
@@ -1088,7 +1091,7 @@ def normal_run(config_dict, fold_properties, training_dataset, test_dataset):
 
 
 def stage_sweep_run(config_dict, fold_properties, all_stages, training_dataset, test_dataset):
-
+    rnd_name = randomname.get_name()
     for stage in all_stages:
         stg_idx = all_stages.idx
 
@@ -1103,7 +1106,7 @@ def stage_sweep_run(config_dict, fold_properties, all_stages, training_dataset, 
         with wandb.init(project=PROJECT_NAME, config=stage_config, settings=wandb.Settings(start_method="thread"),
             mode=stage_config['wandb_mode']) as run:
 
-            run.name = f"{NOW_STR}_{run.name}_stage-{stg_idx+1}_{get_fold_postfix(fold_properties)}"
+            run.name = f"{NOW_STR}_{rnd_name}_stage-{stg_idx+1}_{get_fold_postfix(fold_properties)}"
             print("Running", run.name)
             config = wandb.config
 
