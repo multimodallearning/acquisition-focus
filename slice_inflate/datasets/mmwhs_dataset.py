@@ -416,6 +416,8 @@ class MMWHSDataset(HybridIdDataset):
                 pre_grid_sample_hidden_affine=None,
                 dtype=torch.float32
             )
+            tmp = tmp[0,0]
+            hires_nii_affine = hires_nii_affine[0]
 
             if is_label:
                 if self.use_binarized_labels:
@@ -434,7 +436,7 @@ class MMWHSDataset(HybridIdDataset):
             if is_label:
                 additional_data_3d[_3d_id]['nifti_affine'] = hires_nii_affine # Has to be set once, either for image or label
                 view_affines = get_clinical_cardiac_view_affines(
-                    tmp[0,0], hires_nii_affine[0], class_dict,
+                    tmp, hires_nii_affine, class_dict,
                     num_sa_slices=15, return_unrolled=True)
                 additional_data_3d[_3d_id]['gt_view_affines'] = view_affines
                 # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
