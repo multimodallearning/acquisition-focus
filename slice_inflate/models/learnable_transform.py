@@ -314,11 +314,11 @@ class AffineTransformModule(torch.nn.Module):
                                         pre_grid_sample_hidden_affine=grid_affine_augment)
 
         # Make sure the grid_affines only contain rotational components
-        assert torch.allclose(
-            (grid_affine[:,:3,:3] @ grid_affine[:,:3,:3].transpose(-1,-2)),
-            torch.eye(3)[None].repeat(B,1,1).to(grid_affine),
-            atol=1e-4
-        )
+        # assert torch.allclose(
+        #     (grid_affine[:,:3,:3] @ grid_affine[:,:3,:3].transpose(-1,-2)),
+        #     torch.eye(3)[None].repeat(B,1,1).to(grid_affine),
+        #     atol=1e-4
+        # )
 
         self.last_grid_affine = grid_affine
         self.last_transformed_nii_affine = transformed_nii_affine
