@@ -377,12 +377,13 @@ def get_transformed(config, label, soft_label, nifti_affine, grid_affine_pre_mlp
     if img_is_invalid:
         image = torch.zeros(B,1,D,H,W, device=label.device)
 
-    # Transform  label with 'bilinear' interpolation to have gradients
-    soft_label_slc, label_slc, image_slc, grid_affine, _ = atm(
-        soft_label.view(B, num_classes, D, H, W),
-        label.view(B, num_classes, D, H, W),
-        image.view(B, 1, D, H, W),
-        nifti_affine, grid_affine_pre_mlp, hidden_augment_affine)
+    with amp.autocast(enabled=False):
+        # Transform  label with 'bilinear' interpolation to have gradients
+        soft_label_slc, label_slc, image_slc, grid_affine, _ = atm(
+            soft_label.view(B, num_classes, D, H, W),
+            label.view(B, num_classes, D, H, W),
+            image.view(B, 1, D, H, W),
+            nifti_affine, grid_affine_pre_mlp, hidden_augment_affine)
 
     if config.label_slice_type == 'from-gt':
         pass

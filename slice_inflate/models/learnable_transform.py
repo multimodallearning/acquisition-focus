@@ -301,6 +301,7 @@ class AffineTransformModule(torch.nn.Module):
         # theta   : Affine for the learnt transformation
 
         # Here is the learnable grid_sampling
+        grid_affine_pre_mlp = grid_affine_pre_mlp.to(theta)
         if not x_soft_label_is_none:
             # nifti_affine is the affine of the original volume
             y_soft_label, grid_affine, transformed_nii_affine = nifti_grid_sample(x_soft_label, nifti_affine,
