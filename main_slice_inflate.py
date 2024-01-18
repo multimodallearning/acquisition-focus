@@ -768,16 +768,16 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     print(f'losses/{phase}_loss', log_val)
 
     log_label_metrics(f"scores/{phase}_mean", '', seg_metrics_nanmean, global_idx,
-        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=('dice'))
+        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95', 'delta_vol_ml', 'delta_vol_rel'), print_selected_metrics=('dice'))
 
     log_label_metrics(f"scores/{phase}_std", '', seg_metrics_std, global_idx,
-        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=())
+        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95', 'delta_vol_ml', 'delta_vol_rel'), print_selected_metrics=())
 
     log_oa_metrics(f"scores/{phase}_mean_oa_exclude_bg", '', seg_metrics_nanmean_oa, global_idx,
-        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=('dice', 'iou', 'hd', 'hd95'))
+        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95', 'delta_vol_ml', 'delta_vol_rel'), print_selected_metrics=('dice', 'hd95'))
 
     log_oa_metrics(f"scores/{phase}_std_oa_exclude_bg", '', seg_metrics_std_oa, global_idx,
-        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95'), print_selected_metrics=())
+        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95', 'delta_vol_ml', 'delta_vol_rel'), print_selected_metrics=())
 
     print()
     output_dir = Path(f"data/output/{wandb.run.name}/{phase}")
