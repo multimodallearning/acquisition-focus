@@ -406,10 +406,19 @@ class MRXCATDataset(HybridIdDataset):
             file_id, is_label = MRXCATDataset.get_file_id(_file)
             nib_tmp = nib.load(_file)
             tmp = torch.from_numpy(nib_tmp.get_fdata()).squeeze()
-            nii_affine = torch.as_tensor(nib_tmp.affine)
+            loaded_nii_affine = torch.as_tensor(nib_tmp.affine)
+
+            tmp, _, hires_nii_affine = nifti_grid_sample(
+                tmp.unsqueeze(0).unsqueeze(0),
+                loaded_nii_affine.view(1,4,4), ras_transform_mat=None,
+                fov_mm=torch.as_tensor(self.hires_fov_mm), fov_vox=torch.as_tensor(self.hires_fov_vox),
+                is_label=is_label,
+                pre_grid_sample_affine=None,
+                pre_grid_sample_hidden_affine=None,
+                dtype=torch.float32
+            )
 
             if is_label:
-                # tmp = MRXCATDataset.replace_label_values(tmp)
                 if self.use_binarized_labels:
                     bin_tmp = tmp.clone()
                     bin_tmp[bin_tmp>0] = 1.0
@@ -424,14 +433,14 @@ class MRXCATDataset(HybridIdDataset):
 
             # Set additionals
             if is_label:
-                additional_data_3d[_3d_id]['nifti_affine'] = nii_affine # Has to be set once, either for image or label
+                additional_data_3d[_3d_id]['nifti_affine'] = hires_nii_affine # Has to be set once, either for image or label
                 view_affines = get_clinical_cardiac_view_affines(
-                    tmp, nii_affine, class_dict,
+                    tmp[0,0], hires_nii_affine[0], class_dict,
                     num_sa_slices=15, return_unrolled=True)
                 additional_data_3d[_3d_id]['gt_view_affines'] = view_affines
                 # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
-                # display_clinical_views(tmp, tmp.to_sparse(), nii_affine, {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
-                #                         output_to_file="my_output.png", debug=False)
+                # display_clinical_views(tmp[0,0], tmp[0,0].to_sparse(), hires_nii_affine[0], view_affines,
+                #     output_to_file="my_output.png")
                 if self.use_distance_map_localization:
                     oh = torch.nn.functional.one_hot(tmp.long()).permute(3,0,1,2)
                     additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool(), mode='outer').squeeze(0)
@@ -440,7 +449,7 @@ class MRXCATDataset(HybridIdDataset):
                     # TODO improve speed for nnunet segmentation
                     lores_prescan, _, lores_nii_affine = nifti_grid_sample(
                         tmp.unsqueeze(0).unsqueeze(0),
-                        nii_affine.view(1,4,4), ras_transform_mat=None,
+                        hires_nii_affine.view(1,4,4), ras_transform_mat=None,
                         fov_mm=torch.as_tensor(self.lores_fov_mm), fov_vox=torch.as_tensor(self.lores_fov_vox),
                         is_label=False,
                         pre_grid_sample_affine=None,
@@ -457,7 +466,7 @@ class MRXCATDataset(HybridIdDataset):
                     additional_data_3d[_3d_id]['lores_prescan_segmentation'] = lores_prescan_segmentation.squeeze()
 
                     additional_data_3d[_3d_id]['lores_prescan_view_affines'] = get_clinical_cardiac_view_affines(
-                        lores_prescan_segmentation[0], nii_affine, class_dict,
+                        lores_prescan_segmentation[0], lores_nii_affine, class_dict,
                         num_sa_slices=15, return_unrolled=True)
                     # works
                     # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
