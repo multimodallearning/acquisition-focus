@@ -12,7 +12,7 @@ import dill
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.utils.common_utils import get_script_dir
 from slice_inflate.utils.torch_utils import torch_manual_seeded
-from slice_inflate.datasets.clinical_cardiac_views import get_inertia_tensor, get_main_principal_axes, get_pix_affine_from_center_and_plane_vects, get_torch_grid_affine_from_pix_affine
+from slice_inflate.datasets.clinical_cardiac_views import get_inertia_tensor, get_main_principal_axes, get_pix_affine_from_center_and_plane_vects, get_torch_grid_affine_from_pix_affine, get_center_and_median
 
 
 class ConvNet(torch.nn.Module):
@@ -246,23 +246,25 @@ class AffineTransformModule(torch.nn.Module):
 
         return theta_a, theta_t, theta_z
 
-    def forward(self, x_image, x_label, nifti_affine, grid_affine_pre_mlp, grid_affine_augment, theta_override=None, align_affine_override=None):
+    def forward(self, x_soft_label, x_label, x_image, nifti_affine, grid_affine_pre_mlp, grid_affine_augment, theta_override=None):
 
-        x_image_is_none = x_image is None or x_image.numel() == 0
+        x_soft_label_is_none = x_soft_label is None or x_soft_label.numel() == 0
         x_label_is_none = x_label is None or x_label.numel() == 0
+        x_image_is_none = x_image is None or x_image.numel() == 0
 
-        assert not (x_image_is_none and x_label_is_none)
+        assert not x_soft_label_is_none
 
-        y_image = None
+        y_soft_label = None
         y_label = None
-        device = x_label.device if not x_label_is_none else x_image.device
-        B = x_label.shape[0] if not x_label_is_none else x_image.shape[0]
+        y_image = None
+        device = x_soft_label.device
+        B = x_soft_label.shape[0]
 
         with torch.no_grad():
             # This is the affine that is applied to the volume before the grid sampling -> Input of MLP must be reoriented to a common space
-            if not x_image_is_none:
+            if not x_soft_label_is_none:
                 # nifti_affine is the affine of the original volume
-                x_image_pre_mlp, check_affine, transformed_nii_affine = nifti_grid_sample(x_image, nifti_affine,
+                x_soft_label_pre_mlp, _, transformed_nii_affine = nifti_grid_sample(x_soft_label, nifti_affine,
                     fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=False,
                     pre_grid_sample_affine=grid_affine_pre_mlp
                 )
@@ -275,7 +277,7 @@ class AffineTransformModule(torch.nn.Module):
             theta_a, theta_t, theta_z = theta_a.repeat(B,1,1), theta_t.repeat(B,1,1), theta_z.repeat(B,1,1)
 
             if self.use_affine_theta:
-                theta_a_b, theta_t_b, theta_z_b = self.get_batch_affines(x_image_pre_mlp) # Initial parameters are applied here as well
+                theta_a_b, theta_t_b, theta_z_b = self.get_batch_affines(x_soft_label_pre_mlp) # Initial parameters are applied here as well
                 theta_a = theta_a_b @ theta_a
                 theta_t = theta_t_b @ theta_t
                 theta_z = theta_z_b @ theta_z
@@ -299,19 +301,27 @@ class AffineTransformModule(torch.nn.Module):
         # theta   : Affine for the learnt transformation
 
         # Here is the learnable grid_sampling
-        if not x_image_is_none:
+        if not x_soft_label_is_none:
             # nifti_affine is the affine of the original volume
-            y_image, grid_affine, transformed_nii_affine = nifti_grid_sample(x_image, nifti_affine,
-                                        fov_mm=self.slice_fov_mm, fov_vox=self.slice_fov_vox, is_label=False,
-                                        pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
-                                        pre_grid_sample_hidden_affine=grid_affine_augment)
+            y_soft_label, grid_affine, transformed_nii_affine = nifti_grid_sample(x_soft_label, nifti_affine,
+                fov_mm=self.slice_fov_mm, fov_vox=self.slice_fov_vox, is_label=False,
+                pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
+                pre_grid_sample_hidden_affine=grid_affine_augment)
 
-        if not x_label_is_none:
-            # nifti_affine is the affine of the original volume
-            y_label, grid_affine, transformed_nii_affine = nifti_grid_sample(x_label, nifti_affine,
-                                        fov_mm=self.slice_fov_mm, fov_vox=self.slice_fov_vox, is_label=True,
-                                        pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
-                                        pre_grid_sample_hidden_affine=grid_affine_augment)
+        with torch.no_grad():
+            if not x_label_is_none:
+                # nifti_affine is the affine of the original volume
+                y_label, _, _ = nifti_grid_sample(x_label, nifti_affine,
+                    fov_mm=self.slice_fov_mm, fov_vox=self.slice_fov_vox, is_label=True,
+                    pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
+                    pre_grid_sample_hidden_affine=grid_affine_augment)
+
+            if not x_image_is_none:
+                # nifti_affine is the affine of the original volume
+                y_image, _, _ = nifti_grid_sample(x_image, nifti_affine,
+                    fov_mm=self.slice_fov_mm, fov_vox=self.slice_fov_vox, is_label=False,
+                    pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
+                    pre_grid_sample_hidden_affine=grid_affine_augment)
 
         # Make sure the grid_affines only contain rotational components
         # assert torch.allclose(
@@ -320,20 +330,23 @@ class AffineTransformModule(torch.nn.Module):
         #     atol=1e-4
         # )
 
+        # Rotate to main principle of slice to constrain the output
+        y_soft_label, align_affine, transformed_nii_affine = rotate_slice_to_main_principle(y_soft_label,
+            transformed_nii_affine, is_label=False)
+
+        with torch.no_grad():
+            if not x_label_is_none:
+                y_label, _, transformed_nii_affine = rotate_slice_to_main_principle(y_label,
+                    transformed_nii_affine, is_label=True, align_affine_override=align_affine)
+            if not x_image_is_none:
+                y_image, _, transformed_nii_affine = rotate_slice_to_main_principle(y_image,
+                    transformed_nii_affine, is_label=False, align_affine_override=align_affine)
+
+        grid_affine = grid_affine @ align_affine
         self.last_grid_affine = grid_affine
         self.last_transformed_nii_affine = transformed_nii_affine
 
-        # Rotate to main principle of slice to constrain the output
-        align_affine = align_affine_override
-        if not x_image is None:
-            y_image, align_affine, _ = rotate_slice_to_main_principle(y_image,
-                transformed_nii_affine, is_label=False, align_affine_override=align_affine)
-        if not y_label is None:
-            y_label, align_affine, _ = rotate_slice_to_main_principle(y_label,
-                transformed_nii_affine, is_label=True, align_affine_override=align_affine)
-
-        grid_affine = grid_affine @ align_affine
-        return y_image, y_label, grid_affine, align_affine, transformed_nii_affine
+        return y_soft_label, y_label, y_image, grid_affine, transformed_nii_affine
 
 
 
@@ -758,30 +771,50 @@ def rotate_slice_to_main_principle(x_input, nii_affine, is_label=False, align_af
     assert x_input.shape[-1] == 1
     B = x_input.shape[0]
 
-
     if align_affine_override is None:
         b_align_affines = torch.zeros(B,4,4).to(x_input.device)
 
-        for b_idx, lbl in enumerate(x_input):
-            center, I = get_inertia_tensor(lbl.argmax(0))
-            center[-1] = 0.5
-            min_principal, *_ = get_main_principal_axes(I)
-            second_vect = min_principal.cross(torch.tensor([0.,0.,1.]))
-            pix_align_affine = get_pix_affine_from_center_and_plane_vects(
-                center, min_principal, second_vect,
-                do_return_normal_three=False
-            )
-            pt_align_affine = get_torch_grid_affine_from_pix_affine(pix_align_affine, x_input.shape[-3:])
-            b_align_affines[b_idx] = pt_align_affine
+        with torch.no_grad():
+            for b_idx, lbl in enumerate(x_input):
+                center, I = get_inertia_tensor(lbl.argmax(0))
+                center[-1] = 0.5
+                min_principal, *_ = get_main_principal_axes(I)
+                second_vect = min_principal.cross(torch.tensor([0.,0.,1.]))
+                pix_align_affine = get_pix_affine_from_center_and_plane_vects(
+                    center, min_principal, second_vect,
+                    do_return_normal_three=False
+                )
+                pt_align_affine = get_torch_grid_affine_from_pix_affine(pix_align_affine, x_input.shape[-3:])
+                b_align_affines[b_idx] = pt_align_affine
+
     else:
         b_align_affines = align_affine_override
 
-    # align_grid = torch.nn.functional.affine_grid(b_align_affines[:,:3], x_input.shape, align_corners=False)
-
+    # Rotate according to min-principle direction
+    # Flipping is done later but can be inherited here already, when align_affine_override is not None
     y_output, b_align_affines, transformed_nii_affine = nifti_grid_sample(x_input, nii_affine,
                                                                     pre_grid_sample_affine=b_align_affines,
                                                                     is_label=is_label)
-    # y_output = torch.nn.functional.grid_sample(x_input, align_grid, align_corners=False, mode=sample_mode)
 
-    # transformed_nii_affine = None # TODO nii affine is not used and returned and updated
+    if align_affine_override is None:
+        # Flip if necessary (min-principle +- orientation might be wrong)
+        with torch.no_grad():
+            flip_flag = torch.ones(B).to(b_align_affines)
+            all_flip_affines = torch.eye(4)[None].repeat(B,1,1).to(b_align_affines)
+
+            for b_idx, lbl in enumerate(y_output):
+                LV_CLASS_IDX = 2
+                AXIS_IDX = -2
+                lv_offset = get_center_and_median(lbl[LV_CLASS_IDX])[0] - torch.as_tensor(x_input.shape[-3:]).to(lbl)/2.
+                if lv_offset[AXIS_IDX] < 0:
+                    flip_flag[b_idx] = -1
+            all_flip_affines[:,2,2] = flip_flag
+            all_flip_affines[:,3,3] = flip_flag
+
+        for b_idx, flag in enumerate(flip_flag):
+            if flag == -1:
+                y_output[b_idx] = y_output[b_idx].flip((-3,-2))
+
+        b_align_affines = all_flip_affines @ b_align_affines
+
     return y_output, b_align_affines, transformed_nii_affine

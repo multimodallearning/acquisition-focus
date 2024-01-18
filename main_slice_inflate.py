@@ -378,11 +378,11 @@ def get_transformed(config, label, soft_label, nifti_affine, grid_affine_pre_mlp
         image = torch.zeros(B,1,D,H,W, device=label.device)
 
     # Transform  label with 'bilinear' interpolation to have gradients
-    soft_label_slc, label_slc, grid_affine, align_affine, _ = atm(soft_label.view(B, num_classes, D, H, W), label.view(B, num_classes, D, H, W),
+    soft_label_slc, label_slc, image_slc, grid_affine, _ = atm(
+        soft_label.view(B, num_classes, D, H, W),
+        label.view(B, num_classes, D, H, W),
+        image.view(B, 1, D, H, W),
         nifti_affine, grid_affine_pre_mlp, hidden_augment_affine)
-
-    image_slc, *_ = atm(image.view(B, 1, D, H, W), None,
-        nifti_affine, grid_affine_pre_mlp, hidden_augment_affine, theta_override=atm.last_theta, align_affine_override=align_affine)
 
     if config.label_slice_type == 'from-gt':
         pass
@@ -438,8 +438,6 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
             # Use case dependent grid affine of p2CH view
             sa_input_grid_affine = torch.as_tensor(b_view_affines['p2CH']).view(B,4,4).to(known_augment_affine)
 
-            # image, label.long(), image_slc, label_slc, grid_affine
-            # image_slc, soft_label_slc, label_slc, grid_affine
             sa_image_slc, sa_label_slc, _, sa_grid_affine = \
                 get_transformed(
                     config,

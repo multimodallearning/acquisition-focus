@@ -55,6 +55,28 @@ def get_inertia_tensor(label):
     return center, I
 
 
+
+def get_center_and_median(label):
+    # see https://en.wikipedia.org/wiki/Moment_of_inertia#Inertia_tensor
+    assert label.dim() == 3
+
+    if label.is_sparse:
+        sp_label = label
+    else:
+        sp_label = label.to_sparse()
+
+    idxs = sp_label._indices()
+    if idxs.numel() == 0:
+        none_ret = torch.as_tensor(label.shape).to(label.device) / 2.
+        return none_ret, none_ret
+    
+    center = idxs.float().mean(1)
+    median = idxs.float().median(1).values
+
+    return center, median
+
+
+
 def get_main_principal_axes(I):
     assert I.shape == (3,3)
     eigenvectors = torch.linalg.eig(I).eigenvectors.real.T
