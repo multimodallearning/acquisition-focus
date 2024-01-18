@@ -344,7 +344,7 @@ class AffineTransformModule(torch.nn.Module):
                     y_image, _, transformed_nii_affine = rotate_slice_to_min_principle(y_image,
                         transformed_nii_affine, is_label=False, align_affine_override=align_affine)
 
-        grid_affine = grid_affine @ align_affine
+            grid_affine = grid_affine @ align_affine
 
         self.last_grid_affine = grid_affine
         self.last_transformed_nii_affine = transformed_nii_affine
