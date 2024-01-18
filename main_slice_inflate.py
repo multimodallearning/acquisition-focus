@@ -560,11 +560,11 @@ def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_modul
     with amp.autocast(enabled=autocast_enabled):
         b_input, b_target, b_grid_affines = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module, segment_fn)
 
-        # nib.save(nib.Nifti1Image((
-        #     b_target[0].argmax(0)
-        #     + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).to(b_target)
-        #     + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).to(b_target)
-        # ).cpu().int().numpy(), affine=np.eye(4)), "out_sum_vol_slices.nii.gz")
+        nib.save(nib.Nifti1Image((
+            b_target[0].argmax(0)
+            + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,6:].argmax(0).to(b_target)
+            + SkipConnector(mode='fill-sparse')(b_input, b_grid_affines)[0,:6].argmax(0).to(b_target)
+        ).cpu().int().numpy(), affine=np.eye(4)), "out_sum_vol_slices.nii.gz")
 
         wanted_input_dim = 4 if 'hybrid' in config.model_type else 5
         assert b_input.dim() == wanted_input_dim, \

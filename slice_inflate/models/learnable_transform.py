@@ -313,16 +313,23 @@ class AffineTransformModule(torch.nn.Module):
                                         pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
                                         pre_grid_sample_hidden_affine=grid_affine_augment)
 
+        # Make sure the grid_affines only contain rotational components
+        assert torch.allclose(
+            (grid_affine[:,:3,:3] @ grid_affine[:,:3,:3].transpose(-1,-2)),
+            torch.eye(3)[None].repeat(B,1,1).to(grid_affine),
+            atol=1e-4
+        )
+
         self.last_grid_affine = grid_affine
         self.last_transformed_nii_affine = transformed_nii_affine
 
         # Rotate to main principle of slice to constrain the output
         align_affine = align_affine_override
         if not x_image is None:
-            y_image, align_affine, transformed_nii_affine = rotate_slice_to_main_principle(y_image,
+            y_image, align_affine, _ = rotate_slice_to_main_principle(y_image,
                 transformed_nii_affine, is_label=False, align_affine_override=align_affine)
         if not y_label is None:
-            y_label, align_affine, transformed_nii_affine = rotate_slice_to_main_principle(y_label,
+            y_label, align_affine, _ = rotate_slice_to_main_principle(y_label,
                 transformed_nii_affine, is_label=True, align_affine_override=align_affine)
 
         grid_affine = grid_affine @ align_affine
@@ -750,7 +757,7 @@ def get_mean_theta(b_theta, as_B=False):
 def rotate_slice_to_main_principle(x_input, nii_affine, is_label=False, align_affine_override=None):
     assert x_input.shape[-1] == 1
     B = x_input.shape[0]
-    sample_mode='nearest' if is_label else 'bilinear'
+
 
     if align_affine_override is None:
         b_align_affines = torch.zeros(B,4,4).to(x_input.device)
@@ -769,12 +776,12 @@ def rotate_slice_to_main_principle(x_input, nii_affine, is_label=False, align_af
     else:
         b_align_affines = align_affine_override
 
-    align_grid = torch.nn.functional.affine_grid(b_align_affines[:,:3], x_input.shape, align_corners=False)
+    # align_grid = torch.nn.functional.affine_grid(b_align_affines[:,:3], x_input.shape, align_corners=False)
 
-    # y_output, grid_affine, transformed_nii_affine = nifti_grid_sample(x_input, nii_affine,
-    #                                                                 pre_grid_sample_affine=b_align_affines,
-    #                                                                 is_label=True)
-    y_output = torch.nn.functional.grid_sample(x_input, align_grid, align_corners=False, mode=sample_mode)
+    y_output, b_align_affines, transformed_nii_affine = nifti_grid_sample(x_input, nii_affine,
+                                                                    pre_grid_sample_affine=b_align_affines,
+                                                                    is_label=is_label)
+    # y_output = torch.nn.functional.grid_sample(x_input, align_grid, align_corners=False, mode=sample_mode)
 
-    transformed_nii_affine = None # TODO nii affine is not used and returned and updated
+    # transformed_nii_affine = None # TODO nii affine is not used and returned and updated
     return y_output, b_align_affines, transformed_nii_affine
