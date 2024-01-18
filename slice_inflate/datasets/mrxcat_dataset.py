@@ -122,11 +122,11 @@ class MRXCATDataset(HybridIdDataset):
             if self.do_augment:
                 sample_augment_strength = self.self_attributes['sample_augment_strength']
                 known_augment_affine = get_random_affine(
-                    rotation_strength=sample_augment_strength * .1,
+                    rotation_strength=sample_augment_strength,
                     zoom_strength=sample_augment_strength)
 
                 hidden_augment_affine = get_random_affine(
-                    rotation_strength=sample_augment_strength * .1,
+                    rotation_strength=sample_augment_strength,
                     zoom_strength=0.0)
 
             additional_data['known_augment_affine'] = known_augment_affine.view(4,4)
