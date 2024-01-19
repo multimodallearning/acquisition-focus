@@ -122,7 +122,7 @@ class MMWHSDataset(HybridIdDataset):
             if self.do_augment:
                 sample_augment_strength = self.self_attributes['sample_augment_strength']
                 known_augment_affine = get_random_affine(
-                    rotation_strength=sample_augment_strength * .1,
+                    rotation_strength=0.,
                     zoom_strength=sample_augment_strength)
 
                 hidden_augment_affine = get_random_affine(
@@ -147,81 +147,6 @@ class MMWHSDataset(HybridIdDataset):
 
             additional_data=additional_data
         )
-
-    def get_efficient_augmentation_collate_fn(self):
-
-        def collate_closure(batch):
-            batch = torch.utils.data._utils.collate.default_collate(batch)
-            if self.augment_at_collate:
-                B = batch['dataset_idx'].shape[0]
-
-                image = batch['image']
-                label = batch['label']
-                additional_data = batch['additional_data']
-
-                all_hla_images = []
-                all_hla_labels = []
-                all_sa_image_slcs = []
-                all_sa_label_slcs = []
-                all_hla_image_slcs = []
-                all_hla_label_slcs = []
-                all_sa_affines = []
-                all_hla_affines = []
-
-                B, D, H, W = batch['label'].shape
-
-                image = batch['image'].cuda()
-                label = batch['label'].view(B, 1, D, H, W).cuda()
-
-                nifti_affine = additional_data['nifti_affine'].to(
-                    device=label.device).view(B, 4, 4)
-                augment_affine = torch.eye(4).view(1, 4, 4).repeat(
-                    B, 1, 1).to(device=label.device)
-
-                if self.do_augment:
-                    for b_idx in range(B):
-                        augment_angle_std = self.self_attributes['augment_angle_std']
-                        deg_angles = torch.normal(
-                            mean=0, std=augment_angle_std*torch.ones(3))
-                        augment_affine[b_idx, :3, :3] = get_rotation_matrix_3d_from_angles(
-                            deg_angles)
-
-                config = None # TODO read config
-                sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
-                    self.get_transformed(
-                        config,
-                        label, nifti_affine, augment_affine, 'sa', image)
-                hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
-                    self.get_transformed(
-                        config,
-                        label, nifti_affine, augment_affine, 'hla', image)
-
-                all_hla_images.append(hla_image)
-                all_hla_labels.append(hla_label)
-                all_sa_image_slcs.append(sa_image_slc)
-                all_sa_label_slcs.append(sa_label_slc)
-                all_hla_image_slcs.append(hla_image_slc)
-                all_hla_label_slcs.append(hla_label_slc)
-                all_sa_affines.append(sa_affine)
-                all_hla_affines.append(hla_affine)
-
-                batch.update(dict(
-                    image=torch.cat(all_hla_images, dim=0),
-                    label=torch.cat(all_hla_labels, dim=0),
-
-                    sa_image_slc=torch.cat(all_sa_image_slcs, dim=0),
-                    sa_label_slc=torch.cat(all_sa_label_slcs, dim=0),
-
-                    hla_image_slc=torch.cat(all_hla_image_slcs, dim=0),
-                    hla_label_slc=torch.cat(all_hla_label_slcs, dim=0),
-
-                    sa_affine=torch.stack(all_sa_affines),
-                    hla_affine=torch.stack(all_hla_affines)
-                ))
-
-            return batch
-
-        return collate_closure
 
     @staticmethod
     def get_file_id(file_path):

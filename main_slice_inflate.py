@@ -352,7 +352,7 @@ def get_transform_model(config, num_classes, size_3d, this_script_dir, _path=Non
 
     if config.train_affine_theta:
         transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=config.lr*2)
-        transform_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(transform_optimizer, T_0=int(config.epochs/4))
+        transform_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(transform_optimizer, T_0=int(config.epochs/4)+1)
     else:
         transform_optimizer = NoneOptimizer()
         transform_scheduler = None
@@ -382,11 +382,14 @@ def get_transformed(config, label, soft_label, nifti_affine, grid_affine_pre_mlp
 
     with amp.autocast(enabled=False):
         # Transform  label with 'bilinear' interpolation to have gradients
-        soft_label_slc, label_slc, image_slc, grid_affine, _ = atm(
+        soft_label_slc, label_slc, image_slc, grid_affine, atm_nii_affine = atm(
             soft_label.view(B, num_classes, D, H, W),
             label.view(B, num_classes, D, H, W),
             image.view(B, 1, D, H, W),
             nifti_affine, grid_affine_pre_mlp, hidden_augment_affine)
+
+        # nib.Nifti1Image(image[0][0].cpu().numpy(), affine=nifti_affine.cpu()[0].numpy()).to_filename('out_img_volume.nii.gz')
+        # nib.Nifti1Image(label_slc[0].argmax(0).detach().int().cpu().numpy(), affine=atm_nii_affine[0].detach().cpu().numpy()).to_filename('out_lbl_slice.nii.gz')
 
     if config.label_slice_type == 'from-gt':
         pass
@@ -1193,8 +1196,8 @@ else:
         ))
     fold_iter = list(enumerate(fold_iter))
 
-    if config_dict.get('fold_override', None):
-        selected_fold = config_dict.get('fold_override', 0)
+    if config_dict['fold_override'] is not None:
+        selected_fold = config_dict['fold_override']
         fold_iter = fold_iter[selected_fold:selected_fold+1]
 
 
@@ -1231,7 +1234,7 @@ for fold_properties in fold_iter:
                 sa_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'sa', THIS_SCRIPT_DIR),
                 # hla_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'hla', THIS_SCRIPT_DIR),
                 cuts_mode='sa',
-                epochs=config_dict['epochs']*2,
+                epochs=int(config_dict['epochs']*1.5),
                 soft_cut_std=-999,
                 do_augment=True,
                 use_distance_map_localization=False,
@@ -1245,7 +1248,7 @@ for fold_properties in fold_iter:
                 use_random_affine_ap_init_sa=False,
                 use_random_affine_ap_init_hla=True,
                 cuts_mode='sa>hla',
-                epochs=config_dict['epochs']*2,
+                epochs=int(config_dict['epochs']*1.5),
                 soft_cut_std=-999,
                 do_augment=True,
                 use_distance_map_localization=False,
@@ -1254,19 +1257,19 @@ for fold_properties in fold_iter:
                 do_output=True,
                 __activate_fn__=set_previous_stage_transform_chk
             ),
-            Stage( # Final optimized run
-                use_random_affine_ap_init_sa=False,
-                use_random_affine_ap_init_hla=False,
-                do_output=True,
-                cuts_mode='sa+hla',
-                epochs=config_dict['epochs'],
-                soft_cut_std=-999,
-                do_augment=True,
-                use_affine_theta=True,
-                train_affine_theta=False,
-                use_distance_map_localization=False,
-                __activate_fn__=set_previous_stage_transform_chk
-            ),
+            # Stage( # Final optimized run
+            #     use_random_affine_ap_init_sa=False,
+            #     use_random_affine_ap_init_hla=False,
+            #     do_output=True,
+            #     cuts_mode='sa+hla',
+            #     epochs=config_dict['epochs'],
+            #     soft_cut_std=-999,
+            #     do_augment=True,
+            #     use_affine_theta=True,
+            #     train_affine_theta=False,
+            #     use_distance_map_localization=False,
+            #     __activate_fn__=set_previous_stage_transform_chk
+            # ),
             Stage( # Reference run
                 do_augment=True,
                 do_output=True,

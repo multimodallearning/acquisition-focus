@@ -799,25 +799,25 @@ def rotate_slice_to_min_principle(x_input, nii_affine, is_label=False, align_aff
                                                                     pre_grid_sample_affine=b_align_affines,
                                                                     is_label=is_label)
 
-    if align_affine_override is None:
-        # Flip if necessary (min-principle +- orientation might be wrong)
-        with torch.no_grad():
-            flip_flag = torch.ones(B).to(b_align_affines)
-            all_flip_affines = torch.eye(4)[None].repeat(B,1,1).to(b_align_affines)
+    # if align_affine_override is None:
+    #     # Flip if necessary (min-principle +- orientation might be wrong)
+    #     with torch.no_grad():
+    #         flip_flag = torch.ones(B).to(b_align_affines)
+    #         all_flip_affines = torch.eye(4)[None].repeat(B,1,1).to(b_align_affines)
 
-            for b_idx, lbl in enumerate(y_output):
-                LV_CLASS_IDX = 2
-                AXIS_IDX = -2
-                lv_offset = get_center_and_median(lbl[LV_CLASS_IDX])[0] - torch.as_tensor(x_input.shape[-3:]).to(lbl)/2.
-                if lv_offset[AXIS_IDX] < 0:
-                    flip_flag[b_idx] = -1
-            all_flip_affines[:,2,2] = flip_flag
-            all_flip_affines[:,3,3] = flip_flag
+    #         for b_idx, lbl in enumerate(y_output):
+    #             LV_CLASS_IDX = 2
+    #             AXIS_IDX = -2
+    #             lv_offset = get_center_and_median(lbl[LV_CLASS_IDX])[0] - torch.as_tensor(x_input.shape[-3:]).to(lbl)/2.
+    #             if lv_offset[AXIS_IDX] < 0:
+    #                 flip_flag[b_idx] = -1
+    #         all_flip_affines[:,2,2] = flip_flag
+    #         all_flip_affines[:,3,3] = flip_flag
 
-        for b_idx, flag in enumerate(flip_flag):
-            if flag == -1:
-                y_output[b_idx] = y_output[b_idx].flip((-3,-2))
+    #     for b_idx, flag in enumerate(flip_flag):
+    #         if flag == -1:
+    #             y_output[b_idx] = y_output[b_idx].flip((-3,-2))
 
-        b_align_affines = all_flip_affines @ b_align_affines
+    #     b_align_affines = all_flip_affines @ b_align_affines
 
     return y_output, b_align_affines, transformed_nii_affine
