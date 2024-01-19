@@ -77,20 +77,7 @@ from slice_inflate.utils.nifti_utils import get_zooms
 from slice_inflate.models.nnunet_models import SkipConnector
 from slice_inflate.utils.nifti_utils import nifti_grid_sample
 
-NOW_STR = datetime.now().strftime("%Y%m%d__%H_%M_%S")
-THIS_REPO = Repo(THIS_SCRIPT_DIR)
-PROJECT_NAME = "slice_inflate"
 
-training_dataset, test_dataset = None, None
-test_all_parameters_updated = get_test_func_all_parameters_updated()
-# %%
-
-with open(Path(THIS_SCRIPT_DIR, 'config_dict.json'), 'r') as f:
-    config_dict = DotDict(json.load(f))
-
-# Log commmit id and dirtiness
-dirty_str = "!dirty-" if THIS_REPO.is_dirty() else ""
-config_dict['git_commit'] = f"{dirty_str}{THIS_REPO.commit().hexsha}"
 
 def prepare_data(config):
     args = [config.dataset[1]]
@@ -119,23 +106,6 @@ def prepare_data(config):
 
     return dataset
 
-
-# %%
-
-run_test_once_only = not (config_dict.test_only_and_output_to in ["", None])
-
-if training_dataset is None:
-    train_config = DotDict(config_dict.copy())
-    if run_test_once_only:
-        train_config['state'] = 'empty'
-    training_dataset = prepare_data(train_config)
-
-if test_dataset is None:
-    test_config = DotDict(config_dict.copy())
-    test_config['state'] = 'test'
-    test_dataset = prepare_data(test_config)
-
-# %%
 
 
 def get_norms(model):
@@ -266,7 +236,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
 
 
 
-def get_atm(config, num_classes, size_3d, view, this_script_dir, _path=None, random_ap_init=False):
+def get_atm(config, num_classes, size_3d, view, _path=None, random_ap_init=False):
 
     assert view in ['sa', 'hla']
     device = config.device
@@ -311,13 +281,13 @@ def get_transform_model(config, num_classes, size_3d, this_script_dir, _path=Non
         # Check if atm is set externally
         sa_atm = sa_atm_override
     else:
-        sa_atm = get_atm(config, num_classes, size_3d, random_ap_init=config.use_random_affine_ap_init_sa, view='sa', this_script_dir=this_script_dir, _path=_path)
+        sa_atm = get_atm(config, num_classes, size_3d, random_ap_init=config.use_random_affine_ap_init_sa, view='sa', _path=_path)
 
     if isinstance(hla_atm_override, AffineTransformModule):
         # Check if atm is set externally
         hla_atm = hla_atm_override
     else:
-        hla_atm = get_atm(config, num_classes, size_3d, random_ap_init=config.use_random_affine_ap_init_hla, view='hla', this_script_dir=this_script_dir, _path = _path)
+        hla_atm = get_atm(config, num_classes, size_3d, random_ap_init=config.use_random_affine_ap_init_hla, view='hla', _path = _path)
 
     if config['soft_cut_std'] > 0:
         sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
@@ -1164,141 +1134,148 @@ def set_previous_stage_transform_chk(self):
 
 
 
-# main routine
-#
-#
+if __name__ == '__main__':
+    NOW_STR = datetime.now().strftime("%Y%m%d__%H_%M_%S")
+    THIS_REPO = Repo(THIS_SCRIPT_DIR)
+    PROJECT_NAME = "slice_inflate"
 
-# Configure folds
-if config_dict.num_folds < 1:
-    train_idxs = range(training_dataset.__len__(use_2d_override=False))
-    val_idxs = []
-    fold_idx = -1
-    fold_iter = ([fold_idx, (train_idxs, val_idxs)],)
+    training_dataset, test_dataset = None, None
+    test_all_parameters_updated = get_test_func_all_parameters_updated()
+    # %%
 
-else:
-    # kf = KFold(n_splits=config_dict.num_folds)
-    # fold_iter = enumerate(kf.split(range(training_dataset.__len__(use_2d_override=False))))
-    fold_iter = []
-    for fold_idx in range(config_dict.num_folds):
-        current_fold_idxs = training_dataset.data_split['train_folds'][f"fold_{fold_idx}"]
-        train_files = [training_dataset.data_split['train_files'][idx] for idx in current_fold_idxs['train_idxs']]
-        val_files = [training_dataset.data_split['train_files'][idx] for idx in current_fold_idxs['val_idxs']]
+    with open(Path(THIS_SCRIPT_DIR, 'config_dict.json'), 'r') as f:
+        config_dict = DotDict(json.load(f))
 
-        train_ids = set([training_dataset.get_file_id(fl)[0] for fl in train_files])
-        val_ids = set([training_dataset.get_file_id(fl)[0] for fl in val_files])
-        assert len(train_ids.intersection(val_ids)) == 0, \
-            f"Training and validation set must not overlap. But they do: {train_ids.intersection(val_ids)}"
-        train_idxs = training_dataset.switch_3d_identifiers(train_ids)
-        val_idxs = training_dataset.switch_3d_identifiers(val_ids)
-        fold_iter.append((
-            [idx for idx in train_idxs if idx is not None],
-            [idx for idx in val_idxs if idx is not None]
-        ))
-    fold_iter = list(enumerate(fold_iter))
+    # Log commmit id and dirtiness
+    dirty_str = "!dirty-" if THIS_REPO.is_dirty() else ""
+    config_dict['git_commit'] = f"{dirty_str}{THIS_REPO.commit().hexsha}"
 
-    if config_dict['fold_override'] is not None:
-        selected_fold = config_dict['fold_override']
-        fold_iter = fold_iter[selected_fold:selected_fold+1]
+    run_test_once_only = not (config_dict.test_only_and_output_to in ["", None])
 
+    if training_dataset is None:
+        train_config = DotDict(config_dict.copy())
+        if run_test_once_only:
+            train_config['state'] = 'empty'
+        training_dataset = prepare_data(train_config)
 
-for fold_properties in fold_iter:
-    if config_dict['sweep_type'] is None:
-        normal_run(config_dict, fold_properties, training_dataset, test_dataset)
+    if test_dataset is None:
+        test_config = DotDict(config_dict.copy())
+        test_config['state'] = 'test'
+        test_dataset = prepare_data(test_config)
 
-    elif config_dict['sweep_type'] == 'wandb_sweep':
-        merged_sweep_config_dict = clean_sweep_dict(config_dict)
-        sweep_id = wandb.sweep(merged_sweep_config_dict, project=PROJECT_NAME)
-
-        def closure_wandb_sweep_run():
-            return wandb_sweep_run(config_dict, fold_properties, training_dataset=training_dataset, test_dataset=test_dataset)
-
-        wandb.agent(sweep_id, function=closure_wandb_sweep_run)
-
-    elif config_dict['sweep_type'] == 'stage-sweep':
-
-        size_3d = training_dataset[0]['label'].shape[-3:] \
-            if len(training_dataset) > 0 else test_dataset[0]['label'].shape[-3:]
-        r_params = init_regularization_params(
-            [
-                'hla_angles',
-                'hla_offsets',
-                'sa_angles',
-                'sa_offsets',
-            ], lambda_r=0.01)
-
-        all_params_stages = [
-            Stage( # Optimize SA
-                r_params=r_params,
-                use_random_affine_ap_init_sa=True,
-                use_random_affine_ap_init_hla=True,
-                sa_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'sa', THIS_SCRIPT_DIR),
-                # hla_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'hla', THIS_SCRIPT_DIR),
-                cuts_mode='sa',
-                epochs=int(config_dict['epochs']*1.5),
-                soft_cut_std=-999,
-                do_augment=True,
-                use_distance_map_localization=False,
-                use_affine_theta=True,
-                train_affine_theta=True,
-                do_output=True,
-                __activate_fn__=lambda self: None
-            ),
-            Stage( # Optimize hla
-                # hla_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'hla', THIS_SCRIPT_DIR),
-                use_random_affine_ap_init_sa=False,
-                use_random_affine_ap_init_hla=True,
-                cuts_mode='sa>hla',
-                epochs=int(config_dict['epochs']*1.5),
-                soft_cut_std=-999,
-                do_augment=True,
-                use_distance_map_localization=False,
-                use_affine_theta=True,
-                train_affine_theta=True,
-                do_output=True,
-                __activate_fn__=set_previous_stage_transform_chk
-            ),
-            # Stage( # Final optimized run
-            #     use_random_affine_ap_init_sa=False,
-            #     use_random_affine_ap_init_hla=False,
-            #     do_output=True,
-            #     cuts_mode='sa+hla',
-            #     epochs=config_dict['epochs'],
-            #     soft_cut_std=-999,
-            #     do_augment=True,
-            #     use_affine_theta=True,
-            #     train_affine_theta=False,
-            #     use_distance_map_localization=False,
-            #     __activate_fn__=set_previous_stage_transform_chk
-            # ),
-            Stage( # Reference run
-                do_augment=True,
-                do_output=True,
-                cuts_mode='sa+hla',
-                epochs=config_dict['epochs'],
-                soft_cut_std=-999,
-                train_affine_theta=False,
-                use_affine_theta=False,
-                use_distance_map_localization=False,
-                __activate_fn__=lambda self: None
-            ),
-        ]
-
-        selected_stages = all_params_stages
-        stage_sweep_run(config_dict, fold_properties, StageIterator(selected_stages, verbose=True),
-                        training_dataset=training_dataset, test_dataset=test_dataset)
+    # Configure folds
+    if config_dict.num_folds < 1:
+        train_idxs = range(training_dataset.__len__(use_2d_override=False))
+        val_idxs = []
+        fold_idx = -1
+        fold_iter = ([fold_idx, (train_idxs, val_idxs)],)
 
     else:
-        raise ValueError()
+        # kf = KFold(n_splits=config_dict.num_folds)
+        # fold_iter = enumerate(kf.split(range(training_dataset.__len__(use_2d_override=False))))
+        fold_iter = []
+        for fold_idx in range(config_dict.num_folds):
+            current_fold_idxs = training_dataset.data_split['train_folds'][f"fold_{fold_idx}"]
+            train_files = [training_dataset.data_split['train_files'][idx] for idx in current_fold_idxs['train_idxs']]
+            val_files = [training_dataset.data_split['train_files'][idx] for idx in current_fold_idxs['val_idxs']]
 
-    if config_dict.debug or run_test_once_only:
-        break
-    # End of fold loop
+            train_ids = set([training_dataset.get_file_id(fl)[0] for fl in train_files])
+            val_ids = set([training_dataset.get_file_id(fl)[0] for fl in val_files])
+            assert len(train_ids.intersection(val_ids)) == 0, \
+                f"Training and validation set must not overlap. But they do: {train_ids.intersection(val_ids)}"
+            train_idxs = training_dataset.switch_3d_identifiers(train_ids)
+            val_idxs = training_dataset.switch_3d_identifiers(val_ids)
+            fold_iter.append((
+                [idx for idx in train_idxs if idx is not None],
+                [idx for idx in val_idxs if idx is not None]
+            ))
+        fold_iter = list(enumerate(fold_iter))
 
-# %%
-if not in_notebook():
-    sys.exit(0)
+        if config_dict['fold_override'] is not None:
+            selected_fold = config_dict['fold_override']
+            fold_iter = fold_iter[selected_fold:selected_fold+1]
 
-# %%
-# Do any postprocessing / visualization in notebook here
+    for fold_properties in fold_iter:
+        if config_dict['sweep_type'] is None:
+            normal_run(config_dict, fold_properties, training_dataset, test_dataset)
 
-# %%
+        elif config_dict['sweep_type'] == 'wandb_sweep':
+            merged_sweep_config_dict = clean_sweep_dict(config_dict)
+            sweep_id = wandb.sweep(merged_sweep_config_dict, project=PROJECT_NAME)
+
+            def closure_wandb_sweep_run():
+                return wandb_sweep_run(config_dict, fold_properties, training_dataset=training_dataset, test_dataset=test_dataset)
+
+            wandb.agent(sweep_id, function=closure_wandb_sweep_run)
+
+        elif config_dict['sweep_type'] == 'stage-sweep':
+
+            size_3d = training_dataset[0]['label'].shape[-3:] \
+                if len(training_dataset) > 0 else test_dataset[0]['label'].shape[-3:]
+            r_params = init_regularization_params(
+                [
+                    'hla_angles',
+                    'hla_offsets',
+                    'sa_angles',
+                    'sa_offsets',
+                ], lambda_r=0.01)
+
+            all_params_stages = [
+                Stage( # Optimize SA
+                    r_params=r_params,
+                    sa_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'sa'),
+                    cuts_mode='sa',
+                    epochs=int(config_dict['epochs']*1.5),
+                    soft_cut_std=-999,
+                    do_augment=True,
+                    use_affine_theta=True,
+                    train_affine_theta=True,
+                    do_output=True,
+                    __activate_fn__=lambda self: None
+                ),
+                Stage( # Optimize hla
+                    r_params=r_params,
+                    # hla_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'hla'),
+                    cuts_mode='sa>hla',
+                    epochs=int(config_dict['epochs']*1.5),
+                    soft_cut_std=-999,
+                    do_augment=True,
+                    use_affine_theta=True,
+                    train_affine_theta=True,
+                    do_output=True,
+                    __activate_fn__=set_previous_stage_transform_chk
+                ),
+                # Stage( # Final optimized run
+                #     use_random_affine_ap_init_sa=False,
+                #     use_random_affine_ap_init_hla=False,
+                #     do_output=True,
+                #     cuts_mode='sa+hla',
+                #     epochs=config_dict['epochs'],
+                #     soft_cut_std=-999,
+                #     do_augment=True,
+                #     use_affine_theta=True,
+                #     train_affine_theta=False,
+                #     __activate_fn__=set_previous_stage_transform_chk
+                # ),
+                Stage( # Reference run
+                    do_output=True,
+                    cuts_mode='sa+hla',
+                    epochs=config_dict['epochs'],
+                    soft_cut_std=-999,
+                    do_augment=True,
+                    train_affine_theta=False,
+                    use_affine_theta=False,
+                    __activate_fn__=lambda self: None
+                ),
+            ]
+
+            selected_stages = all_params_stages
+            stage_sweep_run(config_dict, fold_properties, StageIterator(selected_stages, verbose=True),
+                            training_dataset=training_dataset, test_dataset=test_dataset)
+
+        else:
+            raise ValueError()
+
+        if config_dict.debug or run_test_once_only:
+            break
+        # End of fold loop
