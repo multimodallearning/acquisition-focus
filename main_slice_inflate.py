@@ -581,11 +581,17 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     epx_losses = []
 
     epx_sa_theta_aps = {}
-    epx_hla_theta_aps = {}
     epx_sa_theta_zps = {}
-    epx_hla_theta_zps = {}
     epx_sa_theta_t_offsets = {}
+    epx_sa_theta_grid_affines = {}
+    epx_sa_transformed_nii_affines = {}
+
+    epx_hla_theta_aps = {}
+    epx_hla_theta_zps = {}
     epx_hla_theta_t_offsets = {}
+    epx_hla_theta_grid_affines = {}
+    epx_hla_transformed_nii_affines = {}
+
     epx_input = {}
 
     label_scores_epoch = {}
@@ -669,12 +675,21 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             epx_sa_theta_t_offsets.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_t_offsets.cpu())})
         if sa_atm.last_theta_zp is not None:
             epx_sa_theta_zps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_zp.cpu())})
+        if sa_atm.last_grid_affine is not None:
+            epx_sa_theta_grid_affines.update({k:v for k,v in zip(batch['id'], sa_atm.last_grid_affine.cpu())})
+        if sa_atm.last_transformed_nii_affine is not None:
+            epx_sa_transformed_nii_affines.update({k:v for k,v in zip(batch['id'], sa_atm.last_transformed_nii_affine.cpu())})
+
         if hla_atm.last_theta_ap is not None:
             epx_hla_theta_aps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_ap.cpu())})
         if hla_atm.last_theta_t_offsets is not None:
             epx_hla_theta_t_offsets.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_t_offsets.cpu())})
         if hla_atm.last_theta_zp is not None:
             epx_hla_theta_zps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_zp.cpu())})
+        if hla_atm.last_grid_affine is not None:
+            epx_hla_theta_grid_affines.update({k:v for k,v in zip(batch['id'], hla_atm.last_grid_affine.cpu())})
+        if hla_atm.last_transformed_nii_affine is not None:
+            epx_hla_transformed_nii_affines.update({k:v for k,v in zip(batch['id'], hla_atm.last_transformed_nii_affine.cpu())})
 
         pred_seg = y_hat.argmax(1)
 
@@ -784,8 +799,10 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 epx_sa_theta_aps=epx_sa_theta_aps,
                 epx_sa_theta_t_offsets=epx_sa_theta_t_offsets,
                 epx_sa_theta_zps=epx_sa_theta_zps,
+                epx_sa_theta_grid_affines=epx_sa_theta_grid_affines,
+                epx_sa_transformed_nii_affines=epx_sa_transformed_nii_affines,
             )
-            torch.save(sa_dct, output_dir/f"sa_params_{phase}_epx_{epx:05d}.pt")
+            torch.save(sa_dct, output_dir/f"sa_params_{phase}_epx_{epx:05d}.pth")
 
     if epx_hla_theta_aps:
         ornt_log_prefix = f"orientations/{phase}_hla_"
@@ -811,6 +828,8 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 epx_hla_theta_aps=epx_hla_theta_aps,
                 epx_hla_theta_t_offsets=epx_hla_theta_t_offsets,
                 epx_hla_theta_zps=epx_hla_theta_zps,
+                epx_hla_theta_grid_affines=epx_hla_theta_grid_affines,
+                epx_hla_transformed_nii_affines=epx_hla_transformed_nii_affines,
             )
             torch.save(hla_dct, output_dir/f"hla_params_{phase}_epx_{epx:05d}.pt")
 
