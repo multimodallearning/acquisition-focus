@@ -56,6 +56,9 @@ def rescale_rot_components_with_shape_distortion(affine, volume_shape):
     # Is equivalent to:
     rescale_mat = torch.ones_like(affine)
     rescale_mat[:,:3,:3] = volume_shape.view(-1,1,3) * (1/volume_shape).view(-1,3,1)
+    print("resc")
+    print(rescale_mat)
+    print()
     affine = affine * rescale_mat
     return affine
 
@@ -93,39 +96,26 @@ def get_grid_affine_and_nii_affine(
     # (IJK -> RAS+).inverse() @ (Slice -> RAS+) == Slice -> IJK
     affine_mat = volume_affine.inverse() @ ras_transform_mat
 
-    # Rescale matrix for field of view
-    compensator = get_zooms(affine_mat)
-    affine_mat = rescale_rot_components_with_diag(
-        affine_mat,
-        # (get_zooms(volume_affine)**2 * volume_shape) / fov_mm # works
-        1/compensator * (fov_mm / fov_mm_i)
-    )
-
-    # Adjust shape distortions for torch (torch space is always -1;+1 and not D,H,W)
-    affine_mat = rescale_rot_components_with_shape_distortion(affine_mat, fov_mm_i)
-
     # Adjust offset and switch D,W dimension of matrix (needs two times switching on rows and on columns)
     affine_mat[:,:3,-1] = get_torch_translation_from_pix_translation(affine_mat[:,:3,-1], volume_shape)
     affine_mat = switch_0_2_mat_dim(affine_mat)
     affine_mat =  affine_mat @ pre_grid_sample_affine
+    affine_mat = rescale_rot_components_with_diag(
+        affine_mat,
+        (1/get_zooms(affine_mat) * (fov_mm / fov_mm_i)).flip(1)
+    )
 
     # Now get Nifti-matrix
     nii_affine = affine_mat.clone()
     nii_affine = switch_0_2_mat_dim(nii_affine)
-    nii_affine = rescale_rot_components_with_shape_distortion(nii_affine,  fov_vox) # takes away inequality
     nii_affine = rescale_rot_components_with_diag(nii_affine,
         fov_mm_i / (fov_vox * zooms_i)
     )
     nii_affine[:,:3,-1] = get_pix_translation_from_torch_translation(nii_affine[:,:3,-1], volume_shape)
-
-    # TODO inequal fov_vox spacing results in wrong nii_affine
     neg_half_mm_shift = volume_affine[:,:3,:3] @ nii_affine[:,:3,:3] @ (-(fov_vox-1)/2.0).to(volume_affine)
 
     nii_affine = volume_affine @ nii_affine # Pix to mm space
-    nii_affine[:,:3,-1] += neg_half_mm_shift # To be tested
-    # nii_affine[:,:3,-1] += translation_offset
-    print("aff", get_zooms(affine_mat))
-    print("nii", get_zooms(nii_affine))
+    nii_affine[:,:3,-1] += neg_half_mm_shift
     return affine_mat, nii_affine
 
 
