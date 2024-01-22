@@ -857,6 +857,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         # Build mean image and concat to individual sample views
         save_input = torch.cat([save_input.float().mean(0, keepdim=True), save_input], dim=0)
         img_input = eo.rearrange(save_input, 'BI DI HI WI -> (DI WI) (BI HI)')
+        img_input[img_input == 0] = np.nan
         log_frameless_image(img_input.numpy(), output_dir / f"slices_{phase}_epx_{epx:05d}.png", dpi=150, cmap='magma')
 
         lean_dct = {k:v for k,v in zip(epx_input.keys(), save_input.short())}
