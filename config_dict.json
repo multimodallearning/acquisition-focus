@@ -4,7 +4,7 @@
     "fold_override": 0,
     "epochs": 160,
     "test_only_and_output_to": null,
-    "batch_size": 2,
+    "batch_size": 4,
     "val_batch_size": 1,
     "do_augment": false,
     "sample_augment_strength": 0.2,
@@ -34,34 +34,34 @@
     "crop_around_3d_label_center": null,
     "crop_around_2d_label_center": null,
     "hires_fov_mm": [
-        216.0,
-        216.0,
-        216.0
+        192.0,
+        192.0,
+        192.0
     ],
     "hires_fov_vox": [
-        144,
-        144,
-        144
+        128,
+        128,
+        128
     ],
     "slice_fov_mm": [
-        216.0,
-        216.0,
+        192.0,
+        192.0,
         1.5
     ],
     "slice_fov_vox": [
-        144,
-        144,
+        128,
+        128,
         1
     ],
     "prescan_fov_mm": [
-        216.0,
-        216.0,
-        216.0
+        192.0,
+        192.0,
+        192.0
     ],
     "prescan_fov_vox": [
-        36,
-        36,
-        36
+        128,
+        128,
+        128
     ],
     "clinical_view_affine_type": "from-gt",
     "label_slice_type": "from-gt",
