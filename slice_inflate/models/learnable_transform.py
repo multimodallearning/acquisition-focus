@@ -68,13 +68,14 @@ class LocalisationNet(torch.nn.Module):
 
 class AffineTransformModule(torch.nn.Module):
     def __init__(self, input_channels, size_3d,
-        fov_mm, fov_vox,
+        volume_fov_mm, volume_fov_vox,
+        slice_fov_mm, slice_fov_vox,
         optim_method='angle-axis', use_affine_theta=True,
         offset_clip_value=1., zoom_clip_value=2., tag=None,
         align_corners=False, rotate_slice_to_min_principle=False):
 
         super().__init__()
-        assert fov_vox[0] == fov_vox[1] == fov_vox[2]
+        assert volume_fov_vox[0] == volume_fov_vox[1] == volume_fov_vox[2]
         assert optim_method in ['angle-axis', 'normal-vector', 'R6-vector'], \
             f"optim_method must be 'angle-axis', 'normal-vector' or 'R6-vector', not {optim_method}"
 
@@ -98,11 +99,10 @@ class AffineTransformModule(torch.nn.Module):
         else:
             raise ValueError()
 
-        self.fov_mm = fov_mm
-        self.fov_vox = fov_vox
-        self.slice_fov_vox = torch.as_tensor(fov_vox[:2].tolist() + [1])
-        self.slice_fov_mm = torch.as_tensor(fov_mm[:2].tolist() + [fov_mm[-1]/fov_vox[-1]])
-        self.spat = int(fov_vox[-1])
+        self.volume_fov_mm = volume_fov_mm
+        self.volume_fov_vox = volume_fov_vox
+        self.slice_fov_vox = slice_fov_vox
+        self.slice_fov_mm = slice_fov_mm
 
         self.use_affine_theta = use_affine_theta
         self.align_corners = align_corners
@@ -139,6 +139,7 @@ class AffineTransformModule(torch.nn.Module):
         self.last_theta = None
         self.last_grid_affine = None
         self.last_transformed_nii_affine = None
+        self.random_grid_affine = get_random_affine(rotation_strength=4., zoom_strength=0.)[None]
 
     def set_init_theta_ap(self, init_theta_ap):
         self.init_theta_ap.data = init_theta_ap.data
@@ -265,7 +266,7 @@ class AffineTransformModule(torch.nn.Module):
             if not x_soft_label_is_none:
                 # nifti_affine is the affine of the original volume
                 x_soft_label_pre_mlp, _, transformed_nii_affine = nifti_grid_sample(x_soft_label, nifti_affine,
-                    fov_mm=self.fov_mm, fov_vox=self.fov_vox, is_label=False,
+                    fov_mm=self.volume_fov_mm, fov_vox=self.volume_fov_vox, is_label=False,
                     pre_grid_sample_affine=grid_affine_pre_mlp
                 )
 

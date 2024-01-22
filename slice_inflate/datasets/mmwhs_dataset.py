@@ -18,7 +18,7 @@ from slice_inflate.utils.common_utils import DotDict, get_script_dir
 from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, calc_dist_map, get_rotation_matrix_3d_from_angles
 from slice_inflate.models.learnable_transform import get_random_affine
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
-from slice_inflate.utils.nifti_utils import crop_around_label_center, nifti_grid_sample
+from slice_inflate.utils.nifti_utils import crop_around_label_center, nifti_grid_sample, get_zooms
 from slice_inflate.utils.torch_utils import cut_slice, soft_cut_slice
 from slice_inflate.datasets.clinical_cardiac_views import get_clinical_cardiac_view_affines
 from slice_inflate.utils.nnunetv2_utils import get_segment_fn
@@ -370,34 +370,60 @@ class MMWHSDataset(HybridIdDataset):
                 if self.use_distance_map_localization:
                     oh = torch.nn.functional.one_hot(tmp.long()).permute(3,0,1,2)
                     additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool(), mode='outer').squeeze(0)
-            else:
-                if self.clinical_view_affine_type == 'from-segmented-lores-prescan':
-                    # TODO improve speed for nnunet segmentation
-                    lores_prescan, _, lores_nii_affine = nifti_grid_sample(
-                        tmp.unsqueeze(0).unsqueeze(0),
-                        hires_nii_affine.view(1,4,4), ras_transform_mat=None,
-                        fov_mm=torch.as_tensor(self.lores_fov_mm), fov_vox=torch.as_tensor(self.lores_fov_vox),
-                        is_label=False,
-                        pre_grid_sample_affine=None,
-                        pre_grid_sample_hidden_affine=None,
-                        dtype=torch.float32
-                    )
 
-                    # Segment using nnunet v2 model
-                    lores_spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
-                    lores_prescan_segmentation = segment_fn(lores_prescan.cuda(), lores_spacing.view(1,3)).cpu()
+            if not is_label and self.clinical_view_affine_type == 'from-segmented':
+                # Segment from image
+                prescan_image, _, prescan_nii_affine = nifti_grid_sample(
+                    tmp.unsqueeze(0).unsqueeze(0),
+                    hires_nii_affine.view(1,4,4), ras_transform_mat=None,
+                    fov_mm=torch.as_tensor(self.lores_fov_mm), fov_vox=torch.as_tensor(self.lores_fov_vox),
+                    is_label=False,
+                    pre_grid_sample_affine=None,
+                    pre_grid_sample_hidden_affine=None,
+                    dtype=torch.float32
+                )
 
-                    additional_data_3d[_3d_id]['lores_nii_affine'] = lores_nii_affine
-                    additional_data_3d[_3d_id]['lores_prescan'] = lores_prescan.squeeze()
-                    additional_data_3d[_3d_id]['lores_prescan_segmentation'] = lores_prescan_segmentation.squeeze()
+                # Segment using nnunet v2 model
+                lores_spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
+                prescan_segmentation = segment_fn(prescan_image.cuda(), lores_spacing.view(1,3)).cpu()
 
-                    additional_data_3d[_3d_id]['lores_prescan_view_affines'] = get_clinical_cardiac_view_affines(
-                        lores_prescan_segmentation[0], lores_nii_affine, class_dict,
-                        num_sa_slices=15, return_unrolled=True)
-                    # works
-                    # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
-                    # display_clinical_views(lores_prescan, lores_prescan_segmentation.to_sparse(), lores_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
-                    #                         output_to_file="my_output_lores.png", debug=False)
+                additional_data_3d[_3d_id]['prescan'] = prescan_image.squeeze()
+                additional_data_3d[_3d_id]['prescan_nii_affine'] = prescan_nii_affine
+                additional_data_3d[_3d_id]['prescan_label'] = prescan_segmentation.squeeze()
+
+                additional_data_3d[_3d_id]['prescan_view_affines'] = get_clinical_cardiac_view_affines(
+                    additional_data_3d[_3d_id]['prescan_label'][None], prescan_nii_affine, class_dict,
+                    num_sa_slices=15, return_unrolled=True)
+                # works
+                # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
+                # display_clinical_views(prescan, prescan_segmentation.to_sparse(), prescan_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
+                #                         output_to_file="my_output_lores.png", debug=False)
+
+            elif is_label and self.clinical_view_affine_type == 'from-gt':
+                # Take GT for lores prescan
+                prescan_label, _, prescan_nii_affine = nifti_grid_sample(
+                    tmp.unsqueeze(0).unsqueeze(0),
+                    hires_nii_affine.view(1,4,4), ras_transform_mat=None,
+                    fov_mm=torch.as_tensor(self.lores_fov_mm), fov_vox=torch.as_tensor(self.lores_fov_vox),
+                    is_label=False,
+                    pre_grid_sample_affine=None,
+                    pre_grid_sample_hidden_affine=None,
+                    dtype=torch.float32
+                )
+
+                # Segment using nnunet v2 model
+                lores_spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
+
+                additional_data_3d[_3d_id]['prescan_nii_affine'] = prescan_nii_affine
+                additional_data_3d[_3d_id]['prescan_label'] = prescan_label.squeeze()
+
+                additional_data_3d[_3d_id]['prescan_view_affines'] = get_clinical_cardiac_view_affines(
+                    additional_data_3d[_3d_id]['prescan_label'][None], prescan_nii_affine, class_dict,
+                    num_sa_slices=15, return_unrolled=True)
+                # works
+                # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
+                # display_clinical_views(prescan, prescan_segmentation.to_sparse(), prescan_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
+                #                         output_to_file="my_output_lores.png", debug=False)
 
         # Initialize 3d modified labels as unmodified labels
         for label_id in label_data_3d.keys():

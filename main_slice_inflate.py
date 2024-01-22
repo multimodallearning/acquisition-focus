@@ -95,7 +95,7 @@ def prepare_data(config):
     cache_path = Path(os.environ['CACHE_PATH'], arghash, 'dataset.dil')
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if cache_path.is_file():
+    if config.use_caching and cache_path.is_file():
         print("Loading dataset from cache:", cache_path)
         with open(cache_path, 'rb') as file:
             dataset = dill.load(file)
@@ -236,7 +236,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
 
 
 
-def get_atm(config, num_classes, size_3d, view, _path=None, random_ap_init=False):
+def get_atm(config, num_classes, size_3d, view, _path=None):
 
     assert view in ['sa', 'hla']
     device = config.device
@@ -245,16 +245,16 @@ def get_atm(config, num_classes, size_3d, view, _path=None, random_ap_init=False
     # Add atm models
     atm = AffineTransformModule(num_classes,
         size_3d,
-        torch.tensor(config.hires_fov_mm),
-        torch.tensor(config.hires_fov_vox),
+        torch.tensor(config.prescan_fov_mm),
+        torch.tensor(config.prescan_fov_vox),
+        torch.tensor(config.slice_fov_mm),
+        torch.tensor(config.slice_fov_vox),
+
         offset_clip_value=config['offset_clip_value'],
         zoom_clip_value=config['zoom_clip_value'],
         optim_method=config.affine_theta_optim_method,
         tag=view,
         rotate_slice_to_min_principle=config.rotate_slice_to_min_principle)
-
-    if random_ap_init:
-        atm.set_init_theta_ap(get_random_ortho6_vector(rotation_strength=0.5, constrained=False))
 
     if _path:
         assert Path(_path).is_dir()
@@ -281,13 +281,13 @@ def get_transform_model(config, num_classes, size_3d, this_script_dir, _path=Non
         # Check if atm is set externally
         sa_atm = sa_atm_override
     else:
-        sa_atm = get_atm(config, num_classes, size_3d, random_ap_init=config.use_random_affine_ap_init_sa, view='sa', _path=_path)
+        sa_atm = get_atm(config, num_classes, size_3d, view='sa', _path=_path)
 
     if isinstance(hla_atm_override, AffineTransformModule):
         # Check if atm is set externally
         hla_atm = hla_atm_override
     else:
-        hla_atm = get_atm(config, num_classes, size_3d, random_ap_init=config.use_random_affine_ap_init_hla, view='hla', _path = _path)
+        hla_atm = get_atm(config, num_classes, size_3d, view='hla', _path = _path)
 
     if config['soft_cut_std'] > 0:
         sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
@@ -363,7 +363,7 @@ def get_transformed(config, label, soft_label, nifti_affine, grid_affine_pre_mlp
 
     if config.label_slice_type == 'from-gt':
         pass
-    elif config.label_slice_type == 'from-segmented-hires':
+    elif config.label_slice_type == 'from-segmented':
         assert not img_is_invalid and segment_fn is not None
         # Beware: Label slice does not have gradients anymore
         pred_slc = segment_fn(eo.rearrange(image_slc, 'B C D H 1 -> B C 1 D H'), get_zooms(nifti_affine)).view(B,1,D,H)
@@ -387,11 +387,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     b_label = batch['label']
     b_image = batch['image']
 
-    if config.clinical_view_affine_type == 'from-gt':
-        b_view_affines = batch['additional_data']['gt_view_affines']
-    elif config.clinical_view_affine_type == 'from-segmented-lores-prescan':
-        b_view_affines = batch['additional_data']['lores_prescan_view_affines']
-
+    b_view_affines = batch['additional_data']['prescan_view_affines']
     b_label = eo.rearrange(F.one_hot(b_label, num_classes),
                         'B D H W OH -> B OH D H W')
     B,NUM_CLASSES,D,H,W = b_label.shape
@@ -412,8 +408,13 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
         ctx = torch.no_grad \
             if config.cuts_mode == 'sa>hla' else contextlib.nullcontext # Do not use gradients when just inferring from SA view
         with ctx():
-            # Use case dependent grid affine of p2CH view
-            sa_input_grid_affine = torch.as_tensor(b_view_affines['p2CH']).view(B,4,4).to(known_augment_affine)
+            if config.hla_view == 'RND':
+                # Get a random view offset from prealingned volumes
+                sa_input_grid_affine = torch.as_tensor(b_view_affines['4CH']).view(B,4,4)
+                sa_input_grid_affine = sa_input_grid_affine @ sa_atm.random_grid_affine
+                sa_input_grid_affine = sa_input_grid_affine.to(known_augment_affine)
+            else:
+                sa_input_grid_affine = torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(known_augment_affine)
 
             sa_image_slc, sa_label_slc, _, sa_grid_affine = \
                 get_transformed(
@@ -427,8 +428,14 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
 
     if 'hla' in config.cuts_mode:
-        # Use case dependent grid affine of p2CH view
-        hla_input_grid_affine = torch.as_tensor(b_view_affines['p4CH']).view(B,4,4).to(known_augment_affine)
+        if config.hla_view == 'RND':
+            # Get a random view offset from prealingned volumes
+            hla_input_grid_affine = torch.as_tensor(b_view_affines['4CH']).view(B,4,4)
+            hla_input_grid_affine = hla_input_grid_affine @ hla_atm.random_grid_affine
+            hla_input_grid_affine = hla_input_grid_affine.to(known_augment_affine)
+        else:
+            hla_input_grid_affine = torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(known_augment_affine)
+
         hla_image_slc, hla_label_slc, _, hla_grid_affine = \
             get_transformed(
                 config,
@@ -455,7 +462,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     else:
         raise ValueError()
 
-    SPAT = config.hires_fov_vox[0]
+    SPAT = config.slice_fov_vox[0]
 
     if 'hybrid' in config.model_type:
         b_input = torch.cat(slices, dim=1)

@@ -122,11 +122,11 @@ class MRXCATDataset(HybridIdDataset):
             if self.do_augment:
                 sample_augment_strength = self.self_attributes['sample_augment_strength']
                 known_augment_affine = get_random_affine(
-                    rotation_strength=sample_augment_strength,
+                    rotation_strength=0.,
                     zoom_strength=sample_augment_strength)
 
                 hidden_augment_affine = get_random_affine(
-                    rotation_strength=sample_augment_strength,
+                    rotation_strength=sample_augment_strength * .1,
                     zoom_strength=0.0)
 
             additional_data['known_augment_affine'] = known_augment_affine.view(4,4)
@@ -147,81 +147,6 @@ class MRXCATDataset(HybridIdDataset):
 
             additional_data=additional_data
         )
-
-    def get_efficient_augmentation_collate_fn(self):
-
-        def collate_closure(batch):
-            batch = torch.utils.data._utils.collate.default_collate(batch)
-            if self.augment_at_collate:
-                B = batch['dataset_idx'].shape[0]
-
-                image = batch['image']
-                label = batch['label']
-                additional_data = batch['additional_data']
-
-                all_hla_images = []
-                all_hla_labels = []
-                all_sa_image_slcs = []
-                all_sa_label_slcs = []
-                all_hla_image_slcs = []
-                all_hla_label_slcs = []
-                all_sa_affines = []
-                all_hla_affines = []
-
-                B, D, H, W = batch['label'].shape
-
-                image = batch['image'].cuda()
-                label = batch['label'].view(B, 1, D, H, W).cuda()
-
-                nifti_affine = additional_data['nifti_affine'].to(
-                    device=label.device).view(B, 4, 4)
-                augment_affine = torch.eye(4).view(1, 4, 4).repeat(
-                    B, 1, 1).to(device=label.device)
-
-                if self.do_augment:
-                    for b_idx in range(B):
-                        augment_angle_std = self.self_attributes['augment_angle_std']
-                        deg_angles = torch.normal(
-                            mean=0, std=augment_angle_std*torch.ones(3))
-                        augment_affine[b_idx, :3, :3] = get_rotation_matrix_3d_from_angles(
-                            deg_angles)
-
-                config = None # TODO read config
-                sa_image, sa_label, sa_image_slc, sa_label_slc, sa_affine = \
-                    self.get_transformed(
-                        config,
-                        label, nifti_affine, augment_affine, 'sa', image)
-                hla_image, hla_label, hla_image_slc, hla_label_slc, hla_affine = \
-                    self.get_transformed(
-                        config,
-                        label, nifti_affine, augment_affine, 'hla', image)
-
-                all_hla_images.append(hla_image)
-                all_hla_labels.append(hla_label)
-                all_sa_image_slcs.append(sa_image_slc)
-                all_sa_label_slcs.append(sa_label_slc)
-                all_hla_image_slcs.append(hla_image_slc)
-                all_hla_label_slcs.append(hla_label_slc)
-                all_sa_affines.append(sa_affine)
-                all_hla_affines.append(hla_affine)
-
-                batch.update(dict(
-                    image=torch.cat(all_hla_images, dim=0),
-                    label=torch.cat(all_hla_labels, dim=0),
-
-                    sa_image_slc=torch.cat(all_sa_image_slcs, dim=0),
-                    sa_label_slc=torch.cat(all_sa_label_slcs, dim=0),
-
-                    hla_image_slc=torch.cat(all_hla_image_slcs, dim=0),
-                    hla_label_slc=torch.cat(all_hla_label_slcs, dim=0),
-
-                    sa_affine=torch.stack(all_sa_affines),
-                    hla_affine=torch.stack(all_hla_affines)
-                ))
-
-            return batch
-
-        return collate_closure
 
     @staticmethod
     def get_file_id(file_path):
@@ -399,7 +324,6 @@ class MRXCATDataset(HybridIdDataset):
 
         class_dict = {tag:idx for idx,tag in enumerate(self.label_tags)}
 
-
         for _3d_id, _file in tqdm(id_paths_to_load, desc=description):
             additional_data_3d[_3d_id] = additional_data_3d.get(_3d_id, {})
 
@@ -446,34 +370,60 @@ class MRXCATDataset(HybridIdDataset):
                 if self.use_distance_map_localization:
                     oh = torch.nn.functional.one_hot(tmp.long()).permute(3,0,1,2)
                     additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool(), mode='outer').squeeze(0)
-            else:
-                if self.clinical_view_affine_type == 'from-segmented-lores-prescan':
-                    # TODO improve speed for nnunet segmentation
-                    lores_prescan, _, lores_nii_affine = nifti_grid_sample(
-                        tmp.unsqueeze(0).unsqueeze(0),
-                        hires_nii_affine.view(1,4,4), ras_transform_mat=None,
-                        fov_mm=torch.as_tensor(self.lores_fov_mm), fov_vox=torch.as_tensor(self.lores_fov_vox),
-                        is_label=False,
-                        pre_grid_sample_affine=None,
-                        pre_grid_sample_hidden_affine=None,
-                        dtype=torch.float32
-                    )
 
-                    # Segment using nnunet v2 model
-                    lores_spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
-                    lores_prescan_segmentation = segment_fn(lores_prescan.cuda(), lores_spacing.view(1,3)).cpu()
+            if not is_label and self.clinical_view_affine_type == 'from-segmented':
+                # Segment from image
+                prescan_image, _, prescan_nii_affine = nifti_grid_sample(
+                    tmp.unsqueeze(0).unsqueeze(0),
+                    hires_nii_affine.view(1,4,4), ras_transform_mat=None,
+                    fov_mm=torch.as_tensor(self.lores_fov_mm), fov_vox=torch.as_tensor(self.lores_fov_vox),
+                    is_label=False,
+                    pre_grid_sample_affine=None,
+                    pre_grid_sample_hidden_affine=None,
+                    dtype=torch.float32
+                )
 
-                    additional_data_3d[_3d_id]['lores_nii_affine'] = lores_nii_affine
-                    additional_data_3d[_3d_id]['lores_prescan'] = lores_prescan.squeeze()
-                    additional_data_3d[_3d_id]['lores_prescan_segmentation'] = lores_prescan_segmentation.squeeze()
+                # Segment using nnunet v2 model
+                lores_spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
+                prescan_segmentation = segment_fn(prescan_image.cuda(), lores_spacing.view(1,3)).cpu()
 
-                    additional_data_3d[_3d_id]['lores_prescan_view_affines'] = get_clinical_cardiac_view_affines(
-                        lores_prescan_segmentation[0], lores_nii_affine, class_dict,
-                        num_sa_slices=15, return_unrolled=True)
-                    # works
-                    # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
-                    # display_clinical_views(lores_prescan, lores_prescan_segmentation.to_sparse(), lores_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
-                    #                         output_to_file="my_output_lores.png", debug=False)
+                additional_data_3d[_3d_id]['prescan'] = prescan_image.squeeze()
+                additional_data_3d[_3d_id]['prescan_nii_affine'] = prescan_nii_affine
+                additional_data_3d[_3d_id]['prescan_label'] = prescan_segmentation.squeeze()
+
+                additional_data_3d[_3d_id]['prescan_view_affines'] = get_clinical_cardiac_view_affines(
+                    additional_data_3d[_3d_id]['prescan_label'][None], prescan_nii_affine, class_dict,
+                    num_sa_slices=15, return_unrolled=True)
+                # works
+                # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
+                # display_clinical_views(prescan, prescan_segmentation.to_sparse(), prescan_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
+                #                         output_to_file="my_output_lores.png", debug=False)
+
+            elif is_label and self.clinical_view_affine_type == 'from-gt':
+                # Take GT for lores prescan
+                prescan_label, _, prescan_nii_affine = nifti_grid_sample(
+                    tmp.unsqueeze(0).unsqueeze(0),
+                    hires_nii_affine.view(1,4,4), ras_transform_mat=None,
+                    fov_mm=torch.as_tensor(self.lores_fov_mm), fov_vox=torch.as_tensor(self.lores_fov_vox),
+                    is_label=False,
+                    pre_grid_sample_affine=None,
+                    pre_grid_sample_hidden_affine=None,
+                    dtype=torch.float32
+                )
+
+                # Segment using nnunet v2 model
+                lores_spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
+
+                additional_data_3d[_3d_id]['prescan_nii_affine'] = prescan_nii_affine
+                additional_data_3d[_3d_id]['prescan_label'] = prescan_label.squeeze()
+
+                additional_data_3d[_3d_id]['prescan_view_affines'] = get_clinical_cardiac_view_affines(
+                    additional_data_3d[_3d_id]['prescan_label'][None], prescan_nii_affine, class_dict,
+                    num_sa_slices=15, return_unrolled=True)
+                # works
+                # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
+                # display_clinical_views(prescan, prescan_segmentation.to_sparse(), prescan_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
+                #                         output_to_file="my_output_lores.png", debug=False)
 
         # Initialize 3d modified labels as unmodified labels
         for label_id in label_data_3d.keys():
