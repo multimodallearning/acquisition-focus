@@ -118,9 +118,8 @@ def get_grid_affine_and_nii_affine(
     )
     nii_affine[:,:3,-1] = get_pix_translation_from_torch_translation(nii_affine[:,:3,-1], volume_shape)
 
-    # TODO there is still a slight offset
     # TODO inequal fov_vox spacing results in wrong nii_affine
-    neg_half_mm_shift = volume_affine[:,:3,:3] @ nii_affine[:,:3,:3] @ (-(fov_vox-.5)/2.0).to(volume_affine)
+    neg_half_mm_shift = volume_affine[:,:3,:3] @ nii_affine[:,:3,:3] @ (-(fov_vox-1)/2.0).to(volume_affine)
 
     nii_affine = volume_affine @ nii_affine # Pix to mm space
     nii_affine[:,:3,-1] += neg_half_mm_shift # To be tested
