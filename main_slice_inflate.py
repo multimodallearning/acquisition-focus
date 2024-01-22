@@ -236,7 +236,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
 
 
 
-def get_atm(config, num_classes, size_3d, view, _path=None):
+def get_atm(config, num_classes, view, _path=None):
 
     assert view in ['sa', 'hla']
     device = config.device
@@ -244,7 +244,6 @@ def get_atm(config, num_classes, size_3d, view, _path=None):
 
     # Add atm models
     atm = AffineTransformModule(num_classes,
-        size_3d,
         torch.tensor(config.prescan_fov_mm),
         torch.tensor(config.prescan_fov_vox),
         torch.tensor(config.slice_fov_mm),
@@ -274,20 +273,20 @@ class NoneOptimizer():
     def state_dict(self):
         return {}
 
-def get_transform_model(config, num_classes, size_3d, this_script_dir, _path=None, sa_atm_override=None, hla_atm_override=None):
+def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, hla_atm_override=None):
     device = config.device
 
     if isinstance(sa_atm_override, AffineTransformModule):
         # Check if atm is set externally
         sa_atm = sa_atm_override
     else:
-        sa_atm = get_atm(config, num_classes, size_3d, view='sa', _path=_path)
+        sa_atm = get_atm(config, num_classes, view='sa', _path=_path)
 
     if isinstance(hla_atm_override, AffineTransformModule):
         # Check if atm is set externally
         hla_atm = hla_atm_override
     else:
-        hla_atm = get_atm(config, num_classes, size_3d, view='hla', _path = _path)
+        hla_atm = get_atm(config, num_classes, view='hla', _path = _path)
 
     if config['soft_cut_std'] > 0:
         sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
@@ -919,11 +918,8 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
     sa_atm_override = stage['sa_atm'] if stage is not None and 'sa_atm' in stage else None
     hla_atm_override = stage['hla_atm'] if stage is not None and 'hla_atm' in stage else None
 
-    size_3d = training_dataset[0]['label'].shape[-3:] \
-        if len(training_dataset) > 0 else test_dataset[0]['label'].shape[-3:]
-
     (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer, transform_scheduler = get_transform_model(
-        config, len(training_dataset.label_tags), size_3d, THIS_SCRIPT_DIR, _path=transform_mdl_chk_path,
+        config, len(training_dataset.label_tags), _path=transform_mdl_chk_path,
         sa_atm_override=sa_atm_override, hla_atm_override=hla_atm_override)
 
     all_optimizers = dict(optimizer=optimizer, transform_optimizer=transform_optimizer)
@@ -1236,8 +1232,6 @@ if __name__ == '__main__':
 
         elif config_dict['sweep_type'] == 'stage-sweep':
 
-            size_3d = training_dataset[0]['label'].shape[-3:] \
-                if len(training_dataset) > 0 else test_dataset[0]['label'].shape[-3:]
             r_params = init_regularization_params(
                 [
                     'hla_angles',
@@ -1249,7 +1243,7 @@ if __name__ == '__main__':
             all_params_stages = [
                 Stage( # Optimize SA
                     r_params=r_params,
-                    sa_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'sa'),
+                    sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa'),
                     cuts_mode='sa',
                     epochs=int(config_dict['epochs']*1.5),
                     soft_cut_std=-999,
@@ -1261,7 +1255,7 @@ if __name__ == '__main__':
                 ),
                 Stage( # Optimize hla
                     r_params=r_params,
-                    # hla_atm=get_atm(config_dict, len(training_dataset.label_tags), size_3d, 'hla'),
+                    # hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla'),
                     cuts_mode='sa>hla',
                     epochs=int(config_dict['epochs']*1.5),
                     soft_cut_std=-999,

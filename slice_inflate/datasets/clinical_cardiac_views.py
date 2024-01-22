@@ -69,7 +69,7 @@ def get_center_and_median(label):
     if idxs.numel() == 0:
         none_ret = torch.as_tensor(label.shape).to(label.device) / 2.
         return none_ret, none_ret
-    
+
     center = idxs.float().mean(1)
     median = idxs.float().median(1).values
 
@@ -308,6 +308,11 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
     sp_myolvla_label = get_sub_sp_tensor(sp_label, eq_value=(class_dict['MYO'], class_dict['LV'], class_dict['LA']))
     sp_myolvrv_label = get_sub_sp_tensor(sp_label, eq_value=(class_dict['MYO'], class_dict['LV'], class_dict['RV']))
     sp_heart_label = get_sub_sp_tensor(sp_label, eq_value=(class_dict.values()))
+    if sp_myolv_label._nnz() == 0 \
+        or sp_myolvla_label._nnz() == 0 \
+        or sp_myolvrv_label._nnz() == 0 \
+        or sp_heart_label._nnz() == 0:
+        return {}
 
     # 0. Extract axial, sagittal, coronal views
     heart_center, _ = get_inertia_tensor(sp_heart_label)
