@@ -376,7 +376,7 @@ class MMWHSDataset(HybridIdDataset):
                 prescan_image, _, prescan_nii_affine = nifti_grid_sample(
                     tmp.unsqueeze(0).unsqueeze(0),
                     hires_nii_affine.view(1,4,4), ras_transform_mat=None,
-                    fov_mm=torch.as_tensor(self.lores_fov_mm), fov_vox=torch.as_tensor(self.lores_fov_vox),
+                    fov_mm=torch.as_tensor(self.prescan_fov_mm), fov_vox=torch.as_tensor(self.presxcan_fov_vox),
                     is_label=False,
                     pre_grid_sample_affine=None,
                     pre_grid_sample_hidden_affine=None,
@@ -384,15 +384,15 @@ class MMWHSDataset(HybridIdDataset):
                 )
 
                 # Segment using nnunet v2 model
-                lores_spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
+                lores_spacing = get_zooms(prescan_nii_affine)
                 prescan_segmentation = segment_fn(prescan_image.cuda(), lores_spacing.view(1,3)).cpu()
 
                 additional_data_3d[_3d_id]['prescan'] = prescan_image.squeeze()
-                additional_data_3d[_3d_id]['prescan_nii_affine'] = prescan_nii_affine
+                additional_data_3d[_3d_id]['prescan_nii_affine'] = prescan_nii_affine.squeeze()
                 additional_data_3d[_3d_id]['prescan_label'] = prescan_segmentation.squeeze()
 
                 additional_data_3d[_3d_id]['prescan_view_affines'] = get_clinical_cardiac_view_affines(
-                    additional_data_3d[_3d_id]['prescan_label'][None], prescan_nii_affine, class_dict,
+                    additional_data_3d[_3d_id]['prescan_label'][None], additional_data_3d[_3d_id]['prescan_nii_affine'], class_dict,
                     num_sa_slices=15, return_unrolled=True)
                 # works
                 # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
@@ -400,11 +400,11 @@ class MMWHSDataset(HybridIdDataset):
                 #                         output_to_file="my_output_lores.png", debug=False)
 
             elif is_label and self.clinical_view_affine_type == 'from-gt':
-                # Take GT for lores prescan
+                # Take GT for prescan
                 prescan_label, _, prescan_nii_affine = nifti_grid_sample(
                     tmp.unsqueeze(0).unsqueeze(0),
                     hires_nii_affine.view(1,4,4), ras_transform_mat=None,
-                    fov_mm=torch.as_tensor(self.lores_fov_mm), fov_vox=torch.as_tensor(self.lores_fov_vox),
+                    fov_mm=torch.as_tensor(self.prescan_fov_mm), fov_vox=torch.as_tensor(self.prescan_fov_vox),
                     is_label=False,
                     pre_grid_sample_affine=None,
                     pre_grid_sample_hidden_affine=None,
@@ -412,13 +412,12 @@ class MMWHSDataset(HybridIdDataset):
                 )
 
                 # Segment using nnunet v2 model
-                lores_spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
-
-                additional_data_3d[_3d_id]['prescan_nii_affine'] = prescan_nii_affine
+                lores_spacing = get_zooms(prescan_nii_affine)
+                additional_data_3d[_3d_id]['prescan_nii_affine'] = prescan_nii_affine.squeeze()
                 additional_data_3d[_3d_id]['prescan_label'] = prescan_label.squeeze()
 
                 additional_data_3d[_3d_id]['prescan_view_affines'] = get_clinical_cardiac_view_affines(
-                    additional_data_3d[_3d_id]['prescan_label'][None], prescan_nii_affine, class_dict,
+                    additional_data_3d[_3d_id]['prescan_label'], additional_data_3d[_3d_id]['prescan_nii_affine'], class_dict,
                     num_sa_slices=15, return_unrolled=True)
                 # works
                 # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views

@@ -67,7 +67,7 @@ class LocalisationNet(torch.nn.Module):
 
 
 class AffineTransformModule(torch.nn.Module):
-    def __init__(self, input_channels, size_3d,
+    def __init__(self, input_channels,
         volume_fov_mm, volume_fov_vox,
         slice_fov_mm, slice_fov_vox,
         optim_method='angle-axis', use_affine_theta=True,
@@ -75,6 +75,7 @@ class AffineTransformModule(torch.nn.Module):
         align_corners=False, rotate_slice_to_min_principle=False):
 
         super().__init__()
+        assert volume_fov_mm[0] == volume_fov_mm[1] == volume_fov_mm[2]
         assert volume_fov_vox[0] == volume_fov_vox[1] == volume_fov_vox[2]
         assert optim_method in ['angle-axis', 'normal-vector', 'R6-vector'], \
             f"optim_method must be 'angle-axis', 'normal-vector' or 'R6-vector', not {optim_method}"
@@ -111,17 +112,18 @@ class AffineTransformModule(torch.nn.Module):
         self.offset_clip_value = offset_clip_value
         self.zoom_clip_value = zoom_clip_value
 
-        self.vox_range = int(round(
+        self.spat = volume_fov_vox[0]
+
+        self.vox_range = (
             self.get_vox_offsets_from_gs_offsets(self.offset_clip_value)
             - self.get_vox_offsets_from_gs_offsets(-self.offset_clip_value)
-        ))
-
+        ).round().int().item()
         self.arra = torch.arange(0, self.vox_range) + (self.spat - self.vox_range) // 2
 
         self.localisation_net = LocalisationNet(
             input_channels,
-            self.ap_space + 3*int(self.vox_range) + 1, # 3*spatial dimension for translational parameters and 1x zoom parameter
-            size_3d=size_3d
+            self.ap_space + 3*self.vox_range + 1, # 3*spatial dimension for translational parameters and 1x zoom parameter
+            size_3d=volume_fov_vox
         )
 
         self.use_affine_theta = use_affine_theta
