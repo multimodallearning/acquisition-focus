@@ -1,0 +1,9 @@
+{
+    "meta_config_id": 2,
+    "sa_view": "2CH",
+    "hla_view": "SA",
+    "dataset": [
+        "mrxcat",
+        "./data/datasets/MRXCAT/prepared_files"
+    ]
+}

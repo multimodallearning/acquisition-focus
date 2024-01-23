@@ -1,0 +1,7 @@
+{
+    "meta_config_id": 0,
+    "dataset": [
+        "mrxcat",
+        "./data/datasets/MRXCAT/prepared_files"
+    ]
+}

@@ -1,0 +1,9 @@
+{
+    "meta_config_id": 6,
+    "sa_view": "RND",
+    "hla_view": "RND",
+    "dataset": [
+        "mrxcat",
+        "./data/datasets/MRXCAT/prepared_files"
+    ]
+}
