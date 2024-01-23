@@ -13,6 +13,7 @@ data/
 *.pth
 *.pt
 *.png
+*.txt
 
 **/.ipynb_checkpoints/**
 **/.DS_Store
