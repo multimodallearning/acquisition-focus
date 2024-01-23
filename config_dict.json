@@ -81,5 +81,5 @@
     "do_output": true,
     "device": "cuda",
     "use_autocast": false,
-    "use_caching": true
+    "use_caching": false
 }
