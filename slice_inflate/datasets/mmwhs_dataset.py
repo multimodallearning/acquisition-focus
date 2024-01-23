@@ -52,6 +52,9 @@ class MMWHSDataset(HybridIdDataset):
         if kwargs['use_binarized_labels']:
             label_tags=("background", "foreground")
 
+        self.nnunet_segment_model_path = "/storage/staff/christianweihsbach/nnunet/nnUNetV2_results/Dataset671_MMWHS_ac_focus/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d"
+        kwargs['nnunet_segment_model_path'] = self.nnunet_segment_model_path
+        
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
 
     def extract_3d_id(self, _input):
@@ -252,6 +255,10 @@ class MMWHSDataset(HybridIdDataset):
             label_data_2d=label_data_2d,
             modified_label_data_2d=modified_label_data_2d
         )
+
+
+    def set_segment_fn(self, fold_idx):
+        self.segment_fn = get_segment_fn(self.nnunet_segment_model_path, fold_idx, torch.device('cuda'))
 
 
     @staticmethod

@@ -367,8 +367,8 @@ def get_transformed(config, label, soft_label, nifti_affine, grid_affine_pre_mlp
         # Beware: Label slice does not have gradients anymore
         pred_slc = segment_fn(eo.rearrange(image_slc, 'B C D H 1 -> B C 1 D H'), get_zooms(nifti_affine)).view(B,1,D,H)
         pred_slc = eo.rearrange(pred_slc, 'B 1 D H -> B D H 1').long()
-        label_slc = eo.rearrange(F.one_hot(pred_slc, num_classes),
-            'B D H 1 OH -> B OH D H 1')
+        soft_label_slc = label_slc = eo.rearrange(F.one_hot(pred_slc, num_classes),
+            'B D H 1 OH -> B OH D H 1').float()
         # plt.imshow(image_slc[0].squeeze().cpu(), cmap='gray')
         # plt.imshow(label_slc[0].argmax(1).squeeze().cpu(), cmap='magma', alpha=.5, interpolation='none')
         # plt.savefig('slice_seg.png')
@@ -413,7 +413,7 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
                 sa_input_grid_affine = sa_input_grid_affine @ sa_atm.random_grid_affine
                 sa_input_grid_affine = sa_input_grid_affine.to(known_augment_affine)
             else:
-                sa_input_grid_affine = torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(known_augment_affine)
+                sa_input_grid_affine = torch.as_tensor(b_view_affines[config.sa_view]).view(B,4,4).to(known_augment_affine)
 
             sa_image_slc, sa_label_slc, _, sa_grid_affine = \
                 get_transformed(
@@ -877,6 +877,9 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
     # reset_determinism()
 
     fold_idx, (train_idxs, val_idxs) = fold_properties
+
+    training_dataset.set_segment_fn(fold_idx)
+    test_dataset.set_segment_fn(fold_idx)
 
     best_quality_metric = 1.e16
     train_idxs = torch.tensor(train_idxs)

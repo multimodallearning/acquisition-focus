@@ -23,6 +23,8 @@ import numpy as np
 import torch.nn.functional
 from torch.utils.checkpoint import checkpoint_sequential, checkpoint
 
+from slice_inflate.utils.nifti_utils import get_zooms, rescale_rot_components_with_diag
+
 class SkipConnector(torch.nn.Module):
     def __init__(self, mode='repeat'):
         super().__init__()
@@ -35,8 +37,8 @@ class SkipConnector(torch.nn.Module):
         B,C,SPAT,_ = x.shape
         C_HALF = C//2
         target_shape = torch.Size([B,C_HALF,SPAT,SPAT,SPAT])
-
         # Prepare: Repeat slice / fill slice into zeros on last spatial dimension and chunk
+
         if self.mode == 'repeat':
             x = torch.stack([x]*SPAT, dim=-1)
         elif self.mode == 'fill-sparse':
@@ -48,16 +50,24 @@ class SkipConnector(torch.nn.Module):
         x_sa, x_hla = torch.chunk(x, 2, dim=1)
 
         # Grid sample first channel chunk with inverse SA affines
+        rescaled_sa_affines = b_grid_affines[0]
+        # Rescale to sample from volume slice space into volume space (forward grid sampling sampled to single slice, non-stacked)
+        rescaled_sa_affines = rescale_rot_components_with_diag(rescaled_sa_affines, 1/get_zooms(rescaled_sa_affines))
+
         sa_grid = torch.nn.functional.affine_grid(
-            b_grid_affines[0].to(self.dtype).inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
+            rescaled_sa_affines.to(self.dtype).inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
         )
         transformed_sa = checkpoint(torch.nn.functional.grid_sample,
             x_sa, sa_grid.to(x_sa), 'bilinear', 'border', False
         )
 
         # Grid sample second channel chunk with inverse HLA affines
+        rescaled_hla_affines = b_grid_affines[1]
+        # Rescale to sample from volume slice space into volume space (forward grid sampling sampled to single slice, non-stacked)
+        rescaled_hla_affines = rescale_rot_components_with_diag(rescaled_hla_affines, 1/get_zooms(rescaled_hla_affines))
+
         hla_grid = torch.nn.functional.affine_grid(
-            b_grid_affines[1].to(self.dtype).inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
+            rescaled_hla_affines.to(self.dtype).inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
         )
         transformed_hla = checkpoint(torch.nn.functional.grid_sample,
             x_hla, hla_grid.to(x_hla), 'bilinear', 'border', False

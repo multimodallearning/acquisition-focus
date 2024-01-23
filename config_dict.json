@@ -4,14 +4,14 @@
     "fold_override": 0,
     "epochs": 160,
     "test_only_and_output_to": null,
-    "batch_size": 4,
+    "batch_size": 2,
     "val_batch_size": 1,
     "do_augment": false,
     "sample_augment_strength": 0.2,
     "train_affine_theta": false,
     "use_affine_theta": true,
-    "sa_view": "RND",
-    "hla_view": "RND",
+    "sa_view": "p2CH",
+    "hla_view": "p4CH",
     "offset_clip_value": 0.2,
     "zoom_clip_value": 0.0,
     "use_distance_map_localization": false,
@@ -66,7 +66,6 @@
     "clinical_view_affine_type": "from-gt",
     "label_slice_type": "from-gt",
     "rotate_slice_to_min_principle": false,
-    "nnunet_segment_model_path": "/storage/staff/christianweihsbach/nnunet/nnUNetV2_results/Dataset670_MRXCAT_ac_focus/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d",
     "max_load_3d_num": null,
     "lr": 0.001,
     "use_scheduling": true,
@@ -82,5 +81,5 @@
     "do_output": true,
     "device": "cuda",
     "use_autocast": false,
-    "use_caching": false
+    "use_caching": true
 }
