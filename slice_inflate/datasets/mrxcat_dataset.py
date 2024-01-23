@@ -14,11 +14,13 @@ import numpy as np
 import einops as eo
 from torch.utils.checkpoint import checkpoint
 
+import monai
+
 from slice_inflate.utils.common_utils import DotDict, get_script_dir
 from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, calc_dist_map, get_rotation_matrix_3d_from_angles
 from slice_inflate.models.learnable_transform import get_random_affine
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
-from slice_inflate.utils.nifti_utils import crop_around_label_center, nifti_grid_sample
+from slice_inflate.utils.nifti_utils import crop_around_label_center, nifti_grid_sample, get_zooms
 from slice_inflate.utils.torch_utils import cut_slice, soft_cut_slice
 from slice_inflate.datasets.clinical_cardiac_views import get_clinical_cardiac_view_affines
 from slice_inflate.utils.nnunetv2_utils import get_segment_fn
@@ -49,6 +51,9 @@ class MRXCATDataset(HybridIdDataset):
 
         if kwargs['use_binarized_labels']:
             label_tags=("background", "foreground")
+
+        self.nnunet_segment_model_path = "/storage/staff/christianweihsbach/nnunet/nnUNetV2_results/Dataset670_MRXCAT_ac_focus/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d"
+        kwargs['nnunet_segment_model_path'] = self.nnunet_segment_model_path
 
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
 
@@ -253,6 +258,10 @@ class MRXCATDataset(HybridIdDataset):
         )
 
 
+    def set_segment_fn(self, fold_idx):
+        self.segment_fn = get_segment_fn(self.nnunet_segment_model_path, 0, torch.device('cuda'))
+
+
     @staticmethod
     def load_data(self_attributes: dict):
         # Use only specific attributes of a dict to have a cacheable function
@@ -324,6 +333,8 @@ class MRXCATDataset(HybridIdDataset):
 
         class_dict = {tag:idx for idx,tag in enumerate(self.label_tags)}
 
+        prescan_seg_dices = []
+
         for _3d_id, _file in tqdm(id_paths_to_load, desc=description):
             additional_data_3d[_3d_id] = additional_data_3d.get(_3d_id, {})
 
@@ -360,6 +371,7 @@ class MRXCATDataset(HybridIdDataset):
             # Set additionals
             if is_label:
                 additional_data_3d[_3d_id]['nifti_affine'] = hires_nii_affine # Has to be set once, either for image or label
+                # print(get_zooms(hires_nii_affine[None]))
                 view_affines = get_clinical_cardiac_view_affines(
                     tmp, hires_nii_affine, class_dict,
                     num_sa_slices=15, return_unrolled=True)
@@ -371,12 +383,29 @@ class MRXCATDataset(HybridIdDataset):
                     oh = torch.nn.functional.one_hot(tmp.long()).permute(3,0,1,2)
                     additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool(), mode='outer').squeeze(0)
 
+                # Save prescan gt
+                prescan_label, _, prescan_nii_affine = nifti_grid_sample(
+                    tmp.unsqueeze(0).unsqueeze(0),
+                    hires_nii_affine.view(1,4,4), ras_transform_mat=None,
+                    fov_mm=torch.as_tensor(self.prescan_fov_mm), fov_vox=torch.as_tensor(self.prescan_fov_vox),
+                    is_label=True,
+                    pre_grid_sample_affine=None,
+                    pre_grid_sample_hidden_affine=None,
+                    dtype=torch.float32
+                )
+                prescan_label = prescan_label.long()
+
+                # Segment using nnunet v2 model
+                lores_spacing = get_zooms(prescan_nii_affine)
+                additional_data_3d[_3d_id]['prescan_nii_affine'] = prescan_nii_affine.squeeze()
+                additional_data_3d[_3d_id]['prescan_gt'] = prescan_label.squeeze()
+
             if not is_label and self.clinical_view_affine_type == 'from-segmented':
                 # Segment from image
                 prescan_image, _, prescan_nii_affine = nifti_grid_sample(
                     tmp.unsqueeze(0).unsqueeze(0),
                     hires_nii_affine.view(1,4,4), ras_transform_mat=None,
-                    fov_mm=torch.as_tensor(self.lores_fov_mm), fov_vox=torch.as_tensor(self.lores_fov_vox),
+                    fov_mm=torch.as_tensor(self.prescan_fov_mm), fov_vox=torch.as_tensor(self.prescan_fov_vox),
                     is_label=False,
                     pre_grid_sample_affine=None,
                     pre_grid_sample_hidden_affine=None,
@@ -384,15 +413,22 @@ class MRXCATDataset(HybridIdDataset):
                 )
 
                 # Segment using nnunet v2 model
-                lores_spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
+                lores_spacing = get_zooms(prescan_nii_affine)
                 prescan_segmentation = segment_fn(prescan_image.cuda(), lores_spacing.view(1,3)).cpu()
-
-                additional_data_3d[_3d_id]['prescan'] = prescan_image.squeeze()
-                additional_data_3d[_3d_id]['prescan_nii_affine'] = prescan_nii_affine
+                additional_data_3d[_3d_id]['prescan_image'] = prescan_image.squeeze()
                 additional_data_3d[_3d_id]['prescan_label'] = prescan_segmentation.squeeze()
 
+                oh_seg = torch.nn.functional.one_hot(
+                    prescan_segmentation.long(),
+                    len(self.label_tags)
+                ).permute(0,4,2,3,1)
+
+                gt = additional_data_3d[_3d_id]['prescan_gt']
+                D,H,W = gt.shape
+                prescan_seg_dices.append(monai.metrics.compute_dice(oh_seg, gt.view(1,1,D,H,W))[:,1:].mean())
+
                 additional_data_3d[_3d_id]['prescan_view_affines'] = get_clinical_cardiac_view_affines(
-                    additional_data_3d[_3d_id]['prescan_label'][None], prescan_nii_affine, class_dict,
+                    additional_data_3d[_3d_id]['prescan_label'], additional_data_3d[_3d_id]['prescan_nii_affine'], class_dict,
                     num_sa_slices=15, return_unrolled=True)
                 # works
                 # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
@@ -400,30 +436,19 @@ class MRXCATDataset(HybridIdDataset):
                 #                         output_to_file="my_output_lores.png", debug=False)
 
             elif is_label and self.clinical_view_affine_type == 'from-gt':
-                # Take GT for lores prescan
-                prescan_label, _, prescan_nii_affine = nifti_grid_sample(
-                    tmp.unsqueeze(0).unsqueeze(0),
-                    hires_nii_affine.view(1,4,4), ras_transform_mat=None,
-                    fov_mm=torch.as_tensor(self.lores_fov_mm), fov_vox=torch.as_tensor(self.lores_fov_vox),
-                    is_label=False,
-                    pre_grid_sample_affine=None,
-                    pre_grid_sample_hidden_affine=None,
-                    dtype=torch.float32
-                )
-
-                # Segment using nnunet v2 model
-                lores_spacing = torch.as_tensor(self.lores_fov_mm) / torch.as_tensor(self.lores_fov_vox)
-
-                additional_data_3d[_3d_id]['prescan_nii_affine'] = prescan_nii_affine
-                additional_data_3d[_3d_id]['prescan_label'] = prescan_label.squeeze()
+                # Take GT for prescan
+                additional_data_3d[_3d_id]['prescan_label'] = additional_data_3d[_3d_id]['prescan_gt']
 
                 additional_data_3d[_3d_id]['prescan_view_affines'] = get_clinical_cardiac_view_affines(
-                    additional_data_3d[_3d_id]['prescan_label'][None], prescan_nii_affine, class_dict,
+                    additional_data_3d[_3d_id]['prescan_label'], additional_data_3d[_3d_id]['prescan_nii_affine'], class_dict,
                     num_sa_slices=15, return_unrolled=True)
                 # works
                 # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
                 # display_clinical_views(prescan, prescan_segmentation.to_sparse(), prescan_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
                 #                         output_to_file="my_output_lores.png", debug=False)
+
+        print(f"Prescan segmentation mean FG dice: {torch.as_tensor(prescan_seg_dices).mean():.2f}")
+        print()
 
         # Initialize 3d modified labels as unmodified labels
         for label_id in label_data_3d.keys():
