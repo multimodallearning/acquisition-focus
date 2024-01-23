@@ -1,7 +1,7 @@
 {
     "num_folds": 3,
     "state": "train",
-    "fold_override": 0,
+    "fold_override": null,
     "epochs": 160,
     "test_only_and_output_to": null,
     "batch_size": 2,
@@ -21,10 +21,6 @@
     "cuts_mode": "sa+hla",
     "use_2d_normal_to": null,
     "use_binarized_labels": false,
-    "dataset0": [
-        "mrxcat",
-        "./data/datasets/MRXCAT/prepared_files"
-    ],
     "dataset": [
         "mmwhs",
         "./data/datasets/MMWHS/prepared_files"
