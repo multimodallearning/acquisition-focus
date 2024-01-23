@@ -26,6 +26,7 @@ from git import Repo
 import joblib
 import copy
 from enum import Enum
+import argparse
 
 import randomname
 
@@ -1162,6 +1163,17 @@ def set_previous_stage_transform_chk(self):
 
 
 if __name__ == '__main__':
+    # Add argument parser for additional config file path
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--meta_config_path', type=str, default=None, help='Path to config file')
+    args = parser.parse_args()
+
+    if args.meta_config_path is not None:
+        with open(args.meta_config_path, 'r') as f:
+            meta_config_dict = DotDict(json.load(f))
+    else:
+        meta_config_dict = DotDict()
+
     NOW_STR = datetime.now().strftime("%Y%m%d__%H_%M_%S")
     THIS_REPO = Repo(THIS_SCRIPT_DIR)
     PROJECT_NAME = "slice_inflate"
@@ -1172,6 +1184,9 @@ if __name__ == '__main__':
 
     with open(Path(THIS_SCRIPT_DIR, 'config_dict.json'), 'r') as f:
         config_dict = DotDict(json.load(f))
+
+    # Merge meta config
+    config_dict.update(meta_config_dict)
 
     # Log commmit id and dirtiness
     dirty_str = "!dirty-" if THIS_REPO.is_dirty() else ""
