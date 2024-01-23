@@ -11,5 +11,7 @@
         32,
         32,
         32
-    ]
+    ],
+    "clinical_view_affine_type": "from-segmented",
+    "label_slice_type": "from-segmented"
 }
