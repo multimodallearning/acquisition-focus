@@ -364,14 +364,15 @@ def get_transformed(config, label, soft_label, nifti_affine, grid_affine_pre_mlp
         pass
     elif config.label_slice_type == 'from-segmented':
         assert not img_is_invalid and segment_fn is not None
-        # Beware: Label slice does not have gradients anymore
-        pred_slc = segment_fn(eo.rearrange(image_slc, 'B C D H 1 -> B C 1 D H'), get_zooms(nifti_affine)).view(B,1,D,H)
-        pred_slc = eo.rearrange(pred_slc, 'B 1 D H -> B D H 1').long()
-        soft_label_slc = label_slc = eo.rearrange(F.one_hot(pred_slc, num_classes),
+        with torch.no_grad():
+            # Beware: Label slice does not have gradients anymore
+            pred_slc = segment_fn(eo.rearrange(image_slc, 'B C D H 1 -> B C 1 D H'), get_zooms(nifti_affine)).view(B,1,D,H)
+            pred_slc = eo.rearrange(pred_slc, 'B 1 D H -> B D H 1').long()
+            soft_label_slc = label_slc = eo.rearrange(F.one_hot(pred_slc, num_classes),
             'B D H 1 OH -> B OH D H 1').float()
-        # plt.imshow(image_slc[0].squeeze().cpu(), cmap='gray')
-        # plt.imshow(label_slc[0].argmax(1).squeeze().cpu(), cmap='magma', alpha=.5, interpolation='none')
-        # plt.savefig('slice_seg.png')
+            # plt.imshow(image_slc[0].squeeze().cpu(), cmap='gray')
+            # plt.imshow(label_slc[0].argmax(1).squeeze().cpu(), cmap='magma', alpha=.5, interpolation='none')
+            # plt.savefig('slice_seg.png')
 
     if img_is_invalid:
         image = torch.empty([])
@@ -1259,7 +1260,6 @@ if __name__ == '__main__':
                 ),
                 Stage( # Optimize hla
                     r_params=r_params,
-                    # hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla'),
                     cuts_mode='sa>hla',
                     epochs=int(config_dict['epochs']*1.5),
                     soft_cut_std=-999,
@@ -1269,18 +1269,16 @@ if __name__ == '__main__':
                     do_output=True,
                     __activate_fn__=set_previous_stage_transform_chk
                 ),
-                # Stage( # Final optimized run
-                #     use_random_affine_ap_init_sa=False,
-                #     use_random_affine_ap_init_hla=False,
-                #     do_output=True,
-                #     cuts_mode='sa+hla',
-                #     epochs=config_dict['epochs'],
-                #     soft_cut_std=-999,
-                #     do_augment=True,
-                #     use_affine_theta=True,
-                #     train_affine_theta=False,
-                #     __activate_fn__=set_previous_stage_transform_chk
-                # ),
+                Stage( # Final optimized run
+                    do_output=True,
+                    cuts_mode='sa+hla',
+                    epochs=config_dict['epochs'],
+                    soft_cut_std=-999,
+                    do_augment=True,
+                    use_affine_theta=True,
+                    train_affine_theta=False,
+                    __activate_fn__=set_previous_stage_transform_chk
+                ),
                 Stage( # Reference run
                     do_output=True,
                     cuts_mode='sa+hla',
