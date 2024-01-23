@@ -271,6 +271,8 @@ class AffineTransformModule(torch.nn.Module):
                     fov_mm=self.volume_fov_mm, fov_vox=self.volume_fov_vox, is_label=False,
                     pre_grid_sample_affine=grid_affine_pre_mlp
                 )
+                # import nibabel as nib
+                # nib.Nifti1Image(x_soft_label_pre_mlp[0].argmax(0).detach().cpu().int().numpy(), affine=transformed_nii_affine[0].detach().cpu().numpy()).to_filename('x_soft_label_pre_mlp.nii.gz')
 
         if theta_override is not None:
             theta = theta_override.detach().clone() # Caution: this is a non-differentiable theta

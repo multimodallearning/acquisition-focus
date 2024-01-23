@@ -76,7 +76,7 @@ from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_
 from slice_inflate.utils.nnunetv2_utils import get_segment_fn
 from slice_inflate.utils.nifti_utils import get_zooms
 from slice_inflate.models.nnunet_models import SkipConnector
-from slice_inflate.utils.nifti_utils import nifti_grid_sample
+from slice_inflate.utils.nifti_utils import nifti_grid_sample, rescale_rot_components_with_diag, get_zooms
 
 
 
@@ -340,7 +340,7 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
 
 
 # %%
-def get_transformed(config, label, soft_label, nifti_affine, grid_affine_pre_mlp, hidden_augment_affine,
+def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_pre_mlp, hidden_augment_affine,
                     atm, cut_module, image=None, segment_fn=None):
 
     img_is_invalid = image is None or image.dim() == 0
@@ -363,28 +363,34 @@ def get_transformed(config, label, soft_label, nifti_affine, grid_affine_pre_mlp
 
     if config.label_slice_type == 'from-gt':
         pass
-    elif config.label_slice_type == 'from-segmented':
+    elif config.label_slice_type == 'from-segmented' and phase != 'train':
         assert not img_is_invalid and segment_fn is not None
         with torch.no_grad():
             # Beware: Label slice does not have gradients anymore
-            pred_slc = segment_fn(eo.rearrange(image_slc, 'B C D H 1 -> B C 1 D H'), get_zooms(nifti_affine)).view(B,1,D,H)
-            pred_slc = eo.rearrange(pred_slc, 'B 1 D H -> B D H 1').long()
+            pred_slc = eo.rearrange(segment_fn(eo.rearrange(image_slc, 'B C D H 1 -> B C 1 D H'), get_zooms(atm_nii_affine)), 'B D H 1 -> B D H 1').long()
             soft_label_slc = label_slc = eo.rearrange(F.one_hot(pred_slc, num_classes),
-            'B D H 1 OH -> B OH D H 1').float()
+                'B D H 1 OH -> B OH D H 1').float()
             # plt.imshow(image_slc[0].squeeze().cpu(), cmap='gray')
-            # plt.imshow(label_slc[0].argmax(1).squeeze().cpu(), cmap='magma', alpha=.5, interpolation='none')
+            # plt.imshow(label_slc[0].argmax(0).squeeze().cpu(), cmap='magma', alpha=.5, interpolation='none')
             # plt.savefig('slice_seg.png')
+
+    if config.slice_fov_vox != config.hires_fov_vox:
+        # Upsample label slice to hires resolution
+        slice_target_shape = config.hires_fov_vox[:2] + [1]
+        image_slc = F.interpolate(image_slc, size=slice_target_shape, mode='trilinear', align_corners=False)
+        soft_label_slc = F.interpolate(soft_label_slc, size=slice_target_shape, mode='trilinear', align_corners=False)
+        label_slc = F.interpolate(label_slc, size=slice_target_shape, mode='nearest')
 
     if img_is_invalid:
         image = torch.empty([])
         image_slc = torch.empty([])
 
     # Do not set label_slc to .long() here, since we (may) need the gradients
-    return image_slc, soft_label_slc, label_slc.long(), grid_affine
+    return image_slc, soft_label_slc, grid_affine
 
 
 
-def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, hla_cut_module, segment_fn):
+def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_module, hla_cut_module, segment_fn):
     b_label = batch['label']
     b_image = batch['image']
 
@@ -417,9 +423,10 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
             else:
                 sa_input_grid_affine = torch.as_tensor(b_view_affines[config.sa_view]).view(B,4,4).to(known_augment_affine)
 
-            sa_image_slc, sa_label_slc, _, sa_grid_affine = \
+            sa_image_slc, sa_label_slc, sa_grid_affine = \
                 get_transformed(
                     config,
+                    phase,
                     b_label.view(B, NUM_CLASSES, D, H, W),
                     b_soft_label.view(B, NUM_CLASSES, D, H, W),
                     nifti_affine,
@@ -427,6 +434,9 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
                     hidden_augment_affine,
                     sa_atm, sa_cut_module,
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
+            # from matplotlib import pyplot as plt
+            # plt.imshow(sa_label_slc[0].argmax(0).squeeze().cpu().numpy())
+            # plt.savefig('sa_label_slc.png')
 
     if 'hla' in config.cuts_mode:
         if config.hla_view == 'RND':
@@ -437,9 +447,10 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
         else:
             hla_input_grid_affine = torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(known_augment_affine)
 
-        hla_image_slc, hla_label_slc, _, hla_grid_affine = \
+        hla_image_slc, hla_label_slc, hla_grid_affine = \
             get_transformed(
                 config,
+                phase,
                 b_label.view(B, NUM_CLASSES, D, H, W),
                 b_soft_label.view(B, NUM_CLASSES, D, H, W),
                 nifti_affine,
@@ -463,29 +474,15 @@ def get_model_input(batch, config, num_classes, sa_atm, hla_atm, sa_cut_module, 
     else:
         raise ValueError()
 
-    SPAT = config.slice_fov_vox[0]
-
     if 'hybrid' in config.model_type:
-        b_input = torch.cat(slices, dim=1)
-        b_input = b_input.view(-1, NUM_CLASSES*2, SPAT, SPAT)
+        b_input = torch.cat(slices, dim=1).squeeze(-1)
+        assert b_input.dim() == 4
     else:
+        SPAT = config.hires_fov_vox[0]
         b_input = torch.cat(slices, dim=-1)
         b_input = torch.cat([b_input] * int(SPAT/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
 
-    if config.reconstruction_target == 'from-dataloader':
-        b_target = b_label
-    elif config.reconstruction_target == 'sa-oriented':
-        raise ValueError("Currently not working together zoom parameters and LearnCutModule")
-        b_target = sa_label
-        grid_affines[0] = sa_grid_affine.inverse() @ grid_affines[0]
-        grid_affines[1] = sa_grid_affine.inverse() @ grid_affines[1]
-    elif config.reconstruction_target == 'hla-oriented':
-        raise ValueError("Currently not working together zoom parameters and LearnCutModule")
-        b_target = hla_label
-        grid_affines[0] = hla_grid_affine.inverse() @ grid_affines[0]
-        grid_affines[1] = hla_grid_affine.inverse() @ grid_affines[1]
-    else:
-        raise ValueError()
+    b_target = b_label
 
     b_input = b_input.to(device=config.device)
     b_target = b_target.to(device=config.device)
@@ -537,11 +534,11 @@ def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
 
     return elbo
 
-def model_step(config, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, batch, label_tags, class_weights, segment_fn, autocast_enabled=False):
+def model_step(config, phase, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, batch, label_tags, class_weights, segment_fn, autocast_enabled=False):
 
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
-        b_input, b_target, b_grid_affines = get_model_input(batch, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module, segment_fn)
+        b_input, b_target, b_grid_affines = get_model_input(batch, phase, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module, segment_fn)
 
         # nib.save(nib.Nifti1Image((
         #     b_target[0].argmax(0)
@@ -643,7 +640,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 opt.zero_grad()
 
             y_hat, b_target, loss, b_input = model_step(
-                config, epx,
+                config, phase, epx,
                 model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
                 batch,
                 dataset.label_tags, class_weights, segment_fn, autocast_enabled)
@@ -668,7 +665,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         else:
             with torch.no_grad():
                 y_hat, b_target, loss, b_input = model_step(
-                    config, epx,
+                    config, phase, epx,
                     model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
                     batch,
                     dataset.label_tags, class_weights, segment_fn, autocast_enabled)

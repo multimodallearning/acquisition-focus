@@ -15,7 +15,6 @@
     "offset_clip_value": 0.2,
     "zoom_clip_value": 0.0,
     "use_distance_map_localization": false,
-    "reconstruction_target": "from-dataloader",
     "affine_theta_optim_method": "R6-vector",
     "soft_cut_std": -999,
     "cuts_mode": "sa+hla",
