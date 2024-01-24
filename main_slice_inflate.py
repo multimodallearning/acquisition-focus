@@ -36,7 +36,7 @@ THIS_SCRIPT_DIR = get_script_dir()
 os.environ['CACHE_PATH'] = str(Path(THIS_SCRIPT_DIR, '.cache'))
 
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
-os.environ.update(get_vars('*'))
+os.environ.update(get_vars(os.environ.get('MY_CUDA_VISIBLE_DEVICES', '*')))
 
 import torch
 torch.set_printoptions(sci_mode=False)
@@ -1306,7 +1306,7 @@ if __name__ == '__main__':
 
             selected_stages = all_params_stages
             if 'stage_override' in config_dict and config_dict['stage_override'] is not None:
-                selected_stages = [all_params_stages[config_dict['stage_override']]]
+                selected_stages = [all_params_stages[config_dict['stage_override']-1]]
 
             stage_sweep_run(config_dict, fold_properties, StageIterator(selected_stages, verbose=True),
                             training_dataset=training_dataset, test_dataset=test_dataset)
