@@ -322,7 +322,7 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
 
     if config.train_affine_theta:
         transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=config.lr*2)
-        transform_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(transform_optimizer, T_0=int(config.epochs/4)+1)
+        transform_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(transform_optimizer, T_0=int(config.epochs/3)+1)
     else:
         transform_optimizer = NoneOptimizer()
         transform_scheduler = None
