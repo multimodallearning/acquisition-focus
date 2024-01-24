@@ -369,7 +369,7 @@ def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_
             # Beware: Label slice does not have gradients anymore
             pred_slc = eo.rearrange(segment_fn(eo.rearrange(image_slc, 'B C D H 1 -> B C 1 D H'), get_zooms(atm_nii_affine)), 'B D H 1 -> B D H 1').long()
             soft_label_slc = label_slc = eo.rearrange(F.one_hot(pred_slc, num_classes),
-                'B D H 1 OH -> B OH D H 1').float()
+                'B D H 1 OH -> B OH D H 1').to(soft_label_slc)
             # plt.imshow(image_slc[0].squeeze().cpu(), cmap='gray')
             # plt.imshow(label_slc[0].argmax(0).squeeze().cpu(), cmap='magma', alpha=.5, interpolation='none')
             # plt.savefig('slice_seg.png')
@@ -404,7 +404,7 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
     else:
         b_soft_label = b_label
 
-    nifti_affine = batch['additional_data']['nifti_affine'].float()
+    nifti_affine = batch['additional_data']['nifti_affine']
     known_augment_affine = batch['additional_data']['known_augment_affine']
     hidden_augment_affine = batch['additional_data']['hidden_augment_affine']
 
@@ -487,7 +487,7 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
     b_input = b_input.to(device=config.device)
     b_target = b_target.to(device=config.device)
 
-    return b_input.float(), b_target, grid_affines
+    return b_input, b_target, grid_affines
 
 
 
@@ -570,9 +570,9 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cu
             f"Target shape for loss must be {5}D: BxNUM_CLASSESxSPATIAL but is {b_target.shape}"
 
         if "vae" in type(model).__name__.lower():
-            loss = get_vae_loss_value(y_hat, b_target.float(), z, mean, std, class_weights, model)
+            loss = get_vae_loss_value(y_hat, b_target, z, mean, std, class_weights, model)
         else:
-            loss = get_ae_loss_value(y_hat, b_target.float(), class_weights)
+            loss = get_ae_loss_value(y_hat, b_target, class_weights)
 
     return y_hat, b_target, loss, b_input
 
