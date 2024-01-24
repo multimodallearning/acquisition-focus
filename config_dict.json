@@ -7,7 +7,7 @@
     "batch_size": 4,
     "val_batch_size": 1,
     "do_augment": false,
-    "sample_augment_strength": 0.2,
+    "sample_augment_strength": 1.0,
     "train_affine_theta": false,
     "use_affine_theta": true,
     "sa_view": "p2CH",
