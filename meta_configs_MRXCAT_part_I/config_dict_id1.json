@@ -1,5 +1,6 @@
 {
     "meta_config_id": 1,
+    "fold_override": 0,
     "sa_view": "2CH",
     "hla_view": "4CH",
     "dataset": [

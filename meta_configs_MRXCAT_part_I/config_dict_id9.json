@@ -1,5 +1,6 @@
 {
     "meta_config_id": 9,
+    "fold_override": 0,
     "sa_view": "axial",
     "hla_view": "coronal",
     "dataset": [

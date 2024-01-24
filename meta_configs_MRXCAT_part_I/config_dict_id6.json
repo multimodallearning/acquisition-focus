@@ -1,5 +1,6 @@
 {
     "meta_config_id": 6,
+    "fold_override": 0,
     "sa_view": "RND",
     "hla_view": "RND",
     "dataset": [

@@ -200,7 +200,7 @@ class AffineTransformModule(torch.nn.Module):
     def get_batch_affines(self, x):
         B,C,D,H,W = x.shape
 
-        theta_atz_p = self.localisation_net(x.float())
+        theta_atz_p = self.localisation_net(x)
         device = theta_atz_p.device
         theta_ap = theta_atz_p[:,:self.ap_space]
         theta_tp = theta_atz_p[:,self.ap_space:-1].view(B,3,self.vox_range)
