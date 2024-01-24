@@ -75,7 +75,7 @@ def get_grid_affine_and_nii_affine(
 ):
     # (IJK -> RAS+).inverse() @ (Slice -> RAS+) == Slice -> IJK
     affine_mat = volume_affine.inverse() @ ras_transform_mat
-    
+
     # Calculate preliminary vars
     fov_mm_i = get_zooms(volume_affine) * fov_vox_i
     zooms_i = get_zooms(volume_affine)
