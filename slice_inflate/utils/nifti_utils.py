@@ -1,7 +1,7 @@
 import torch
 from torch.utils.checkpoint import checkpoint
 import einops as eo
-
+import torch.cuda.amp as amp
 
 def flip_mat_rows_old(affine_mat):
     affine_mat[:,:3] = affine_mat[:,:3].flip(1)
@@ -160,6 +160,7 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
         assert isinstance(pre_grid_sample_hidden_affine, torch.Tensor)
 
     device = volume.device
+    initial_dtype = volume.dtype
     B,C,D,H,W = volume.shape
     fov_vox_i = torch.tensor([D,H,W]).to(device).double()
 
@@ -204,9 +205,16 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
     )
     augmented_grid_affine = (grid_affine @ pre_grid_sample_hidden_affine)
 
-    grid = torch.nn.functional.affine_grid(
-        augmented_grid_affine.to(dtype)[:,:3,:].view(B,3,4), target_shape, align_corners=False
-    )
+    if 'int' in str(initial_dtype):
+        volume = volume.to(dtype=dtype)
+        augmented_grid_affine = augmented_grid_affine.to(dtype=dtype)
+    else:
+        augmented_grid_affine = augmented_grid_affine.to(volume)
+
+    with amp.autocast(enabled=False):
+        grid = torch.nn.functional.affine_grid(
+            augmented_grid_affine[:,:3,:].view(B,3,4), list(target_shape), align_corners=False
+        )
 
     if is_label:
         gs_kwargs = dict(
@@ -214,7 +222,7 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
             padding_mode='zeros',
             align_corners=False
         )
-        transformed = do_sample(volume.to(dtype=dtype), grid.to(dtype=dtype), gs_kwargs)
+        transformed = do_sample(volume, grid, gs_kwargs)
 
     else:
         gs_kwargs = dict(
@@ -224,10 +232,10 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
         )
         min_value = volume.min()
         volume = volume - min_value
-        transformed = do_sample(volume.to(dtype=dtype), grid.to(dtype=dtype), gs_kwargs)
+        transformed = do_sample(volume, grid, gs_kwargs)
         transformed = transformed + min_value
 
-    transformed = transformed.view(target_shape)
+    transformed = transformed.view(target_shape).to(dtype=initial_dtype)
 
     return transformed, grid_affine, transformed_nii_affine
 

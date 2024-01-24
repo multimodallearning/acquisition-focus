@@ -321,7 +321,7 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
         assert config.use_affine_theta
 
     if config.train_affine_theta:
-        transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=config.lr*2)
+        transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.0, lr=config.lr*1.5)
         transform_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(transform_optimizer, T_0=int(config.epochs/3)+1)
     else:
         transform_optimizer = NoneOptimizer()
@@ -358,8 +358,8 @@ def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_
             image.view(B, 1, D, H, W),
             nifti_affine, grid_affine_pre_mlp, hidden_augment_affine)
 
-        # nib.Nifti1Image(image[0][0].cpu().numpy(), affine=nifti_affine.cpu()[0].numpy()).to_filename('out_img_volume.nii.gz')
-        # nib.Nifti1Image(label_slc[0].argmax(0).detach().int().cpu().numpy(), affine=atm_nii_affine[0].detach().cpu().numpy()).to_filename('out_lbl_slice.nii.gz')
+    # nib.Nifti1Image(image[0][0].cpu().numpy(), affine=nifti_affine.cpu()[0].numpy()).to_filename('out_img_volume.nii.gz')
+    # nib.Nifti1Image(label_slc[0].argmax(0).detach().int().cpu().numpy(), affine=atm_nii_affine[0].detach().cpu().numpy()).to_filename('out_lbl_slice.nii.gz')
 
     if config.label_slice_type == 'from-gt':
         pass
@@ -379,7 +379,7 @@ def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_
         slice_target_shape = config.hires_fov_vox[:2] + [1]
         image_slc = F.interpolate(image_slc, size=slice_target_shape, mode='trilinear', align_corners=False)
         soft_label_slc = F.interpolate(soft_label_slc, size=slice_target_shape, mode='trilinear', align_corners=False)
-        label_slc = F.interpolate(label_slc, size=slice_target_shape, mode='nearest')
+        # label_slc = F.interpolate(label_slc.float(), size=slice_target_shape, mode='nearest').long()
 
     if img_is_invalid:
         image = torch.empty([])
@@ -394,7 +394,11 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
     b_label = batch['label']
     b_image = batch['image']
 
-    b_view_affines = batch['additional_data']['prescan_view_affines']
+    if config['clinical_view_affine_type'] == 'from-gt':
+        b_view_affines = batch['additional_data']['gt_view_affines']
+    elif config['clinical_view_affine_type'] == 'from-segmented':
+        b_view_affines = batch['additional_data']['prescan_view_affines']
+
     b_label = eo.rearrange(F.one_hot(b_label, num_classes),
                         'B D H W OH -> B OH D H W')
     B,NUM_CLASSES,D,H,W = b_label.shape
@@ -402,7 +406,7 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
     if config.use_distance_map_localization:
         b_soft_label = batch['additional_data']['label_distance_map']
     else:
-        b_soft_label = b_label
+        b_soft_label = b_label.float()
 
     nifti_affine = batch['additional_data']['nifti_affine']
     known_augment_affine = batch['additional_data']['known_augment_affine']

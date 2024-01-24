@@ -29,9 +29,9 @@
     "crop_around_3d_label_center": null,
     "crop_around_2d_label_center": null,
     "hires_fov_mm": [
-        192.0,
-        192.0,
-        192.0
+        224.0,
+        224.0,
+        224.0
     ],
     "hires_fov_vox": [
         128,
@@ -39,9 +39,9 @@
         128
     ],
     "slice_fov_mm": [
-        192.0,
-        192.0,
-        1.5
+        224.0,
+        224.0,
+        1.75
     ],
     "slice_fov_vox": [
         128,
@@ -77,5 +77,5 @@
     "do_output": true,
     "device": "cuda",
     "use_autocast": true,
-    "use_caching": false
+    "use_caching": true
 }
