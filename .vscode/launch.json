@@ -11,6 +11,9 @@
             "program": "${workspaceFolder}/main_slice_inflate.py",
             "console": "integratedTerminal",
             "justMyCode": false,
+            "env": {
+                "MY_CUDA_VISIBLE_DEVICES": "0"
+            }
         },
         {
             "name": "Python: MMWHS meta0 main_slice_inflate.py",
