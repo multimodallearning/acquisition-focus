@@ -1272,6 +1272,7 @@ if __name__ == '__main__':
                 ),
                 Stage( # Optimize hla
                     r_params=r_params,
+                    hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla'),
                     cuts_mode='sa>hla',
                     epochs=int(config_dict['epochs']*1.5),
                     soft_cut_std=-999,
@@ -1304,6 +1305,9 @@ if __name__ == '__main__':
             ]
 
             selected_stages = all_params_stages
+            if 'stage_override' in config_dict and config_dict['stage_override'] is not None:
+                selected_stages = [all_params_stages[config_dict['stage_override']]]
+
             stage_sweep_run(config_dict, fold_properties, StageIterator(selected_stages, verbose=True),
                             training_dataset=training_dataset, test_dataset=test_dataset)
 

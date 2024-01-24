@@ -1,5 +1,6 @@
 {
     "meta_config_id": 4,
     "sa_view": "RND",
-    "hla_view": "RND"
+    "hla_view": "RND",
+    "stage_override": 4
 }
