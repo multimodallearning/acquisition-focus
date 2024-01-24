@@ -1305,8 +1305,13 @@ if __name__ == '__main__':
             ]
 
             selected_stages = all_params_stages
+
             if 'stage_override' in config_dict and config_dict['stage_override'] is not None:
                 selected_stages = [all_params_stages[config_dict['stage_override']-1]]
+                stage_iterator = StageIterator(selected_stages, verbose=True)
+                stage_iterator.idx = config_dict['stage_override']-2
+            else:
+                stage_iterator = StageIterator(selected_stages, verbose=True)
 
             stage_sweep_run(config_dict, fold_properties, StageIterator(selected_stages, verbose=True),
                             training_dataset=training_dataset, test_dataset=test_dataset)
