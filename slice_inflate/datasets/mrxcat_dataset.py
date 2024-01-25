@@ -52,7 +52,7 @@ class MRXCATDataset(HybridIdDataset):
         if kwargs['use_binarized_labels']:
             label_tags=("background", "foreground")
 
-        self.nnunet_segment_model_path = "/storage/staff/christianweihsbach/nnunet/nnUNetV2_results/Dataset670_MRXCAT_ac_focus/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d"
+        self.nnunet_segment_model_path = "/home/weihsbach/storage/staff/christianweihsbach/nnunet/nnUNetV2_results/Dataset670_MRXCAT_ac_focus/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d"
         kwargs['nnunet_segment_model_path'] = self.nnunet_segment_model_path
 
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
