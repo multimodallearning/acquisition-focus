@@ -97,21 +97,18 @@ class MRXCATDataset(HybridIdDataset):
 
             additional_data = self.additional_data_3d.get(_id, [])
 
-        if self.use_modified:
-            if use_2d:
-                modified_label = self.modified_label_data_2d.get(
-                    _id, label.detach().clone())
-            else:
-                modified_label = self.modified_label_data_3d.get(
-                    _id, label.detach().clone())
-        else:
-            modified_label = label.detach().clone()
+        # if self.use_modified:
+        #     if use_2d:
+        #         modified_label = self.modified_label_data_2d.get(
+        #             _id, label.detach().clone())
+        #     else:
+        #         modified_label = self.modified_label_data_3d.get(
+        #             _id, label.detach().clone())
+        # else:
+        #     modified_label = label.detach().clone()
 
-        image = image.to(device=self.device)
-        label = label.to(device=self.device)
-
-        modified_label, _ = ensure_dense(modified_label)
-        modified_label = modified_label.to(device=self.device)
+        # modified_label, _ = ensure_dense(modified_label)
+        # modified_label = modified_label.to(device=self.device)
 
         if self.augment_at_collate:
             raise NotImplementedError()
