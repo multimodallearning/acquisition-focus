@@ -1323,7 +1323,7 @@ if __name__ == '__main__':
             else:
                 stage_iterator = StageIterator(selected_stages, verbose=True)
 
-            stage_sweep_run(config_dict, fold_properties, StageIterator(selected_stages, verbose=True),
+            stage_sweep_run(config_dict, fold_properties, stage_iterator,
                             training_dataset=training_dataset, test_dataset=test_dataset)
 
         else:
