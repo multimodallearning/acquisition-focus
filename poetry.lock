@@ -1670,30 +1670,6 @@ scipy = ">=1.1.0"
 SimpleITK = ">=1.1.0"
 
 [[package]]
-name = "meidic-vtach-utils"
-version = "0.7.15"
-description = "The utils package of the MEIDIC-VTACH project"
-optional = false
-python-versions = "^3.8"
-files = []
-develop = false
-
-[package.dependencies]
-ipython = "^8.4.0"
-nibabel = "^4.0.1"
-paramiko = "^2.7.2"
-recordclass = "^0.14.3"
-scp = "^0.13.4"
-tabulate = "^0.8.9"
-torch = "*"
-
-[package.source]
-type = "git"
-url = "git@github.com:MDL-UzL/meidic_vtach_utils.git"
-reference = "HEAD"
-resolved_reference = "1b2bb674a651be6769c387c0d0f8ce02f66ace64"
-
-[[package]]
 name = "monai"
 version = "1.3.0"
 description = "AI Toolkit for Healthcare Imaging"
@@ -2627,6 +2603,22 @@ files = [
 ]
 
 [[package]]
+name = "pytorch-run-on-recommended-gpu"
+version = "1.0.4"
+description = "A lightweight scheduler reading nvidia-smi and updating torch environment variables to run on the recommended GPU."
+optional = false
+python-versions = ">=3.9,<4.0"
+files = [
+    {file = "pytorch_run_on_recommended_gpu-1.0.4-py3-none-any.whl", hash = "sha256:4d864c420b4304ca1de8caac043450c5a833923cab4e71579da7b433b7a38405"},
+    {file = "pytorch_run_on_recommended_gpu-1.0.4.tar.gz", hash = "sha256:5c7fc6a704c22022606e58719538975de66002cab8e1e1840934a6b40cef5771"},
+]
+
+[package.dependencies]
+paramiko = "*"
+tabulate = "*"
+torch = "*"
+
+[[package]]
 name = "pytz"
 version = "2023.3.post1"
 description = "World timezone definitions, modern and historical"
@@ -2873,26 +2865,6 @@ files = [
 
 [package.dependencies]
 fire = "*"
-
-[[package]]
-name = "recordclass"
-version = "0.14.3"
-description = "Mutable variants of tuple (mutabletuple) and collections.namedtuple (recordclass), which support assignments and more memory saving variants (dataobject, structclass, litelist, ...)."
-optional = false
-python-versions = "*"
-files = [
-    {file = "recordclass-0.14.3-cp27-cp27m-win32.whl", hash = "sha256:016a70b9e1d93e184a065a23d9bd15387c154375a166fd8868db96f362d77d94"},
-    {file = "recordclass-0.14.3-cp27-cp27m-win_amd64.whl", hash = "sha256:c9941edde67077f95e83dfd69795b2bc6cff13e05ef537b4a57cddfb8fac55f9"},
-    {file = "recordclass-0.14.3-cp36-cp36m-win32.whl", hash = "sha256:867f94a6c96474e2b52d50359adbcd1eaf18202c11654b662022a700831dfb7d"},
-    {file = "recordclass-0.14.3-cp36-cp36m-win_amd64.whl", hash = "sha256:3ced6c8d7d34d573fd7f926b47b5cdb2875b986841f1464eb9d41777edb63f7e"},
-    {file = "recordclass-0.14.3-cp37-cp37m-win32.whl", hash = "sha256:2c7dd437b2d766954e0468bdd49e444f24fc82bb080f57a4901e3718c678fcf6"},
-    {file = "recordclass-0.14.3-cp37-cp37m-win_amd64.whl", hash = "sha256:3c885d6d92c3306846c36797a03712e7c9dea6cc01b61f45305a815c87ea5a0c"},
-    {file = "recordclass-0.14.3-cp38-cp38-win32.whl", hash = "sha256:b5c25065b5d2825122fd67ac43053033bd85c209b261264ca3e2460b8308336d"},
-    {file = "recordclass-0.14.3-cp38-cp38-win_amd64.whl", hash = "sha256:57ba80fe2b3fc61cd878b3cd90ca1445a48292baf5d154055d671dc76c521bc1"},
-    {file = "recordclass-0.14.3-cp39-cp39-win32.whl", hash = "sha256:8a99639842291349667133a0c4076b2e5e483c4628da342715072037902d5884"},
-    {file = "recordclass-0.14.3-cp39-cp39-win_amd64.whl", hash = "sha256:176af306e9b3a13a97b3e8e87228a2975f87173048ab5eafbd0ba9f2838cadb0"},
-    {file = "recordclass-0.14.3.tar.gz", hash = "sha256:f2a0a42ec1128be81e28b8ba82ef1a1dccc41efbec6ecf97866915649645222f"},
-]
 
 [[package]]
 name = "referencing"
@@ -3226,20 +3198,6 @@ numpy = ">=1.21.6,<1.28.0"
 dev = ["click", "cython-lint (>=0.12.2)", "doit (>=0.36.0)", "mypy", "pycodestyle", "pydevtool", "rich-click", "ruff", "types-psutil", "typing_extensions"]
 doc = ["jupytext", "matplotlib (>2)", "myst-nb", "numpydoc", "pooch", "pydata-sphinx-theme (==0.9.0)", "sphinx (!=4.1.0)", "sphinx-design (>=0.2.0)"]
 test = ["asv", "gmpy2", "mpmath", "pooch", "pytest", "pytest-cov", "pytest-timeout", "pytest-xdist", "scikit-umfpack", "threadpoolctl"]
-
-[[package]]
-name = "scp"
-version = "0.13.6"
-description = "scp module for paramiko"
-optional = false
-python-versions = "*"
-files = [
-    {file = "scp-0.13.6-py2.py3-none-any.whl", hash = "sha256:5e23f22b00bdbeed83a982c6b2dfae98c125b80019c15fbb16dd64dfd864a452"},
-    {file = "scp-0.13.6.tar.gz", hash = "sha256:0a72f9d782e968b09b114d5607f96b1f16fe9942857afb355399edd55372fcf1"},
-]
-
-[package.dependencies]
-paramiko = "*"
 
 [[package]]
 name = "seaborn"
@@ -3914,4 +3872,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "610d5acc486d85ea3d771dc0c7b316cae025b0d65339e79ec344e5d5722f2c43"
+content-hash = "4880d2f5a852c83d7901b88e6482e21c5cc953cc02d6a127d64ce2c06370c5e8"

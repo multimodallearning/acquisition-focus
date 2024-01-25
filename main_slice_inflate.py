@@ -35,8 +35,8 @@ THIS_SCRIPT_DIR = get_script_dir()
 
 os.environ['CACHE_PATH'] = str(Path(THIS_SCRIPT_DIR, '.cache'))
 
-from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
-os.environ.update(get_vars(os.environ.get('MY_CUDA_VISIBLE_DEVICES', '*')))
+from pytorch_run_on_recommended_gpu.run_on_recommended_gpu import get_cuda_environ_vars as get_vars
+os.environ.update(get_vars(os.environ.get('MY_CUDA_VISIBLE_DEVICES')))
 
 import torch
 torch.set_printoptions(sci_mode=False)
