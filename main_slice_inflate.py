@@ -412,9 +412,8 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
     hla_atm.use_affine_theta = config.use_affine_theta
 
     if 'sa' in config.cuts_mode:
-        ctx = torch.no_grad \
-            if config.cuts_mode == 'sa>hla' else contextlib.nullcontext # Do not use gradients when just inferring from SA view
-        with ctx():
+        sa_ctx = torch.no_grad if not sa_atm.training else contextlib.nullcontext
+        with sa_ctx():
             if config.hla_view == 'RND':
                 # Get a random view offset from prealingned volumes
                 sa_input_grid_affine = torch.as_tensor(b_view_affines['4CH']).view(B,4,4)
@@ -439,25 +438,27 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
             # plt.savefig('sa_label_slc.png')
 
     if 'hla' in config.cuts_mode:
-        if config.hla_view == 'RND':
-            # Get a random view offset from prealingned volumes
-            hla_input_grid_affine = torch.as_tensor(b_view_affines['4CH']).view(B,4,4)
-            hla_input_grid_affine = hla_input_grid_affine @ hla_atm.random_grid_affine
-            hla_input_grid_affine = hla_input_grid_affine.to(known_augment_affine)
-        else:
-            hla_input_grid_affine = torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(known_augment_affine)
+        hla_ctx = torch.no_grad if not hla_atm.training else contextlib.nullcontext
+        with hla_ctx():
+            if config.hla_view == 'RND':
+                # Get a random view offset from prealingned volumes
+                hla_input_grid_affine = torch.as_tensor(b_view_affines['4CH']).view(B,4,4)
+                hla_input_grid_affine = hla_input_grid_affine @ hla_atm.random_grid_affine
+                hla_input_grid_affine = hla_input_grid_affine.to(known_augment_affine)
+            else:
+                hla_input_grid_affine = torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(known_augment_affine)
 
-        hla_image_slc, hla_label_slc, hla_grid_affine = \
-            get_transformed(
-                config,
-                phase,
-                b_label.view(B, NUM_CLASSES, D, H, W),
-                b_soft_label.view(B, NUM_CLASSES, D, H, W),
-                nifti_affine,
-                hla_input_grid_affine @ known_augment_affine,
-                hidden_augment_affine,
-                hla_atm, hla_cut_module,
-                image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
+            hla_image_slc, hla_label_slc, hla_grid_affine = \
+                get_transformed(
+                    config,
+                    phase,
+                    b_label.view(B, NUM_CLASSES, D, H, W),
+                    b_soft_label.view(B, NUM_CLASSES, D, H, W),
+                    nifti_affine,
+                    hla_input_grid_affine @ known_augment_affine,
+                    hidden_augment_affine,
+                    hla_atm, hla_cut_module,
+                    image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
 
     if config.cuts_mode == 'sa':
         slices = [sa_label_slc, sa_label_slc]
@@ -484,8 +485,8 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
 
     b_target = b_label
 
-    b_input = b_input.to(device=config.device)
-    b_target = b_target.to(device=config.device)
+    # b_input = b_input.to(device=config.device)
+    # b_target = b_target.to(device=config.device)
 
     return b_input, b_target, grid_affines
 
@@ -557,11 +558,12 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cu
         elif config.model_type in ['unet', 'unet-wo-skip', 'hybrid-unet-wo-skip']:
             y_hat = model(b_input)
         elif config.model_type == 'hybrid-unet':
-            if 'stage-1' in wandb.run.name or 'stage-2' in wandb.run.name:
-                b_grid_affines[0], b_grid_affines[1] = b_grid_affines[0].detach(), b_grid_affines[1].detach()
+            b_grid_affines[0], b_grid_affines[1] = b_grid_affines[0].detach(), b_grid_affines[1].detach()
             y_hat = model(b_input, b_grid_affines)
         else:
             raise ValueError
+
+        torch.cuda.empty_cache()
 
         ### Calculate loss ###
         assert y_hat.dim() == 5, \
@@ -609,12 +611,15 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         model.train()
 
         if config.train_affine_theta:
-            if config.cuts_mode == 'sa>hla':
+            if 'sa' in config.cuts_mode and not config.cuts_mode == 'sa>hla':
+                sa_atm.train()
+            else:
                 sa_atm.eval()
+
+            if 'hla' in config.cuts_mode:
                 hla_atm.train()
             else:
-                sa_atm.train()
-                hla_atm.train()
+                hla_atm.eval()
         else:
             sa_atm.eval()
             hla_atm.eval()
@@ -651,17 +656,24 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 regularization = torch.cat([r().view(1,1).to(device=loss.device) for r in r_params.values()]).sum()
 
             loss = loss + regularization
+            if config.use_autocast:
+                scaler.scale(loss).backward()
+                for name, opt in all_optimizers.items():
+                    if name == 'transform_optimizer' and not config.train_affine_theta:
+                        continue
+                    scaler.step(opt)
+                scaler.update()
 
-            scaler.scale(loss).backward()
+            else:
+                loss.backward()
+                for name, opt in all_optimizers.items():
+                    if name == 'transform_optimizer' and not config.train_affine_theta:
+                        continue
+                    opt.step()
+
             # test_all_parameters_updated(model)
             # test_all_parameters_updated(sa_atm)
             # test_all_parameters_updated(hla_atm)
-            for name, opt in all_optimizers.items():
-                if name == 'transform_optimizer' and not config.train_affine_theta:
-                    continue
-                scaler.step(opt)
-            scaler.update()
-
         else:
             with torch.no_grad():
                 y_hat, b_target, loss, b_input = model_step(
@@ -1260,7 +1272,6 @@ if __name__ == '__main__':
             all_params_stages = [
                 Stage( # Optimize SA
                     r_params=r_params,
-                    sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa'),
                     cuts_mode='sa',
                     epochs=int(config_dict['epochs']*1.5),
                     soft_cut_std=-999,
@@ -1272,7 +1283,6 @@ if __name__ == '__main__':
                 ),
                 Stage( # Optimize hla
                     r_params=r_params,
-                    hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla'),
                     cuts_mode='sa>hla',
                     epochs=int(config_dict['epochs']*1.5),
                     soft_cut_std=-999,

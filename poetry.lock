@@ -2604,13 +2604,13 @@ files = [
 
 [[package]]
 name = "pytorch-run-on-recommended-gpu"
-version = "1.0.4"
+version = "1.0.5"
 description = "A lightweight scheduler reading nvidia-smi and updating torch environment variables to run on the recommended GPU."
 optional = false
-python-versions = ">=3.9,<4.0"
+python-versions = ">=3.5,<4.0"
 files = [
-    {file = "pytorch_run_on_recommended_gpu-1.0.4-py3-none-any.whl", hash = "sha256:4d864c420b4304ca1de8caac043450c5a833923cab4e71579da7b433b7a38405"},
-    {file = "pytorch_run_on_recommended_gpu-1.0.4.tar.gz", hash = "sha256:5c7fc6a704c22022606e58719538975de66002cab8e1e1840934a6b40cef5771"},
+    {file = "pytorch_run_on_recommended_gpu-1.0.5-py3-none-any.whl", hash = "sha256:d4c351759ddfc5e2e22732c2b87ef480ea8952fff75e9b1aef4e6fda639c0817"},
+    {file = "pytorch_run_on_recommended_gpu-1.0.5.tar.gz", hash = "sha256:e989733cc83304780ceda8d2587f3ac80b4fc46558a779be5c1ddad94c19d6ef"},
 ]
 
 [package.dependencies]

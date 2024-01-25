@@ -1,0 +1,6 @@
+{
+    "meta_config_id": -1,
+    "wandb_mode": "disabled",
+    "epochs": 1,
+    "use_autocast": false
+}

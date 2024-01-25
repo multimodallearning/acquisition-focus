@@ -6,7 +6,7 @@
     "configurations": [
         {
             "name": "Python: main_slice_inflate.py",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main_slice_inflate.py",
             "console": "integratedTerminal",
@@ -16,8 +16,23 @@
             }
         },
         {
+            "name": "Python: meta_debug main_slice_inflate.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main_slice_inflate.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "MY_CUDA_VISIBLE_DEVICES": "0"
+            },
+            "args": [
+                "--meta_config_path",
+                "/home/weihsbach/storage/staff/christianweihsbach/slice_inflate/meta_debug.json"
+            ]
+        },
+        {
             "name": "Python: MMWHS meta0 main_slice_inflate.py",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main_slice_inflate.py",
             "console": "integratedTerminal",
@@ -32,7 +47,7 @@
         },
         {
             "name": "Python: MRXCAT meta0 main_slice_inflate.py",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main_slice_inflate.py",
             "console": "integratedTerminal",
@@ -47,7 +62,7 @@
         },
         {
             "name": "Python: MMWHS meta14 main_slice_inflate.py",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main_slice_inflate.py",
             "console": "integratedTerminal",
