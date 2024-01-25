@@ -23,5 +23,6 @@
         1
     ],
     "clinical_view_affine_type": "from-segmented",
-    "label_slice_type": "from-segmented"
+    "label_slice_type": "from-segmented",
+    "use_autocast": false
 }

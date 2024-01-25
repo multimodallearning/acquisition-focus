@@ -28,5 +28,6 @@
     "dataset": [
         "mrxcat",
         "./data/datasets/MRXCAT/prepared_files"
-    ]
+    ],
+    "use_autocast": false
 }
