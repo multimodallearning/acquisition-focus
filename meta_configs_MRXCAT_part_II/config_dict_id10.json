@@ -12,17 +12,10 @@
         32,
         32
     ],
-    "slice_fov_mm": [
-        192.0,
-        192.0,
-        6.0
+    "fold_override": 0,
+    "dataset": [
+        "mrxcat",
+        "./data/datasets/MRXCAT/prepared_files"
     ],
-    "slice_fov_vox": [
-        32,
-        32,
-        1
-    ],
-    "clinical_view_affine_type": "from-segmented",
-    "label_slice_type": "from-segmented",
     "stage_override": 4
 }
