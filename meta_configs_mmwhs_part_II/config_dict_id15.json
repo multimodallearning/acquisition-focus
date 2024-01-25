@@ -1,7 +1,7 @@
 {
-    "meta_config_id": 14,
-    "sa_view": "4CH",
-    "hla_view": "2CH",
+    "meta_config_id": 15,
+    "sa_view": "axial",
+    "hla_view": "coronal",
     "prescan_fov_mm": [
         192.0,
         192.0,
@@ -23,6 +23,5 @@
         1
     ],
     "clinical_view_affine_type": "from-segmented",
-    "label_slice_type": "from-segmented",
-    "stage_override": 4
+    "label_slice_type": "from-segmented"
 }
