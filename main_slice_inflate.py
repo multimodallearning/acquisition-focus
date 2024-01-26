@@ -367,7 +367,7 @@ def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_
         assert not img_is_invalid and segment_fn is not None
         with torch.no_grad():
             # Beware: Label slice does not have gradients anymore
-            pred_slc = eo.rearrange(segment_fn(eo.rearrange(image_slc, 'B C D H 1 -> B C 1 D H'), get_zooms(atm_nii_affine)), 'B D H 1 -> B D H 1').long()
+            pred_slc = eo.rearrange(segment_fn(eo.rearrange(image_slc, 'B C D H 1 -> B C 1 D H'), get_zooms(atm_nii_affine)), 'B 1 D H -> B D H 1').long() # MRXCAT segment output is 1,1,128,128
             soft_label_slc = label_slc = eo.rearrange(F.one_hot(pred_slc, num_classes),
                 'B D H 1 OH -> B OH D H 1').to(soft_label_slc)
             # plt.imshow(image_slc[0].squeeze().cpu(), cmap='gray')
