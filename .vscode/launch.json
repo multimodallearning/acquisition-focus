@@ -6,7 +6,7 @@
     "configurations": [
         {
             "name": "Python: main_slice_inflate.py",
-            "type": "debugpy",
+            "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/main_slice_inflate.py",
             "console": "integratedTerminal",
@@ -17,13 +17,13 @@
         },
         {
             "name": "Python: meta_debug main_slice_inflate.py",
-            "type": "debugpy",
+            "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/main_slice_inflate.py",
             "console": "integratedTerminal",
             "justMyCode": false,
             "env": {
-                "MY_CUDA_VISIBLE_DEVICES": "0"
+                "MY_CUDA_VISIBLE_DEVICES": "5"
             },
             "args": [
                 "--meta_config_path",
@@ -32,7 +32,7 @@
         },
         {
             "name": "Python: MMWHS meta0 main_slice_inflate.py",
-            "type": "debugpy",
+            "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/main_slice_inflate.py",
             "console": "integratedTerminal",
@@ -47,7 +47,7 @@
         },
         {
             "name": "Python: MRXCAT meta0 main_slice_inflate.py",
-            "type": "debugpy",
+            "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/main_slice_inflate.py",
             "console": "integratedTerminal",
