@@ -1,6 +1,21 @@
 {
-    "meta_config_id": -1,
-    "wandb_mode": "disabled",
-    "epochs": 1,
-    "use_autocast": false
+    "batch_size": 2,
+    "wandb_mode": "online",
+    "use_autocast": false,
+    "use_caching": true,
+    "transform_model_checkpoint_path": "data/models/20240125__21_11_31_coal-adjugate_stage-1_fold-1_best",
+    "sweep_type": null,
+    "meta_config_id": 11,
+    "sa_view": "axial",
+    "hla_view": "coronal",
+    "prescan_fov_mm": [
+        192.0,
+        192.0,
+        192.0
+    ],
+    "prescan_fov_vox": [
+        32,
+        32,
+        32
+    ]
 }

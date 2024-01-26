@@ -784,7 +784,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     print(f'losses/{phase}_loss', log_val)
 
     log_label_metrics(f"scores/{phase}_mean", '', seg_metrics_nanmean, global_idx,
-        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95', 'delta_vol_ml', 'delta_vol_rel'), print_selected_metrics=('dice'))
+        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95', 'delta_vol_ml', 'delta_vol_rel'), print_selected_metrics=())
 
     log_label_metrics(f"scores/{phase}_std", '', seg_metrics_std, global_idx,
         logger_selected_metrics=('dice', 'iou', 'hd', 'hd95', 'delta_vol_ml', 'delta_vol_rel'), print_selected_metrics=())
@@ -810,7 +810,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         )
         sa_theta_ap_mean, sa_theta_t_offsets_mean, sa_theta_zp_mean = \
             log_affine_param_stats(ornt_log_prefix, '', sa_param_dict, global_idx,
-                logger_selected_metrics=('mean', 'std'), print_selected_metrics=('mean', 'std'))
+                logger_selected_metrics=('mean', 'std'), print_selected_metrics=())
         print()
 
         mean_transform_dict.update(
@@ -840,7 +840,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         )
         hla_theta_ap_mean, hla_theta_tp_mean, hla_theta_zp_mean = \
             log_affine_param_stats(ornt_log_prefix, '', hla_param_dict, global_idx,
-                logger_selected_metrics=('mean', 'std'), print_selected_metrics=('mean', 'std'))
+                logger_selected_metrics=('mean', 'std'), print_selected_metrics=())
         print()
 
         mean_transform_dict.update(
@@ -1178,6 +1178,11 @@ def clean_sweep_dict(config_dict):
 def set_previous_stage_transform_chk(self):
     self['transform_model_checkpoint_path'] = self['save_path']
 
+
+
+def set_debug_stage_transform_chk(self):
+    assert self['epochs'] < 50, "Debug stage must not run for more than 50 epochs"
+    self['transform_model_checkpoint_path'] = "data/models/20240125__21_11_31_coal-adjugate_stage-1_fold-1_best"
 
 
 if __name__ == '__main__':
