@@ -1088,21 +1088,20 @@ sweep_config_dict = dict(
 
 
 # %%
-def normal_run(config_dict, fold_properties, training_dataset, test_dataset):
-    rnd_name = randomname.get_name()
+def normal_run(run_name, config_dict, fold_properties, training_dataset, test_dataset):
+
     with wandb.init(project=PROJECT_NAME, group="training", job_type="train",
             config=config_dict, settings=wandb.Settings(start_method="thread"),
             mode=config_dict['wandb_mode']
         ) as run:
-        run.name = f"{NOW_STR}_{rnd_name}_{get_fold_postfix(fold_properties)}"
+        run.name = run_name
         print("Running", run.name)
         config = wandb.config
         run_dl(run.name, config, fold_properties, training_dataset=training_dataset, test_dataset=test_dataset)
 
 
 
-def stage_sweep_run(config_dict, fold_properties, all_stages, training_dataset, test_dataset):
-    rnd_name = randomname.get_name()
+def stage_sweep_run(run_name, config_dict, fold_properties, all_stages, training_dataset, test_dataset):
     for stage in all_stages:
         stg_idx = all_stages.idx
 
@@ -1118,7 +1117,7 @@ def stage_sweep_run(config_dict, fold_properties, all_stages, training_dataset, 
         with wandb.init(project=PROJECT_NAME, config=stage_config, settings=wandb.Settings(start_method="thread"),
             mode=stage_config['wandb_mode']) as run:
 
-            run.name = f"{NOW_STR}_{rnd_name}_stage-{stg_idx+1}_{get_fold_postfix(fold_properties)}"
+            run.name = f"{run_name}_stage-{stg_idx+1}"
             print("Running", run.name)
             config = wandb.config
 
@@ -1246,9 +1245,13 @@ if __name__ == '__main__':
             selected_fold = config_dict['fold_override']
             fold_iter = fold_iter[selected_fold:selected_fold+1]
 
+    rnd_name = randomname.get_name()
+    run_name = f"{NOW_STR}_{rnd_name}"
+
     for fold_properties in fold_iter:
+        run_name_with_fold = run_name + f"_{get_fold_postfix(fold_properties)}"
         if config_dict['sweep_type'] is None:
-            normal_run(config_dict, fold_properties, training_dataset, test_dataset)
+            normal_run(run_name_with_fold, config_dict, fold_properties, training_dataset, test_dataset)
 
         elif config_dict['sweep_type'] == 'wandb_sweep':
             merged_sweep_config_dict = clean_sweep_dict(config_dict)
@@ -1323,7 +1326,7 @@ if __name__ == '__main__':
             else:
                 stage_iterator = StageIterator(selected_stages, verbose=True)
 
-            stage_sweep_run(config_dict, fold_properties, stage_iterator,
+            stage_sweep_run(run_name_with_fold, config_dict, fold_properties, stage_iterator,
                             training_dataset=training_dataset, test_dataset=test_dataset)
 
         else:
