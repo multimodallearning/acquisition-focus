@@ -955,7 +955,7 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
     autocast_enabled = 'cuda' in config.device and config['use_autocast']
 
     for epx in range(epx_start, config.epochs):
-        global_idx = get_global_idx(fold_idx, epx, config.epochs)
+        global_idx = get_global_idx(fold_idx, epx, config.epochs*10)
         # Log the epoch idx per fold - so we can recover the diagram by setting
         # ref_epoch_idx as x-axis in wandb interface
         print( f"### Log epoch {epx}/{config.epochs}")
