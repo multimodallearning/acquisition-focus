@@ -4,7 +4,8 @@
     "wandb_mode": "online",
     "use_autocast": false,
     "use_caching": true,
-    "transform_model_checkpoint_path": "data/models/20240126__21_42_58_boolean-act_fold-0_stage-1_best",
+    "cuts_mode": "sa>hla",
+    "transform_model_checkpoint_path": "data/models/20240127__12_26_15_frayed-shiraz_fold-0_stage-1_best",
     "stage_override": 2,
     "sweep_type": null
 }

@@ -301,19 +301,33 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
     sa_cut_module.to(device)
     hla_cut_module.to(device)
 
-    # if config.cuts_mode == 'sa':
-    #     transform_parameters = list(sa_atm.parameters()) + list(sa_cut_module.parameters())
-    # elif config.cuts_mode == 'hla':
-    #     transform_parameters = list(hla_atm.parameters()) + list(hla_cut_module.parameters())
-    # elif config.cuts_mode == 'sa>hla':
-    #     transform_parameters = list(hla_atm.parameters()) + list(hla_cut_module.parameters())
-    # elif config.cuts_mode == 'sa+hla':
+
+    def set_requires_grad(module_list, requires_grad=True):
+        for mod in module_list:
+            for param in mod.parameters():
+                param.requires_grad = requires_grad
+
+    set_requires_grad([sa_atm, hla_atm, sa_cut_module, hla_cut_module], False)
+
+    if config.cuts_mode == 'sa':
+        set_requires_grad([sa_atm.localisation_net, sa_cut_module], True)
+    elif config.cuts_mode in ['hla', 'sa>hla']:
+        set_requires_grad([hla_atm.localisation_net, hla_cut_module], True)
+    elif config.cuts_mode == 'sa+hla':
+        set_requires_grad([
+            sa_atm.localisation_net, sa_cut_module,
+            hla_atm.localisation_net, hla_cut_module
+        ], True)
+    else:
+        raise ValueError()
+
     transform_parameters = (
         list(sa_atm.parameters())
         + list(hla_atm.parameters())
         + list(sa_cut_module.parameters())
         + list(hla_cut_module.parameters())
     )
+
     # else:
     #     raise ValueError()
 
@@ -676,6 +690,11 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
             else:
                 loss.backward()
+                for mod in [sa_atm, hla_atm]:
+                    r_grad_params = [p.grad.view(-1) for p in mod.parameters() if p.requires_grad]
+                    if r_grad_params:
+                        all_grad_values = torch.cat(r_grad_params)
+                        torch.nn.utils.clip_grad_value_(mod.parameters(), all_grad_values.abs().quantile(.99))
                 for name, opt in all_optimizers.items():
                     if name == 'transform_optimizer' and not config.train_affine_theta:
                         continue
@@ -1308,8 +1327,7 @@ if __name__ == '__main__':
                     use_affine_theta=True,
                     train_affine_theta=True,
                     do_output=True,
-                    __activate_fn__= lambda self: None,
-                    #__activate_fn__=set_previous_stage_transform_chk
+                    __activate_fn__=set_previous_stage_transform_chk
                 ),
                 Stage( # Final optimized run
                     do_output=True,
