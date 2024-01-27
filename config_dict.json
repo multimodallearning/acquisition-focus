@@ -2,7 +2,7 @@
     "num_folds": 3,
     "state": "train",
     "fold_override": null,
-    "epochs": 80,
+    "epochs": 160,
     "test_only_and_output_to": null,
     "batch_size": 2,
     "val_batch_size": 1,
@@ -75,6 +75,6 @@
     "transform_model_checkpoint_path": null,
     "do_output": true,
     "device": "cuda",
-    "use_autocast": true,
+    "use_autocast": false,
     "use_caching": false
 }

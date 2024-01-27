@@ -466,7 +466,7 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                     # hidden_augment_affine,
                     sa_atm, sa_cut_module,
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
-                
+
             # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
             sa_grid_affine = sa_grid_affine.to(known_augment_affine) @ hidden_augment_affine
             # from matplotlib import pyplot as plt
