@@ -349,7 +349,7 @@ class MRXCATDataset(HybridIdDataset):
                 fov_mm=torch.as_tensor(self.hires_fov_mm), fov_vox=torch.as_tensor(self.hires_fov_vox),
                 is_label=is_label,
                 pre_grid_sample_affine=None,
-                pre_grid_sample_hidden_affine=None,
+                # pre_grid_sample_hidden_affine=None,
                 dtype=torch.float32
             )
             tmp = tmp[0,0]
@@ -379,9 +379,6 @@ class MRXCATDataset(HybridIdDataset):
                 # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
                 # display_clinical_views(tmp[0,0], tmp[0,0].to_sparse(), hires_nii_affine[0], view_affines,
                 #     output_to_file="my_output.png")
-                if self.use_distance_map_localization:
-                    oh = torch.nn.functional.one_hot(tmp.long()).permute(3,0,1,2)
-                    additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool(), mode='outer').squeeze(0)
 
                 # Save prescan gt
                 prescan_label, _, prescan_nii_affine = nifti_grid_sample(
@@ -390,7 +387,7 @@ class MRXCATDataset(HybridIdDataset):
                     fov_mm=torch.as_tensor(self.prescan_fov_mm), fov_vox=torch.as_tensor(self.prescan_fov_vox),
                     is_label=True,
                     pre_grid_sample_affine=None,
-                    pre_grid_sample_hidden_affine=None,
+                    # pre_grid_sample_hidden_affine=None,
                     dtype=torch.float32
                 )
                 prescan_label = prescan_label.long()
@@ -408,7 +405,7 @@ class MRXCATDataset(HybridIdDataset):
                     fov_mm=torch.as_tensor(self.prescan_fov_mm), fov_vox=torch.as_tensor(self.prescan_fov_vox),
                     is_label=False,
                     pre_grid_sample_affine=None,
-                    pre_grid_sample_hidden_affine=None,
+                    # pre_grid_sample_hidden_affine=None,
                     dtype=torch.float32
                 )
 

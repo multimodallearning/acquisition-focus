@@ -148,7 +148,9 @@ def get_noop_ras_transfrom_mat(volume_affine, fov_vox_i):
 
 
 def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_transform_mat:torch.Tensor=None, fov_mm=None, fov_vox=None,
-    is_label=False, pre_grid_sample_affine=None, pre_grid_sample_hidden_affine=None, dtype=torch.float32):
+    is_label=False, pre_grid_sample_affine=None,
+    # pre_grid_sample_hidden_affine=None,
+    dtype=torch.float32):
     # Works with nibabel loaded nii(.gz) files, itk loading untested
     DIM = volume.dim()
     assert DIM == 5
@@ -156,8 +158,8 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
     assert isinstance(volume, torch.Tensor) and isinstance(volume_affine, torch.Tensor)
     if pre_grid_sample_affine is not None:
         assert isinstance(pre_grid_sample_affine, torch.Tensor)
-    if pre_grid_sample_hidden_affine is not None:
-        assert isinstance(pre_grid_sample_hidden_affine, torch.Tensor)
+    # if pre_grid_sample_hidden_affine is not None:
+    #     assert isinstance(pre_grid_sample_hidden_affine, torch.Tensor)
 
     device = volume.device
     B,C,D,H,W = volume.shape
@@ -173,9 +175,9 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
     if pre_grid_sample_affine is not None:
         assert pre_grid_sample_affine.dim() == 3 \
             and B == pre_grid_sample_affine.shape[0]
-    if pre_grid_sample_hidden_affine is not None:
-        assert pre_grid_sample_hidden_affine.dim() == 3 \
-            and B == pre_grid_sample_hidden_affine.shape[0]
+    # if pre_grid_sample_hidden_affine is not None:
+    #     assert pre_grid_sample_hidden_affine.dim() == 3 \
+    #         and B == pre_grid_sample_hidden_affine.shape[0]
 
     fov_mm = fov_mm.to(device).to(device).double()
     fov_vox = fov_vox.to(device).to(device).double()
@@ -194,18 +196,18 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
         pre_grid_sample_affine = torch.eye(4)[None]
     pre_grid_sample_affine = pre_grid_sample_affine.to(device).double()
 
-    if pre_grid_sample_hidden_affine is None:
-        pre_grid_sample_hidden_affine = torch.eye(4)[None]
-    pre_grid_sample_hidden_affine = pre_grid_sample_hidden_affine.to(device).double()
+    # if pre_grid_sample_hidden_affine is None:
+    #     pre_grid_sample_hidden_affine = torch.eye(4)[None]
+    # pre_grid_sample_hidden_affine = pre_grid_sample_hidden_affine.to(device).double()
 
     # Get affines
     grid_affine, transformed_nii_affine = get_grid_affine_and_nii_affine(
         volume_affine, ras_transform_mat, fov_vox_i, fov_mm, fov_vox, pre_grid_sample_affine
     )
-    augmented_grid_affine = (grid_affine @ pre_grid_sample_hidden_affine)
+    # augmented_grid_affine = (grid_affine @ pre_grid_sample_hidden_affine)
 
     grid = torch.nn.functional.affine_grid(
-        augmented_grid_affine.to(dtype)[:,:3,:].view(B,3,4), target_shape, align_corners=False
+        grid_affine.to(dtype)[:,:3,:].view(B,3,4), target_shape, align_corners=False
     )
 
     if is_label:
@@ -261,13 +263,15 @@ def crop_around_label_center(label: torch.Tensor, volume_affine: torch.Tensor,
 
     if image is not None:
         cropped_image, *_ = nifti_grid_sample(image, volume_affine, ras_transform_mat=None, fov_mm=fov_mm, fov_vox=fov_vox,
-            is_label=False, pre_grid_sample_affine=pre_grid_sample_affine, pre_grid_sample_hidden_affine=None,
+            is_label=False, pre_grid_sample_affine=pre_grid_sample_affine,
+            # pre_grid_sample_hidden_affine=None,
             dtype=torch.float32)
     else:
         cropped_image = None
 
     cropped_label, _, cropped_nii_affine = nifti_grid_sample(label, volume_affine, ras_transform_mat=None, fov_mm=fov_mm, fov_vox=fov_vox,
-            is_label=True, pre_grid_sample_affine=pre_grid_sample_affine, pre_grid_sample_hidden_affine=None,
+            is_label=True, pre_grid_sample_affine=pre_grid_sample_affine,
+            # pre_grid_sample_hidden_affine=None,
             dtype=torch.float32)
 
     return cropped_label, cropped_image, cropped_nii_affine

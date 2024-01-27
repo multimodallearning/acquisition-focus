@@ -335,8 +335,8 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
         assert config.use_affine_theta
 
     if config.train_affine_theta:
-        transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=config.lr*2)
-        transform_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(transform_optimizer, T_0=int(config.epochs/3)+1)
+        transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=config.lr*2.0)
+        transform_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(transform_optimizer, T_0=int(config.epochs/4)+1)
     else:
         transform_optimizer = NoneOptimizer()
         transform_scheduler = None
@@ -354,7 +354,8 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
 
 
 # %%
-def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_pre_mlp, hidden_augment_affine,
+def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_pre_mlp,
+                    # hidden_augment_affine,
                     atm, cut_module, image=None, segment_fn=None):
 
     img_is_invalid = image is None or image.dim() == 0
@@ -370,7 +371,9 @@ def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_
             soft_label.view(B, num_classes, D, H, W),
             label.view(B, num_classes, D, H, W),
             image.view(B, 1, D, H, W),
-            nifti_affine, grid_affine_pre_mlp, hidden_augment_affine)
+            nifti_affine, grid_affine_pre_mlp,
+            # hidden_augment_affine
+        )
 
         # nib.Nifti1Image(image[0][0].cpu().numpy(), affine=nifti_affine.cpu()[0].numpy()).to_filename('out_img_volume.nii.gz')
         # nib.Nifti1Image(label_slc[0].argmax(0).detach().int().cpu().numpy(), affine=atm_nii_affine[0].detach().cpu().numpy()).to_filename('out_lbl_slice.nii.gz')
@@ -423,29 +426,35 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                         'B D H W OH -> B OH D H W')
     B,NUM_CLASSES,D,H,W = b_label.shape
 
-    if config.use_distance_map_localization:
-        b_soft_label = batch['additional_data']['label_distance_map']
-    else:
-        b_soft_label = b_label
-
     nifti_affine = batch['additional_data']['nifti_affine']
     known_augment_affine = batch['additional_data']['known_augment_affine']
     hidden_augment_affine = batch['additional_data']['hidden_augment_affine']
+    base_affine = torch.as_tensor(b_view_affines['4CH']).view(B,4,4).to(known_augment_affine)
+
+    b_label, *_ = nifti_grid_sample(b_label, nifti_affine,
+        fov_mm=torch.as_tensor(config.hires_fov_mm), fov_vox=torch.as_tensor(config.hires_fov_vox),
+        is_label=True, pre_grid_sample_affine=base_affine)
+    b_soft_label = b_label
+    # TODO continue here and check
 
     sa_atm.use_affine_theta = config.use_affine_theta
     hla_atm.use_affine_theta = config.use_affine_theta
 
+    sa_input_grid_affine = base_affine.inverse() \
+        @ torch.as_tensor(b_view_affines[config.sa_view]).view(B,4,4).to(known_augment_affine) \
+        @ known_augment_affine
+    hla_input_grid_affine = base_affine.inverse() \
+        @ torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(known_augment_affine) \
+        @ known_augment_affine
+
+    if config.hla_view == 'RND':
+        # Get a random view offset from prealingned volumes
+        sa_input_grid_affine = sa_input_grid_affine @ sa_atm.random_grid_affine.to(known_augment_affine)
+        hla_input_grid_affine = hla_input_grid_affine @ hla_atm.random_grid_affine.to(known_augment_affine)
+
     if 'sa' in config.cuts_mode:
         sa_ctx = torch.no_grad if not sa_atm.training else contextlib.nullcontext
         with sa_ctx():
-            if config.hla_view == 'RND':
-                # Get a random view offset from prealingned volumes
-                sa_input_grid_affine = torch.as_tensor(b_view_affines['4CH']).view(B,4,4)
-                sa_input_grid_affine = sa_input_grid_affine @ sa_atm.random_grid_affine
-                sa_input_grid_affine = sa_input_grid_affine.to(known_augment_affine)
-            else:
-                sa_input_grid_affine = torch.as_tensor(b_view_affines[config.sa_view]).view(B,4,4).to(known_augment_affine)
-
             sa_image_slc, sa_label_slc, sa_grid_affine = \
                 get_transformed(
                     config,
@@ -453,8 +462,8 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                     b_label.view(B, NUM_CLASSES, D, H, W),
                     b_soft_label.view(B, NUM_CLASSES, D, H, W),
                     nifti_affine,
-                    sa_input_grid_affine @ known_augment_affine,
-                    hidden_augment_affine,
+                    sa_input_grid_affine,
+                    # hidden_augment_affine,
                     sa_atm, sa_cut_module,
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
             # from matplotlib import pyplot as plt
@@ -464,14 +473,6 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
     if 'hla' in config.cuts_mode:
         hla_ctx = torch.no_grad if not hla_atm.training else contextlib.nullcontext
         with hla_ctx():
-            if config.hla_view == 'RND':
-                # Get a random view offset from prealingned volumes
-                hla_input_grid_affine = torch.as_tensor(b_view_affines['4CH']).view(B,4,4)
-                hla_input_grid_affine = hla_input_grid_affine @ hla_atm.random_grid_affine
-                hla_input_grid_affine = hla_input_grid_affine.to(known_augment_affine)
-            else:
-                hla_input_grid_affine = torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(known_augment_affine)
-
             hla_image_slc, hla_label_slc, hla_grid_affine = \
                 get_transformed(
                     config,
@@ -479,10 +480,14 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                     b_label.view(B, NUM_CLASSES, D, H, W),
                     b_soft_label.view(B, NUM_CLASSES, D, H, W),
                     nifti_affine,
-                    hla_input_grid_affine @ known_augment_affine,
-                    hidden_augment_affine,
+                    hla_input_grid_affine,
+                    # hidden_augment_affine,
                     hla_atm, hla_cut_module,
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
+
+    # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
+    sa_grid_affine = sa_grid_affine.to(known_augment_affine) @ hidden_augment_affine
+    hla_grid_affine = hla_grid_affine.to(known_augment_affine) @ hidden_augment_affine
 
     if config.cuts_mode == 'sa':
         slices = [sa_label_slc, sa_label_slc]
@@ -690,11 +695,11 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
             else:
                 loss.backward()
-                for mod in [sa_atm, hla_atm]:
-                    r_grad_params = [p.grad.view(-1) for p in mod.parameters() if p.requires_grad]
-                    if r_grad_params:
-                        all_grad_values = torch.cat(r_grad_params)
-                        torch.nn.utils.clip_grad_value_(mod.parameters(), all_grad_values.abs().quantile(.99))
+                # for mod in [sa_atm, hla_atm]:
+                #     r_grad_params = [p.grad.view(-1) for p in mod.parameters() if p.requires_grad]
+                #     if r_grad_params:
+                #         all_grad_values = torch.cat(r_grad_params)
+                #         torch.nn.utils.clip_grad_value_(mod.parameters(), all_grad_values.abs().quantile(.95))
                 for name, opt in all_optimizers.items():
                     if name == 'transform_optimizer' and not config.train_affine_theta:
                         continue
@@ -882,9 +887,6 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     if config.do_output and epx_input:
         # Store the slice model input
         save_input = torch.stack(list(epx_input.values()))
-
-        if config.use_distance_map_localization:
-            save_input =  (save_input < 0.5).float()
 
         if 'hybrid' in config.model_type:
             num_classes = len(training_dataset.label_tags)
