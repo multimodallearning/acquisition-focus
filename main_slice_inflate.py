@@ -36,7 +36,7 @@ THIS_SCRIPT_DIR = get_script_dir()
 os.environ['CACHE_PATH'] = str(Path(THIS_SCRIPT_DIR, '.cache'))
 
 from pytorch_run_on_recommended_gpu.run_on_recommended_gpu import get_cuda_environ_vars as get_vars
-os.environ.update(get_vars(os.environ.get('MY_CUDA_VISIBLE_DEVICES')))
+os.environ.update(get_vars(os.environ.get('MY_CUDA_VISIBLE_DEVICES','0')))
 
 import torch
 torch.set_printoptions(sci_mode=False)
@@ -301,21 +301,21 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
     sa_cut_module.to(device)
     hla_cut_module.to(device)
 
-    if config.cuts_mode == 'sa':
-        transform_parameters = list(sa_atm.parameters()) + list(sa_cut_module.parameters())
-    elif config.cuts_mode == 'hla':
-        transform_parameters = list(hla_atm.parameters()) + list(hla_cut_module.parameters())
-    elif config.cuts_mode == 'sa>hla':
-        transform_parameters = list(hla_atm.parameters()) + list(hla_cut_module.parameters())
-    elif config.cuts_mode == 'sa+hla':
-       transform_parameters = (
-            list(sa_atm.parameters())
-            + list(hla_atm.parameters())
-            + list(sa_cut_module.parameters())
-            + list(hla_cut_module.parameters())
-        )
-    else:
-        raise ValueError()
+    # if config.cuts_mode == 'sa':
+    #     transform_parameters = list(sa_atm.parameters()) + list(sa_cut_module.parameters())
+    # elif config.cuts_mode == 'hla':
+    #     transform_parameters = list(hla_atm.parameters()) + list(hla_cut_module.parameters())
+    # elif config.cuts_mode == 'sa>hla':
+    #     transform_parameters = list(hla_atm.parameters()) + list(hla_cut_module.parameters())
+    # elif config.cuts_mode == 'sa+hla':
+    transform_parameters = (
+        list(sa_atm.parameters())
+        + list(hla_atm.parameters())
+        + list(sa_cut_module.parameters())
+        + list(hla_cut_module.parameters())
+    )
+    # else:
+    #     raise ValueError()
 
     if config.train_affine_theta:
         assert config.use_affine_theta
@@ -1308,7 +1308,8 @@ if __name__ == '__main__':
                     use_affine_theta=True,
                     train_affine_theta=True,
                     do_output=True,
-                    __activate_fn__=set_previous_stage_transform_chk
+                    __activate_fn__= lambda self: None,
+                    #__activate_fn__=set_previous_stage_transform_chk
                 ),
                 Stage( # Final optimized run
                     do_output=True,
