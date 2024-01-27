@@ -466,6 +466,9 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                     # hidden_augment_affine,
                     sa_atm, sa_cut_module,
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
+                
+            # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
+            sa_grid_affine = sa_grid_affine.to(known_augment_affine) @ hidden_augment_affine
             # from matplotlib import pyplot as plt
             # plt.imshow(sa_label_slc[0].argmax(0).squeeze().cpu().numpy())
             # plt.savefig('sa_label_slc.png')
@@ -484,10 +487,9 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                     # hidden_augment_affine,
                     hla_atm, hla_cut_module,
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
+            # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
+            hla_grid_affine = hla_grid_affine.to(known_augment_affine) @ hidden_augment_affine
 
-    # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
-    sa_grid_affine = sa_grid_affine.to(known_augment_affine) @ hidden_augment_affine
-    hla_grid_affine = hla_grid_affine.to(known_augment_affine) @ hidden_augment_affine
 
     if config.cuts_mode == 'sa':
         slices = [sa_label_slc, sa_label_slc]
