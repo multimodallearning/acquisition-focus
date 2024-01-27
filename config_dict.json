@@ -5,6 +5,7 @@
     "epochs": 160,
     "test_only_and_output_to": null,
     "batch_size": 2,
+    "num_grad_accum_steps": 2,
     "val_batch_size": 1,
     "do_augment": false,
     "sample_augment_strength": 1.0,

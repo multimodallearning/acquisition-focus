@@ -157,6 +157,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
             init_dict['input_channels'] = num_classes*2
             init_dict['pool_op_kernel_sizes'][-1] = [2,2,2]
             init_dict['norm_op'] = nn.InstanceNorm3d
+            # init_dict['convolutional_upsampling'] = True
             nnunet_model = Generic_UNet_Hybrid(**init_dict, use_skip_connections=use_skip_connections, encoder_mode=enc_mode, decoder_mode=dec_mode)
         else:
             enc_mode = '3d'
@@ -672,9 +673,6 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     for batch_idx, batch in bbar:
         bbar.set_description(f"{phase}, {get_cuda_mem_info_str()}")
         if phase == 'train':
-            for opt in all_optimizers.values():
-                opt.zero_grad()
-
             y_hat, b_target, loss, b_input = model_step(
                 config, phase, epx,
                 model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
@@ -687,16 +685,24 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 regularization = torch.cat([r().view(1,1).to(device=loss.device) for r in r_params.values()]).sum()
 
             loss = loss + regularization
+            loss_accum = loss / config.num_grad_accum_steps
+
             if config.use_autocast:
-                scaler.scale(loss).backward()
+                scaler.scale(loss_accum).backward()
+            else:
+                loss_accum.backward()
+
+            if (batch_idx+1) % config.num_grad_accum_steps != 0:
+                continue
+
+            if config.use_autocast:
                 for name, opt in all_optimizers.items():
                     if name == 'transform_optimizer' and not config.train_affine_theta:
                         continue
                     scaler.step(opt)
                 scaler.update()
-
+                opt.zero_grad()
             else:
-                loss.backward()
                 # for mod in [sa_atm, hla_atm]:
                 #     r_grad_params = [p.grad.view(-1) for p in mod.parameters() if p.requires_grad]
                 #     if r_grad_params:
@@ -706,10 +712,12 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                     if name == 'transform_optimizer' and not config.train_affine_theta:
                         continue
                     opt.step()
-
+                    opt.zero_grad()
             # test_all_parameters_updated(model)
             # test_all_parameters_updated(sa_atm)
             # test_all_parameters_updated(hla_atm)
+            epx_losses.append((loss_accum*config.num_grad_accum_steps).item())
+
         else:
             with torch.no_grad():
                 y_hat, b_target, loss, b_input = model_step(
@@ -718,7 +726,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                     batch,
                     dataset.label_tags, class_weights, segment_fn, autocast_enabled)
 
-        epx_losses.append(loss.item())
+            epx_losses.append(loss.item())
 
         epx_input.update({k:v for k,v in zip(batch['id'], b_input.cpu())})
 
