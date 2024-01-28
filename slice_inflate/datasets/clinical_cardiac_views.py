@@ -224,10 +224,14 @@ def display_clinical_views(volume:torch.Tensor, sp_label:torch.Tensor, volume_af
     for ax, (view_name, pt_affine) in zip(axs, clinical_view_affines.items()):
 
         image_slice, *_ = nifti_grid_sample(volume[None,None], volume_affine[None], None, fov_mm, fov_vox,
-            is_label=False, pre_grid_sample_affine=pt_affine[None], pre_grid_sample_hidden_affine=None, dtype=torch.float32
+            is_label=False, pre_grid_sample_affine=pt_affine[None],
+            # pre_grid_sample_hidden_affine=None,
+            dtype=torch.float32
         )
         label_slice, *_ = nifti_grid_sample(sp_label.to_dense()[None,None], volume_affine[None], None, fov_mm, fov_vox,
-            is_label=True, pre_grid_sample_affine=pt_affine[None], pre_grid_sample_hidden_affine=None, dtype=torch.float32
+            is_label=True, pre_grid_sample_affine=pt_affine[None],
+            # pre_grid_sample_hidden_affine=None,
+            dtype=torch.float32
         )
 
         ax.imshow(image_slice[0,0,...,0].T.flip(0), cmap='gray')

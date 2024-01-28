@@ -2,11 +2,15 @@ import wandb
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
+import math
 
 def get_global_idx(fold_idx, epoch_idx, max_epochs):
+    def ceilll(x, base=5):
+        return base * math.ceil(x/base)
+
     # Get global index e.g. 2250 for fold_idx=2, epoch_idx=250 @ max_epochs<1000
     fold_idx = max(0, fold_idx)
-    return 10**len(str(int(max_epochs)))*fold_idx + epoch_idx
+    return 10**ceilll(len(str(int(max_epochs))),5)*fold_idx + epoch_idx
 
 
 

@@ -20,7 +20,6 @@ joblib = "^1.1.0"
 ipywidgets = "^8.0.2"
 wandb = "^0.13.3"
 scikit-learn = "^1.1.2"
-meidic-vtach-utils = { git = "git@github.com:MDL-UzL/meidic_vtach_utils.git" }
 nnunetv2 = { git = "git@github.com:chr-wei/nnUNet.git" }
 scikit-image = "^0.19.3"
 git-filter-repo = "^2.34.0"
@@ -33,6 +32,7 @@ seaborn = "^0.12.2"
 black = "^23.12.1"
 nnunet = "^1.7.1"
 randomname = "^0.2.1"
+pytorch-run-on-recommended-gpu = "^1.0.4"
 
 [build-system]
 requires = ["poetry-core"]

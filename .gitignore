@@ -15,6 +15,7 @@ data/
 *.png
 *.txt
 *.log
+*.pdf
 
 **/.ipynb_checkpoints/**
 **/.DS_Store

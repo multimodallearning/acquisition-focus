@@ -52,7 +52,7 @@ class MMWHSDataset(HybridIdDataset):
         if kwargs['use_binarized_labels']:
             label_tags=("background", "foreground")
 
-        self.nnunet_segment_model_path = "/storage/staff/christianweihsbach/nnunet/nnUNetV2_results/Dataset671_MMWHS_ac_focus/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d"
+        self.nnunet_segment_model_path = "/home/weihsbach/storage/staff/christianweihsbach/nnunet/nnUNetV2_results/Dataset671_MMWHS_ac_focus/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d"
         kwargs['nnunet_segment_model_path'] = self.nnunet_segment_model_path
 
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
@@ -97,21 +97,18 @@ class MMWHSDataset(HybridIdDataset):
 
             additional_data = self.additional_data_3d.get(_id, [])
 
-        if self.use_modified:
-            if use_2d:
-                modified_label = self.modified_label_data_2d.get(
-                    _id, label.detach().clone())
-            else:
-                modified_label = self.modified_label_data_3d.get(
-                    _id, label.detach().clone())
-        else:
-            modified_label = label.detach().clone()
+        # if self.use_modified:
+        #     if use_2d:
+        #         modified_label = self.modified_label_data_2d.get(
+        #             _id, label.detach().clone())
+        #     else:
+        #         modified_label = self.modified_label_data_3d.get(
+        #             _id, label.detach().clone())
+        # else:
+        #     modified_label = label.detach().clone()
 
-        image = image.to(device=self.device)
-        label = label.to(device=self.device)
-
-        modified_label, _ = ensure_dense(modified_label)
-        modified_label = modified_label.to(device=self.device)
+        # modified_label, _ = ensure_dense(modified_label)
+        # modified_label = modified_label.to(device=self.device)
 
         if self.augment_at_collate:
             raise NotImplementedError()
@@ -349,7 +346,7 @@ class MMWHSDataset(HybridIdDataset):
                 fov_mm=torch.as_tensor(self.hires_fov_mm), fov_vox=torch.as_tensor(self.hires_fov_vox),
                 is_label=is_label,
                 pre_grid_sample_affine=None,
-                pre_grid_sample_hidden_affine=None,
+                # pre_grid_sample_hidden_affine=None,
                 dtype=torch.float32
             )
             tmp = tmp[0,0]
@@ -379,9 +376,6 @@ class MMWHSDataset(HybridIdDataset):
                 # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
                 # display_clinical_views(tmp[0,0], tmp[0,0].to_sparse(), hires_nii_affine[0], view_affines,
                 #     output_to_file="my_output.png")
-                if self.use_distance_map_localization:
-                    oh = torch.nn.functional.one_hot(tmp.long()).permute(3,0,1,2)
-                    additional_data_3d[_3d_id]['label_distance_map'] = calc_dist_map(oh.unsqueeze(0).bool(), mode='outer').squeeze(0)
 
                 # Save prescan gt
                 prescan_label, _, prescan_nii_affine = nifti_grid_sample(
@@ -390,7 +384,7 @@ class MMWHSDataset(HybridIdDataset):
                     fov_mm=torch.as_tensor(self.prescan_fov_mm), fov_vox=torch.as_tensor(self.prescan_fov_vox),
                     is_label=True,
                     pre_grid_sample_affine=None,
-                    pre_grid_sample_hidden_affine=None,
+                    # pre_grid_sample_hidden_affine=None,
                     dtype=torch.float32
                 )
                 prescan_label = prescan_label.long()
@@ -408,7 +402,7 @@ class MMWHSDataset(HybridIdDataset):
                     fov_mm=torch.as_tensor(self.prescan_fov_mm), fov_vox=torch.as_tensor(self.prescan_fov_vox),
                     is_label=False,
                     pre_grid_sample_affine=None,
-                    pre_grid_sample_hidden_affine=None,
+                    # pre_grid_sample_hidden_affine=None,
                     dtype=torch.float32
                 )
 

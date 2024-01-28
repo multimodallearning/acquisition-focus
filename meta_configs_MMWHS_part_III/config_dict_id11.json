@@ -1,0 +1,16 @@
+{
+    "meta_config_id": 11,
+    "sa_view": "axial",
+    "hla_view": "coronal",
+    "prescan_fov_mm": [
+        192.0,
+        192.0,
+        192.0
+    ],
+    "prescan_fov_vox": [
+        32,
+        32,
+        32
+    ],
+    "use_autocast": false
+}

@@ -1,0 +1,16 @@
+{
+    "meta_config_id": 10,
+    "sa_view": "4CH",
+    "hla_view": "2CH",
+    "prescan_fov_mm": [
+        192.0,
+        192.0,
+        192.0
+    ],
+    "prescan_fov_vox": [
+        32,
+        32,
+        32
+    ],
+    "stage_override": 4
+}

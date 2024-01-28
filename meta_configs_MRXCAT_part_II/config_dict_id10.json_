@@ -1,0 +1,21 @@
+{
+    "meta_config_id": 10,
+    "sa_view": "4CH",
+    "hla_view": "2CH",
+    "prescan_fov_mm": [
+        192.0,
+        192.0,
+        192.0
+    ],
+    "prescan_fov_vox": [
+        32,
+        32,
+        32
+    ],
+    "fold_override": 0,
+    "dataset": [
+        "mrxcat",
+        "./data/datasets/MRXCAT/prepared_files"
+    ],
+    "stage_override": 4
+}

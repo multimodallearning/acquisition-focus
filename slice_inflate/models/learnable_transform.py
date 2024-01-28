@@ -249,7 +249,9 @@ class AffineTransformModule(torch.nn.Module):
 
         return theta_a, theta_t, theta_z
 
-    def forward(self, x_soft_label, x_label, x_image, nifti_affine, grid_affine_pre_mlp, grid_affine_augment, theta_override=None):
+    def forward(self, x_soft_label, x_label, x_image, nifti_affine, grid_affine_pre_mlp,
+                # grid_affine_augment,
+                theta_override=None):
 
         x_soft_label_is_none = x_soft_label is None or x_soft_label.numel() == 0
         x_label_is_none = x_label is None or x_label.numel() == 0
@@ -312,7 +314,8 @@ class AffineTransformModule(torch.nn.Module):
             y_soft_label, grid_affine, transformed_nii_affine = nifti_grid_sample(x_soft_label, nifti_affine,
                 fov_mm=self.slice_fov_mm, fov_vox=self.slice_fov_vox, is_label=False,
                 pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
-                pre_grid_sample_hidden_affine=grid_affine_augment)
+                # pre_grid_sample_hidden_affine=grid_affine_augment
+            )
 
         with torch.no_grad():
             if not x_label_is_none:
@@ -320,14 +323,16 @@ class AffineTransformModule(torch.nn.Module):
                 y_label, _, _ = nifti_grid_sample(x_label, nifti_affine,
                     fov_mm=self.slice_fov_mm, fov_vox=self.slice_fov_vox, is_label=True,
                     pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
-                    pre_grid_sample_hidden_affine=grid_affine_augment)
+                    # pre_grid_sample_hidden_affine=grid_affine_augment
+                )
 
             if not x_image_is_none:
                 # nifti_affine is the affine of the original volume
                 y_image, _, _ = nifti_grid_sample(x_image, nifti_affine,
                     fov_mm=self.slice_fov_mm, fov_vox=self.slice_fov_vox, is_label=False,
                     pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
-                    pre_grid_sample_hidden_affine=grid_affine_augment)
+                    # pre_grid_sample_hidden_affine=grid_affine_augment
+                )
 
         # Make sure the grid_affines only contain rotational components
         # assert torch.allclose(

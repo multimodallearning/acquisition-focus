@@ -1,5 +1,5 @@
 {
-    "meta_config_id": 10,
+    "meta_config_id": 13,
     "sa_view": "axial",
     "hla_view": "coronal",
     "prescan_fov_mm": [
@@ -13,5 +13,11 @@
         32
     ],
     "clinical_view_affine_type": "from-segmented",
-    "label_slice_type": "from-segmented"
+    "label_slice_type": "from-segmented",
+    "fold_override": 0,
+    "dataset": [
+        "mrxcat",
+        "./data/datasets/MRXCAT/prepared_files"
+    ],
+    "use_autocast": false
 }

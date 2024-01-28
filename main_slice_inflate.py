@@ -35,8 +35,8 @@ THIS_SCRIPT_DIR = get_script_dir()
 
 os.environ['CACHE_PATH'] = str(Path(THIS_SCRIPT_DIR, '.cache'))
 
-from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
-os.environ.update(get_vars(os.environ.get('MY_CUDA_VISIBLE_DEVICES', '*')))
+from pytorch_run_on_recommended_gpu.run_on_recommended_gpu import get_cuda_environ_vars as get_vars
+os.environ.update(get_vars(os.environ.get('MY_CUDA_VISIBLE_DEVICES','0')))
 
 import torch
 torch.set_printoptions(sci_mode=False)
@@ -49,7 +49,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import wandb
 import nibabel as nib
-
+# import torch._dynamo
+# torch._dynamo.config.verbose=True
 import contextlib
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
@@ -157,6 +158,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
             init_dict['input_channels'] = num_classes*2
             init_dict['pool_op_kernel_sizes'][-1] = [2,2,2]
             init_dict['norm_op'] = nn.InstanceNorm3d
+            # init_dict['convolutional_upsampling'] = True
             nnunet_model = Generic_UNet_Hybrid(**init_dict, use_skip_connections=use_skip_connections, encoder_mode=enc_mode, decoder_mode=dec_mode)
         else:
             enc_mode = '3d'
@@ -213,8 +215,6 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
     scaler = amp.GradScaler()
 
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.995)
-
-
 
     if _path and not load_model_only:
         assert Path(_path).is_dir()
@@ -301,28 +301,42 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
     sa_cut_module.to(device)
     hla_cut_module.to(device)
 
+
+    def set_requires_grad(module_list, requires_grad=True):
+        for mod in module_list:
+            for param in mod.parameters():
+                param.requires_grad = requires_grad
+
+    set_requires_grad([sa_atm, hla_atm, sa_cut_module, hla_cut_module], False)
+
     if config.cuts_mode == 'sa':
-        transform_parameters = list(sa_atm.parameters()) + list(sa_cut_module.parameters())
-    elif config.cuts_mode == 'hla':
-        transform_parameters = list(hla_atm.parameters()) + list(hla_cut_module.parameters())
-    elif config.cuts_mode == 'sa>hla':
-        transform_parameters = list(hla_atm.parameters()) + list(hla_cut_module.parameters())
+        set_requires_grad([sa_atm.localisation_net, sa_cut_module], True)
+    elif config.cuts_mode in ['hla', 'sa>hla']:
+        set_requires_grad([hla_atm.localisation_net, hla_cut_module], True)
     elif config.cuts_mode == 'sa+hla':
-       transform_parameters = (
-            list(sa_atm.parameters())
-            + list(hla_atm.parameters())
-            + list(sa_cut_module.parameters())
-            + list(hla_cut_module.parameters())
-        )
+        set_requires_grad([
+            sa_atm.localisation_net, sa_cut_module,
+            hla_atm.localisation_net, hla_cut_module
+        ], True)
     else:
         raise ValueError()
+
+    transform_parameters = (
+        list(sa_atm.parameters())
+        + list(hla_atm.parameters())
+        + list(sa_cut_module.parameters())
+        + list(hla_cut_module.parameters())
+    )
+
+    # else:
+    #     raise ValueError()
 
     if config.train_affine_theta:
         assert config.use_affine_theta
 
     if config.train_affine_theta:
-        transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.0, lr=config.lr*1.5)
-        transform_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(transform_optimizer, T_0=int(config.epochs/3)+1)
+        transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=config.lr*2.0)
+        transform_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(transform_optimizer, T_0=int(config.epochs/4)+1)
     else:
         transform_optimizer = NoneOptimizer()
         transform_scheduler = None
@@ -340,7 +354,8 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
 
 
 # %%
-def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_pre_mlp, hidden_augment_affine,
+def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_pre_mlp,
+                    # hidden_augment_affine,
                     atm, cut_module, image=None, segment_fn=None):
 
     img_is_invalid = image is None or image.dim() == 0
@@ -356,7 +371,9 @@ def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_
             soft_label.view(B, num_classes, D, H, W),
             label.view(B, num_classes, D, H, W),
             image.view(B, 1, D, H, W),
-            nifti_affine, grid_affine_pre_mlp, hidden_augment_affine)
+            nifti_affine, grid_affine_pre_mlp,
+            # hidden_augment_affine
+        )
 
     # nib.Nifti1Image(image[0][0].cpu().numpy(), affine=nifti_affine.cpu()[0].numpy()).to_filename('out_img_volume.nii.gz')
     # nib.Nifti1Image(label_slc[0].argmax(0).detach().int().cpu().numpy(), affine=atm_nii_affine[0].detach().cpu().numpy()).to_filename('out_lbl_slice.nii.gz')
@@ -367,9 +384,19 @@ def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_
         assert not img_is_invalid and segment_fn is not None
         with torch.no_grad():
             # Beware: Label slice does not have gradients anymore
-            pred_slc = eo.rearrange(segment_fn(eo.rearrange(image_slc, 'B C D H 1 -> B C 1 D H'), get_zooms(atm_nii_affine)), 'B D H 1 -> B D H 1').long()
-            soft_label_slc = label_slc = eo.rearrange(F.one_hot(pred_slc, num_classes),
-                'B D H 1 OH -> B OH D H 1').to(soft_label_slc)
+            pred_slc = segment_fn(
+                eo.rearrange(image_slc, "B C D H 1 -> B C 1 D H"),
+                get_zooms(atm_nii_affine),
+            ).long()
+            if pred_slc.shape[-1] == 1:
+                pass
+            else:
+                pred_slc = eo.rearrange(
+                    pred_slc, "B 1 D H -> B D H 1"
+                )  # MRXCAT segment output is 1,1,128,128, MMWHS output is 1,32,32,1
+            soft_label_slc = label_slc = eo.rearrange(
+                F.one_hot(pred_slc, num_classes), "B D H 1 OH -> B OH D H 1"
+            ).to(soft_label_slc)
             # plt.imshow(image_slc[0].squeeze().cpu(), cmap='gray')
             # plt.imshow(label_slc[0].argmax(0).squeeze().cpu(), cmap='magma', alpha=.5, interpolation='none')
             # plt.savefig('slice_seg.png')
@@ -403,30 +430,35 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                         'B D H W OH -> B OH D H W')
     B,NUM_CLASSES,D,H,W = b_label.shape
 
-    if config.use_distance_map_localization:
-        b_soft_label = batch['additional_data']['label_distance_map']
-    else:
-        b_soft_label = b_label.float()
-
     nifti_affine = batch['additional_data']['nifti_affine']
     known_augment_affine = batch['additional_data']['known_augment_affine']
     hidden_augment_affine = batch['additional_data']['hidden_augment_affine']
+    base_affine = torch.as_tensor(b_view_affines['4CH']).view(B,4,4).to(known_augment_affine)
+
+    b_label, *_ = nifti_grid_sample(b_label, nifti_affine,
+        fov_mm=torch.as_tensor(config.hires_fov_mm), fov_vox=torch.as_tensor(config.hires_fov_vox),
+        is_label=True, pre_grid_sample_affine=base_affine)
+    b_soft_label = b_label
+    # TODO continue here and check
 
     sa_atm.use_affine_theta = config.use_affine_theta
     hla_atm.use_affine_theta = config.use_affine_theta
 
-    if 'sa' in config.cuts_mode:
-        ctx = torch.no_grad \
-            if config.cuts_mode == 'sa>hla' else contextlib.nullcontext # Do not use gradients when just inferring from SA view
-        with ctx():
-            if config.hla_view == 'RND':
-                # Get a random view offset from prealingned volumes
-                sa_input_grid_affine = torch.as_tensor(b_view_affines['4CH']).view(B,4,4)
-                sa_input_grid_affine = sa_input_grid_affine @ sa_atm.random_grid_affine
-                sa_input_grid_affine = sa_input_grid_affine.to(known_augment_affine)
-            else:
-                sa_input_grid_affine = torch.as_tensor(b_view_affines[config.sa_view]).view(B,4,4).to(known_augment_affine)
+    sa_input_grid_affine = base_affine.inverse() \
+        @ torch.as_tensor(b_view_affines[config.sa_view]).view(B,4,4).to(known_augment_affine) \
+        @ known_augment_affine
+    hla_input_grid_affine = base_affine.inverse() \
+        @ torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(known_augment_affine) \
+        @ known_augment_affine
 
+    if config.hla_view == 'RND':
+        # Get a random view offset from prealingned volumes
+        sa_input_grid_affine = sa_input_grid_affine @ sa_atm.random_grid_affine.to(known_augment_affine)
+        hla_input_grid_affine = hla_input_grid_affine @ hla_atm.random_grid_affine.to(known_augment_affine)
+
+    if 'sa' in config.cuts_mode:
+        sa_ctx = torch.no_grad if not sa_atm.training else contextlib.nullcontext
+        with sa_ctx():
             sa_image_slc, sa_label_slc, sa_grid_affine = \
                 get_transformed(
                     config,
@@ -434,34 +466,34 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                     b_label.view(B, NUM_CLASSES, D, H, W),
                     b_soft_label.view(B, NUM_CLASSES, D, H, W),
                     nifti_affine,
-                    sa_input_grid_affine @ known_augment_affine,
-                    hidden_augment_affine,
+                    sa_input_grid_affine,
+                    # hidden_augment_affine,
                     sa_atm, sa_cut_module,
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
+
+            # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
+            sa_grid_affine = sa_grid_affine.to(known_augment_affine) @ hidden_augment_affine
             # from matplotlib import pyplot as plt
             # plt.imshow(sa_label_slc[0].argmax(0).squeeze().cpu().numpy())
             # plt.savefig('sa_label_slc.png')
 
     if 'hla' in config.cuts_mode:
-        if config.hla_view == 'RND':
-            # Get a random view offset from prealingned volumes
-            hla_input_grid_affine = torch.as_tensor(b_view_affines['4CH']).view(B,4,4)
-            hla_input_grid_affine = hla_input_grid_affine @ hla_atm.random_grid_affine
-            hla_input_grid_affine = hla_input_grid_affine.to(known_augment_affine)
-        else:
-            hla_input_grid_affine = torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(known_augment_affine)
+        hla_ctx = torch.no_grad if not hla_atm.training else contextlib.nullcontext
+        with hla_ctx():
+            hla_image_slc, hla_label_slc, hla_grid_affine = \
+                get_transformed(
+                    config,
+                    phase,
+                    b_label.view(B, NUM_CLASSES, D, H, W),
+                    b_soft_label.view(B, NUM_CLASSES, D, H, W),
+                    nifti_affine,
+                    hla_input_grid_affine,
+                    # hidden_augment_affine,
+                    hla_atm, hla_cut_module,
+                    image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
+            # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
+            hla_grid_affine = hla_grid_affine.to(known_augment_affine) @ hidden_augment_affine
 
-        hla_image_slc, hla_label_slc, hla_grid_affine = \
-            get_transformed(
-                config,
-                phase,
-                b_label.view(B, NUM_CLASSES, D, H, W),
-                b_soft_label.view(B, NUM_CLASSES, D, H, W),
-                nifti_affine,
-                hla_input_grid_affine @ known_augment_affine,
-                hidden_augment_affine,
-                hla_atm, hla_cut_module,
-                image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
 
     if config.cuts_mode == 'sa':
         slices = [sa_label_slc, sa_label_slc]
@@ -488,8 +520,8 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
 
     b_target = b_label
 
-    b_input = b_input.to(device=config.device)
-    b_target = b_target.to(device=config.device)
+    # b_input = b_input.to(device=config.device)
+    # b_target = b_target.to(device=config.device)
 
     return b_input, b_target, grid_affines
 
@@ -561,11 +593,12 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cu
         elif config.model_type in ['unet', 'unet-wo-skip', 'hybrid-unet-wo-skip']:
             y_hat = model(b_input)
         elif config.model_type == 'hybrid-unet':
-            if 'stage-1' in wandb.run.name or 'stage-2' in wandb.run.name:
-                b_grid_affines[0], b_grid_affines[1] = b_grid_affines[0].detach(), b_grid_affines[1].detach()
+            b_grid_affines[0], b_grid_affines[1] = b_grid_affines[0].detach(), b_grid_affines[1].detach()
             y_hat = model(b_input, b_grid_affines)
         else:
             raise ValueError
+
+        torch.cuda.empty_cache()
 
         ### Calculate loss ###
         assert y_hat.dim() == 5, \
@@ -613,12 +646,15 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         model.train()
 
         if config.train_affine_theta:
-            if config.cuts_mode == 'sa>hla':
+            if 'sa' in config.cuts_mode and not config.cuts_mode == 'sa>hla':
+                sa_atm.train()
+            else:
                 sa_atm.eval()
+
+            if 'hla' in config.cuts_mode:
                 hla_atm.train()
             else:
-                sa_atm.train()
-                hla_atm.train()
+                hla_atm.eval()
         else:
             sa_atm.eval()
             hla_atm.eval()
@@ -640,9 +676,6 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     for batch_idx, batch in bbar:
         bbar.set_description(f"{phase}, {get_cuda_mem_info_str()}")
         if phase == 'train':
-            for opt in all_optimizers.values():
-                opt.zero_grad()
-
             y_hat, b_target, loss, b_input = model_step(
                 config, phase, epx,
                 model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
@@ -655,16 +688,38 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 regularization = torch.cat([r().view(1,1).to(device=loss.device) for r in r_params.values()]).sum()
 
             loss = loss + regularization
+            loss_accum = loss / config.num_grad_accum_steps
 
-            scaler.scale(loss).backward()
+            if config.use_autocast:
+                scaler.scale(loss_accum).backward()
+            else:
+                loss_accum.backward()
+
+            if (batch_idx+1) % config.num_grad_accum_steps != 0:
+                continue
+
+            if config.use_autocast:
+                for name, opt in all_optimizers.items():
+                    if name == 'transform_optimizer' and not config.train_affine_theta:
+                        continue
+                    scaler.step(opt)
+                scaler.update()
+                opt.zero_grad()
+            else:
+                # for mod in [sa_atm, hla_atm]:
+                #     # r_grad_params = [p.grad.view(-1) for p in mod.parameters() if p.requires_grad]
+                #     # if r_grad_params:
+                #         # all_grad_values = torch.cat(r_grad_params)
+                #     torch.nn.utils.clip_grad_norm_(mod.parameters(), .001)
+                for name, opt in all_optimizers.items():
+                    if name == 'transform_optimizer' and not config.train_affine_theta:
+                        continue
+                    opt.step()
+                    opt.zero_grad()
             # test_all_parameters_updated(model)
             # test_all_parameters_updated(sa_atm)
             # test_all_parameters_updated(hla_atm)
-            for name, opt in all_optimizers.items():
-                if name == 'transform_optimizer' and not config.train_affine_theta:
-                    continue
-                scaler.step(opt)
-            scaler.update()
+            epx_losses.append((loss_accum*config.num_grad_accum_steps).item())
 
         else:
             with torch.no_grad():
@@ -674,7 +729,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                     batch,
                     dataset.label_tags, class_weights, segment_fn, autocast_enabled)
 
-        epx_losses.append(loss.item())
+            epx_losses.append(loss.item())
 
         epx_input.update({k:v for k,v in zip(batch['id'], b_input.cpu())})
 
@@ -766,7 +821,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     print(f'losses/{phase}_loss', log_val)
 
     log_label_metrics(f"scores/{phase}_mean", '', seg_metrics_nanmean, global_idx,
-        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95', 'delta_vol_ml', 'delta_vol_rel'), print_selected_metrics=('dice'))
+        logger_selected_metrics=('dice', 'iou', 'hd', 'hd95', 'delta_vol_ml', 'delta_vol_rel'), print_selected_metrics=())
 
     log_label_metrics(f"scores/{phase}_std", '', seg_metrics_std, global_idx,
         logger_selected_metrics=('dice', 'iou', 'hd', 'hd95', 'delta_vol_ml', 'delta_vol_rel'), print_selected_metrics=())
@@ -792,7 +847,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         )
         sa_theta_ap_mean, sa_theta_t_offsets_mean, sa_theta_zp_mean = \
             log_affine_param_stats(ornt_log_prefix, '', sa_param_dict, global_idx,
-                logger_selected_metrics=('mean', 'std'), print_selected_metrics=('mean', 'std'))
+                logger_selected_metrics=('mean', 'std'), print_selected_metrics=())
         print()
 
         mean_transform_dict.update(
@@ -822,7 +877,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         )
         hla_theta_ap_mean, hla_theta_tp_mean, hla_theta_zp_mean = \
             log_affine_param_stats(ornt_log_prefix, '', hla_param_dict, global_idx,
-                logger_selected_metrics=('mean', 'std'), print_selected_metrics=('mean', 'std'))
+                logger_selected_metrics=('mean', 'std'), print_selected_metrics=())
         print()
 
         mean_transform_dict.update(
@@ -845,9 +900,6 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
     if config.do_output and epx_input:
         # Store the slice model input
         save_input = torch.stack(list(epx_input.values()))
-
-        if config.use_distance_map_localization:
-            save_input =  (save_input < 0.5).float()
 
         if 'hybrid' in config.model_type:
             num_classes = len(training_dataset.label_tags)
@@ -945,6 +997,10 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
     class_weights = None
 
     autocast_enabled = 'cuda' in config.device and config['use_autocast']
+
+    # c_model = torch.compile(model)
+    # c_sa_atm = torch.compile(sa_atm)
+    # c_hla_atm = torch.compile(hla_atm)
 
     for epx in range(epx_start, config.epochs):
         global_idx = get_global_idx(fold_idx, epx, config.epochs)
@@ -1080,21 +1136,20 @@ sweep_config_dict = dict(
 
 
 # %%
-def normal_run(config_dict, fold_properties, training_dataset, test_dataset):
-    rnd_name = randomname.get_name()
+def normal_run(run_name, config_dict, fold_properties, training_dataset, test_dataset):
+
     with wandb.init(project=PROJECT_NAME, group="training", job_type="train",
             config=config_dict, settings=wandb.Settings(start_method="thread"),
             mode=config_dict['wandb_mode']
         ) as run:
-        run.name = f"{NOW_STR}_{rnd_name}_{get_fold_postfix(fold_properties)}"
+        run.name = run_name
         print("Running", run.name)
         config = wandb.config
         run_dl(run.name, config, fold_properties, training_dataset=training_dataset, test_dataset=test_dataset)
 
 
 
-def stage_sweep_run(config_dict, fold_properties, all_stages, training_dataset, test_dataset):
-    rnd_name = randomname.get_name()
+def stage_sweep_run(run_name, config_dict, fold_properties, all_stages, training_dataset, test_dataset):
     for stage in all_stages:
         stg_idx = all_stages.idx
 
@@ -1110,7 +1165,7 @@ def stage_sweep_run(config_dict, fold_properties, all_stages, training_dataset, 
         with wandb.init(project=PROJECT_NAME, config=stage_config, settings=wandb.Settings(start_method="thread"),
             mode=stage_config['wandb_mode']) as run:
 
-            run.name = f"{NOW_STR}_{rnd_name}_stage-{stg_idx+1}_{get_fold_postfix(fold_properties)}"
+            run.name = f"{run_name}_stage-{stg_idx+1}"
             print("Running", run.name)
             config = wandb.config
 
@@ -1161,6 +1216,11 @@ def clean_sweep_dict(config_dict):
 def set_previous_stage_transform_chk(self):
     self['transform_model_checkpoint_path'] = self['save_path']
 
+
+
+def set_debug_stage_transform_chk(self):
+    assert self['epochs'] < 50, "Debug stage must not run for more than 50 epochs"
+    self['transform_model_checkpoint_path'] = "data/models/20240125__21_11_31_coal-adjugate_stage-1_fold-1_best"
 
 
 if __name__ == '__main__':
@@ -1238,9 +1298,13 @@ if __name__ == '__main__':
             selected_fold = config_dict['fold_override']
             fold_iter = fold_iter[selected_fold:selected_fold+1]
 
+    rnd_name = randomname.get_name()
+    run_name = f"{NOW_STR}_{rnd_name}"
+
     for fold_properties in fold_iter:
+        run_name_with_fold = run_name + f"_{get_fold_postfix(fold_properties)}"
         if config_dict['sweep_type'] is None:
-            normal_run(config_dict, fold_properties, training_dataset, test_dataset)
+            normal_run(run_name_with_fold, config_dict, fold_properties, training_dataset, test_dataset)
 
         elif config_dict['sweep_type'] == 'wandb_sweep':
             merged_sweep_config_dict = clean_sweep_dict(config_dict)
@@ -1264,7 +1328,6 @@ if __name__ == '__main__':
             all_params_stages = [
                 Stage( # Optimize SA
                     r_params=r_params,
-                    sa_atm=get_atm(config_dict, len(training_dataset.label_tags), 'sa'),
                     cuts_mode='sa',
                     epochs=int(config_dict['epochs']*1.5),
                     soft_cut_std=-999,
@@ -1276,7 +1339,6 @@ if __name__ == '__main__':
                 ),
                 Stage( # Optimize hla
                     r_params=r_params,
-                    hla_atm=get_atm(config_dict, len(training_dataset.label_tags), 'hla'),
                     cuts_mode='sa>hla',
                     epochs=int(config_dict['epochs']*1.5),
                     soft_cut_std=-999,
@@ -1317,7 +1379,7 @@ if __name__ == '__main__':
             else:
                 stage_iterator = StageIterator(selected_stages, verbose=True)
 
-            stage_sweep_run(config_dict, fold_properties, StageIterator(selected_stages, verbose=True),
+            stage_sweep_run(run_name_with_fold, config_dict, fold_properties, stage_iterator,
                             training_dataset=training_dataset, test_dataset=test_dataset)
 
         else:
