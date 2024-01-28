@@ -209,13 +209,13 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
 
     if 'int' in str(initial_dtype):
         volume = volume.to(dtype=dtype)
-        augmented_grid_affine = augmented_grid_affine.to(dtype=dtype)
+        grid_affine = grid_affine.to(dtype=dtype)
     else:
-        augmented_grid_affine = augmented_grid_affine.to(volume)
+        grid_affine = grid_affine.to(volume)
 
     with amp.autocast(enabled=False):
         grid = torch.nn.functional.affine_grid(
-            augmented_grid_affine[:,:3,:].view(B,3,4), target_shape, align_corners=False
+            grid_affine[:,:3,:].view(B,3,4), target_shape, align_corners=False
         )
 
     if is_label:
