@@ -703,10 +703,10 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 opt.zero_grad()
             else:
                 # for mod in [sa_atm, hla_atm]:
-                #     r_grad_params = [p.grad.view(-1) for p in mod.parameters() if p.requires_grad]
-                #     if r_grad_params:
-                #         all_grad_values = torch.cat(r_grad_params)
-                #         torch.nn.utils.clip_grad_value_(mod.parameters(), all_grad_values.abs().quantile(.95))
+                #     # r_grad_params = [p.grad.view(-1) for p in mod.parameters() if p.requires_grad]
+                #     # if r_grad_params:
+                #         # all_grad_values = torch.cat(r_grad_params)
+                #     torch.nn.utils.clip_grad_norm_(mod.parameters(), .001)
                 for name, opt in all_optimizers.items():
                     if name == 'transform_optimizer' and not config.train_affine_theta:
                         continue
@@ -1325,7 +1325,7 @@ if __name__ == '__main__':
                 Stage( # Optimize SA
                     r_params=r_params,
                     cuts_mode='sa',
-                    epochs=int(config_dict['epochs']*2.0),
+                    epochs=int(config_dict['epochs']*1.5),
                     soft_cut_std=-999,
                     do_augment=True,
                     use_affine_theta=True,
@@ -1336,7 +1336,7 @@ if __name__ == '__main__':
                 Stage( # Optimize hla
                     r_params=r_params,
                     cuts_mode='sa>hla',
-                    epochs=int(config_dict['epochs']*2.0),
+                    epochs=int(config_dict['epochs']*1.5),
                     soft_cut_std=-999,
                     do_augment=True,
                     use_affine_theta=True,

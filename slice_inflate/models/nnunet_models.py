@@ -58,7 +58,7 @@ class SkipConnector(torch.nn.Module):
             rescaled_sa_affines.to(self.dtype).inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
         )
         transformed_sa = checkpoint(torch.nn.functional.grid_sample,
-            x_sa, sa_grid.to(x_sa), 'bilinear', 'border', False
+            x_sa, sa_grid.to(x_sa), 'bilinear', 'zeros', False
         )
 
         # Grid sample second channel chunk with inverse HLA affines
@@ -67,10 +67,10 @@ class SkipConnector(torch.nn.Module):
         rescaled_hla_affines = rescale_rot_components_with_diag(rescaled_hla_affines, 1/get_zooms(rescaled_hla_affines))
 
         hla_grid = torch.nn.functional.affine_grid(
-            rescaled_hla_affines.to(self.dtype).inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
+            rescaled_hla_affines.to(self.dtype).inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False,
         )
         transformed_hla = checkpoint(torch.nn.functional.grid_sample,
-            x_hla, hla_grid.to(x_hla), 'bilinear', 'border', False
+            x_hla, hla_grid.to(x_hla), 'bilinear', 'zeros', False,
         )
 
         skip_out = torch.cat([transformed_sa, transformed_hla], dim=1)
