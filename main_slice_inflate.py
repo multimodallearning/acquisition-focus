@@ -49,7 +49,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import wandb
 import nibabel as nib
-
+# import torch._dynamo
+# torch._dynamo.config.verbose=True
 import contextlib
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
@@ -214,8 +215,6 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
     scaler = amp.GradScaler()
 
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.995)
-
-
 
     if _path and not load_model_only:
         assert Path(_path).is_dir()
@@ -995,8 +994,12 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
 
     autocast_enabled = 'cuda' in config.device and config['use_autocast']
 
+    # c_model = torch.compile(model)
+    # c_sa_atm = torch.compile(sa_atm)
+    # c_hla_atm = torch.compile(hla_atm)
+
     for epx in range(epx_start, config.epochs):
-        global_idx = get_global_idx(fold_idx, epx, config.epochs*10)
+        global_idx = get_global_idx(fold_idx, epx, config.epochs)
         # Log the epoch idx per fold - so we can recover the diagram by setting
         # ref_epoch_idx as x-axis in wandb interface
         print( f"### Log epoch {epx}/{config.epochs}")
@@ -1322,7 +1325,7 @@ if __name__ == '__main__':
                 Stage( # Optimize SA
                     r_params=r_params,
                     cuts_mode='sa',
-                    epochs=int(config_dict['epochs']*1.5),
+                    epochs=int(config_dict['epochs']*2.0),
                     soft_cut_std=-999,
                     do_augment=True,
                     use_affine_theta=True,
@@ -1333,7 +1336,7 @@ if __name__ == '__main__':
                 Stage( # Optimize hla
                     r_params=r_params,
                     cuts_mode='sa>hla',
-                    epochs=int(config_dict['epochs']*1.5),
+                    epochs=int(config_dict['epochs']*2.0),
                     soft_cut_std=-999,
                     do_augment=True,
                     use_affine_theta=True,
