@@ -66,7 +66,7 @@ def register_centroids(fixed_label, moving_label, DOF=6):
 
 
 def get_centroid_reorient_grid_affine(moving_label, ref_filepath):
-    DOF = 6
+    DOF = 7
     assert ref_filepath.is_file(), f"ref_filepath {ref_filepath} is not a file"
     fixed_label = torch.as_tensor(nib.load(ref_filepath).get_fdata()).int()
     pt_heart_affine = register_centroids(fixed_label, moving_label, DOF)

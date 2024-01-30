@@ -42,7 +42,7 @@ class SkipConnector(torch.nn.Module):
         if self.mode == 'repeat':
             x = torch.stack([x]*SPAT, dim=-1)
         elif self.mode == 'fill-sparse':
-            zer = torch.zeros(B,C,SPAT,SPAT,SPAT)
+            zer = torch.zeros(B,C,SPAT,SPAT,SPAT).to(x)
             zer[..., SPAT//2] = x
             x = zer
         else:
@@ -499,7 +499,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
         if self.is_hybrid:
             # x = x.unsqueeze(2).repeat(1,1,8,1,1) # TODO: automate calculation here
             # x = torch.stack(8*[x],dim=-1)
-            x = SkipConnector()(x, b_grid_affines)
+            x = SkipConnector(mode='fill-sparse')(x, b_grid_affines)
 
         for u in range(len(self.tu)):
             x = self.tu[u](x)
@@ -507,7 +507,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             if self.use_skip_connections:
                 if self.is_hybrid:
                     skip_2d = skips[-(u + 1)]
-                    skip_3d = SkipConnector()(skip_2d, b_grid_affines)
+                    skip_3d = SkipConnector(mode='fill-sparse')(skip_2d, b_grid_affines)
 
                     x = torch.cat((x, skip_3d), dim=1)
 
