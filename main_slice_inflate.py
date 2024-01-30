@@ -1335,7 +1335,7 @@ if __name__ == '__main__':
                 Stage( # Optimize SA
                     r_params=r_params,
                     cuts_mode='sa',
-                    epochs=int(config_dict['epochs']*2.0),
+                    epochs=int(config_dict['epochs']*1.0),
                     soft_cut_std=-999,
                     do_augment=True,
                     use_affine_theta=True,
@@ -1346,7 +1346,7 @@ if __name__ == '__main__':
                 Stage( # Optimize hla
                     r_params=r_params,
                     cuts_mode='sa>hla',
-                    epochs=int(config_dict['epochs']*2.0),
+                    epochs=int(config_dict['epochs']*1.0),
                     soft_cut_std=-999,
                     do_augment=True,
                     use_affine_theta=True,
