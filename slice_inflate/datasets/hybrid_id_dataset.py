@@ -416,7 +416,7 @@ class HybridIdDataset(Dataset):
                         self.modified_label_data_3d[label_id] = modified_label
 
 
-    def train(self, augment=True, use_modified=False):
+    def train(self, augment=True, use_modified=True):
         self.do_augment = augment
         self.use_modified = use_modified
 

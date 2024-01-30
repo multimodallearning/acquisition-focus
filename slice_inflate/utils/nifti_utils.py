@@ -137,9 +137,9 @@ def get_noop_ras_transfrom_mat(volume_affine, fov_vox_i):
     # This RAS matrix will not change the pixel orientations, nor the resulting nifti affine
     # (i.e. a quasi no-op for transformed voxel array no rotation,
     # but zoom is going on according to fov_mm, fov_vox)
-    fov_mm_center = torch.as_tensor(list(fov_vox_i)+ [1.]).to(volume_affine) / 2.
+    fov_vox_center = torch.as_tensor(list(fov_vox_i)+ [1.]).to(volume_affine) / 2.
     ras_transform_mat = torch.eye(4)[None].repeat(B,1,1).to(volume_affine)
-    ras_transform_mat[:,:3,-1] += fov_mm_center[:3]
+    ras_transform_mat[:,:3,-1] += fov_vox_center[:3]
 
     noop_mat = volume_affine @ ras_transform_mat
     # volume_affine.inverse() @ noop_mat

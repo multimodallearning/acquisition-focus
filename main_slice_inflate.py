@@ -421,25 +421,31 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
     b_label = batch['label']
     b_image = batch['image']
 
+    # Get affines
     if config['clinical_view_affine_type'] == 'from-gt':
         b_view_affines = batch['additional_data']['gt_view_affines']
     elif config['clinical_view_affine_type'] == 'from-segmented':
         b_view_affines = batch['additional_data']['prescan_view_affines']
+    nifti_affine = batch['additional_data']['nifti_affine']
+    known_augment_affine = batch['additional_data']['known_augment_affine']
+    hidden_augment_affine = batch['additional_data']['hidden_augment_affine']
+    base_affine = torch.as_tensor(b_view_affines['centroids']).to(known_augment_affine)
+
+    # Transform volume to output space
+    with torch.no_grad():
+        b_label, _, nifti_affine = nifti_grid_sample(b_label.unsqueeze(1), nifti_affine,
+            fov_mm=torch.as_tensor(config.hires_fov_mm), fov_vox=torch.as_tensor(config.hires_fov_vox),
+            is_label=True, pre_grid_sample_affine=base_affine)
+        b_image, _, nifti_affine = nifti_grid_sample(b_image.unsqueeze(1), nifti_affine,
+            fov_mm=torch.as_tensor(config.hires_fov_mm), fov_vox=torch.as_tensor(config.hires_fov_vox),
+            is_label=False, pre_grid_sample_affine=base_affine)
+        b_label = b_label.squeeze(1)
+        b_image = b_image.squeeze(1)
 
     b_label = eo.rearrange(F.one_hot(b_label, num_classes),
                         'B D H W OH -> B OH D H W')
     B,NUM_CLASSES,D,H,W = b_label.shape
-
-    nifti_affine = batch['additional_data']['nifti_affine']
-    known_augment_affine = batch['additional_data']['known_augment_affine']
-    hidden_augment_affine = batch['additional_data']['hidden_augment_affine']
-    base_affine = torch.as_tensor(b_view_affines['4CH']).view(B,4,4).to(known_augment_affine)
-
-    b_label, *_ = nifti_grid_sample(b_label, nifti_affine,
-        fov_mm=torch.as_tensor(config.hires_fov_mm), fov_vox=torch.as_tensor(config.hires_fov_vox),
-        is_label=True, pre_grid_sample_affine=base_affine)
-    b_soft_label = b_label
-    # TODO continue here and check
+    b_soft_label = b_label.float()
 
     sa_atm.use_affine_theta = config.use_affine_theta
     hla_atm.use_affine_theta = config.use_affine_theta

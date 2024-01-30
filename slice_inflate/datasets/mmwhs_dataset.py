@@ -23,6 +23,7 @@ from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
 from slice_inflate.utils.nifti_utils import crop_around_label_center, nifti_grid_sample, get_zooms
 from slice_inflate.utils.torch_utils import cut_slice, soft_cut_slice
 from slice_inflate.datasets.clinical_cardiac_views import get_clinical_cardiac_view_affines
+from slice_inflate.utils.register_centroids import get_centroid_reorient_grid_affine
 from slice_inflate.utils.nnunetv2_utils import get_segment_fn
 
 
@@ -97,18 +98,23 @@ class MMWHSDataset(HybridIdDataset):
 
             additional_data = self.additional_data_3d.get(_id, [])
 
-        # if self.use_modified:
-        #     if use_2d:
-        #         modified_label = self.modified_label_data_2d.get(
-        #             _id, label.detach().clone())
-        #     else:
-        #         modified_label = self.modified_label_data_3d.get(
-        #             _id, label.detach().clone())
-        # else:
-        #     modified_label = label.detach().clone()
+        if self.use_modified:
+            if use_2d:
+                modified_label = self.modified_label_data_2d.get(
+                    _id, label.detach().clone())
+            else:
+                modified_label = self.modified_label_data_3d.get(
+                    _id, label.detach().clone())
+        else:
+            modified_label = label.detach().clone()
 
-        # modified_label, _ = ensure_dense(modified_label)
-        # modified_label = modified_label.to(device=self.device)
+        image = image.to(device=self.device)
+        label = label.to(device=self.device)
+
+        modified_label, _ = ensure_dense(modified_label)
+        modified_label = modified_label.to(device=self.device)
+
+        augment_affine = None
 
         if self.augment_at_collate:
             raise NotImplementedError()
@@ -158,100 +164,8 @@ class MMWHSDataset(HybridIdDataset):
         patient_id = int(patient_id)
         mmwhs_id = f"{modality}_{patient_id:04d}"
 
-        is_label = type_str == 'label'
+        is_label = ('label' in type_str)
         return mmwhs_id, is_label
-
-    @staticmethod
-    def extract_2d_data(self_attributes: dict):
-
-        # Use only specific attributes of a dict to have a cacheable function
-        self = DotDict(self_attributes)
-
-        img_data_2d = {}
-        label_data_2d = {}
-        modified_label_data_2d = {}
-
-        if self.use_2d_normal_to == "D":
-            slice_dim = -3
-        elif self.use_2d_normal_to == "H":
-            slice_dim = -2
-        elif self.use_2d_normal_to == "W":
-            slice_dim = -1
-        elif self.use_2d_normal_to == "HLA/SA":
-            pass
-        else:
-            raise ValueError
-
-        if self.use_2d_normal_to:
-            raise NotImplementedError()
-
-        else:
-            for _3d_id, image in self.img_data_3d.items():
-                for idx, img_slc in [(slice_idx, image.select(slice_dim, slice_idx))
-                                    for slice_idx in range(image.shape[slice_dim])]:
-                    # Set data view for id like "003rW100"
-                    img_data_2d[f"{_3d_id}:{self.use_2d_normal_to}{idx:03d}"] = img_slc
-
-            for _3d_id, label in self.label_data_3d.items():
-                for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx))
-                                    for slice_idx in range(label.shape[slice_dim])]:
-                    # Set data view for id like "003rW100"
-                    label_data_2d[f"{_3d_id}:{self.use_2d_normal_to}{idx:03d}"] = lbl_slc
-
-            for _3d_id, label in self.modified_label_data_3d.items():
-                for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx))
-                                    for slice_idx in range(label.shape[slice_dim])]:
-                    # Set data view for id like "003rW100"
-                    modified_label_data_2d[f"{_3d_id}:{self.use_2d_normal_to}{idx:03d}"] = lbl_slc
-
-        # Postprocessing of 2d slices
-        print("Postprocessing 2D slices")
-        orig_2d_num = len(img_data_2d.keys())
-
-        if self.crop_around_2d_label_center is not None:
-            for _2d_id, img, label in \
-                    zip(img_data_2d.keys(), img_data_2d.values(), label_data_2d.values()):
-
-                img, label = crop_around_label_center(img, label,
-                                                    torch.as_tensor(
-                                                        self.crop_around_2d_label_center)
-                                                    )
-                img_data_2d[_2d_id] = img
-                label_data_2d[_2d_id] = label
-
-        if self.crop_2d_slices_gt_num_threshold > 0:
-            for key, label in list(label_data_2d.items()):
-                uniq_vals = label.unique()
-
-                if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
-                    # Delete 2D slices with less than n gt-pixels (but keep 3d data)
-                    del img_data_2d[key]
-                    del label_data_2d[key]
-                    del modified_label_data_2d[key]
-
-        postprocessed_2d_num = len(img_data_2d.keys())
-        print(
-            f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
-
-        nonzero_lbl_percentage = torch.tensor(
-            [lbl.sum((-2, -1)) > 0 for lbl in label_data_2d.values()]).sum()
-        nonzero_lbl_percentage = nonzero_lbl_percentage/len(label_data_2d)
-        print(f"Nonzero 2D labels: " f"{nonzero_lbl_percentage*100:.2f}%")
-
-        nonzero_mod_lbl_percentage = torch.tensor([ensure_dense(lbl)[0].sum(
-            (-2, -1)) > 0 for lbl in modified_label_data_2d.values()]).sum()
-        nonzero_mod_lbl_percentage = nonzero_mod_lbl_percentage / \
-            len(modified_label_data_2d)
-        print(
-            f"Nonzero modified 2D labels: " f"{nonzero_mod_lbl_percentage*100:.2f}%")
-        print(
-            f"Loader will use {postprocessed_2d_num} of {orig_2d_num} 2D slices.")
-
-        return dict(
-            img_data_2d=img_data_2d,
-            label_data_2d=label_data_2d,
-            modified_label_data_2d=modified_label_data_2d
-        )
 
 
     def set_segment_fn(self, fold_idx):
@@ -276,10 +190,6 @@ class MMWHSDataset(HybridIdDataset):
         if self.crop_3d_region is not None:
             self.crop_3d_region = torch.as_tensor(self.crop_3d_region)
 
-        files.extend(list(data_path.glob("**/*.nii.gz")))
-
-        files = sorted(files)
-
         if self.state.lower() == "train":
             files = split_dict['train_files']
 
@@ -291,6 +201,7 @@ class MMWHSDataset(HybridIdDataset):
         else:
             raise Exception(
                 "Unknown data state. Choose either 'train or 'test'")
+
 
         # First read filepaths
         img_paths = {}
@@ -331,6 +242,7 @@ class MMWHSDataset(HybridIdDataset):
         class_dict = {tag:idx for idx,tag in enumerate(self.label_tags)}
 
         prescan_seg_dices = []
+        fixed_ref_path = Path(THIS_SCRIPT_DIR, 'slice_inflate/datasets/ref_heart.nii.gz')
 
         for _3d_id, _file in tqdm(id_paths_to_load, desc=description):
             additional_data_3d[_3d_id] = additional_data_3d.get(_3d_id, {})
@@ -340,6 +252,8 @@ class MMWHSDataset(HybridIdDataset):
             tmp = torch.from_numpy(nib_tmp.get_fdata()).squeeze()
             loaded_nii_affine = torch.as_tensor(nib_tmp.affine)
 
+            # if is_label:
+            #     pre_gss.append(tmp)
             tmp, _, hires_nii_affine = nifti_grid_sample(
                 tmp.unsqueeze(0).unsqueeze(0),
                 loaded_nii_affine.view(1,4,4), ras_transform_mat=None,
@@ -372,6 +286,10 @@ class MMWHSDataset(HybridIdDataset):
                 view_affines = get_clinical_cardiac_view_affines(
                     tmp, hires_nii_affine, class_dict,
                     num_sa_slices=15, return_unrolled=True)
+
+                centroids_affine = get_centroid_reorient_grid_affine(tmp.int(), fixed_ref_path)
+                view_affines['centroids'] = centroids_affine
+
                 additional_data_3d[_3d_id]['gt_view_affines'] = view_affines
                 # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
                 # display_clinical_views(tmp[0,0], tmp[0,0].to_sparse(), hires_nii_affine[0], view_affines,
@@ -424,6 +342,9 @@ class MMWHSDataset(HybridIdDataset):
                 additional_data_3d[_3d_id]['prescan_view_affines'] = get_clinical_cardiac_view_affines(
                     additional_data_3d[_3d_id]['prescan_label'], additional_data_3d[_3d_id]['prescan_nii_affine'], class_dict,
                     num_sa_slices=15, return_unrolled=True)
+
+                prescan_centroids_affine = get_centroid_reorient_grid_affine(tmp.int(), fixed_ref_path)
+                additional_data_3d[_3d_id]['prescan_view_affines']['centroids'] = prescan_centroids_affine
                 # works
                 # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
                 # display_clinical_views(prescan, prescan_segmentation.to_sparse(), prescan_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
