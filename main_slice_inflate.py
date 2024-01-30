@@ -599,7 +599,7 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cu
         elif config.model_type in ['unet', 'unet-wo-skip', 'hybrid-unet-wo-skip']:
             y_hat = model(b_input)
         elif config.model_type == 'hybrid-unet':
-            b_grid_affines[0], b_grid_affines[1] = b_grid_affines[0].detach(), b_grid_affines[1].detach()
+            # b_grid_affines[0], b_grid_affines[1] = b_grid_affines[0].detach(), b_grid_affines[1].detach()
             y_hat = model(b_input, b_grid_affines)
         else:
             raise ValueError

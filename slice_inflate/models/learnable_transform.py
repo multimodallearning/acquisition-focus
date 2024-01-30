@@ -126,7 +126,6 @@ class AffineTransformModule(torch.nn.Module):
             size_3d=volume_fov_vox
         )
 
-        self.use_affine_theta = use_affine_theta
         self.tag = tag
         self.align_corners = align_corners
 
@@ -286,9 +285,9 @@ class AffineTransformModule(torch.nn.Module):
 
             if self.use_affine_theta:
                 theta_a_b, theta_t_b, theta_z_b = self.get_batch_affines(x_soft_label_pre_mlp) # Initial parameters are applied here as well
-                theta_a = theta_a_b @ theta_a
-                theta_t = theta_t_b @ theta_t
-                theta_z = theta_z_b @ theta_z
+                theta_a = theta_a @ theta_a_b
+                theta_t = theta_t @ theta_t_b
+                theta_z = theta_z @ theta_z_b
             else:
                 self.last_theta_ap = None
                 self.last_theta_t_offsets = None
@@ -297,7 +296,7 @@ class AffineTransformModule(torch.nn.Module):
                 self.last_theta_t = None
                 self.last_theta_z = None
 
-            theta = theta_z @ theta_a @ theta_t
+            theta = theta_t @ theta_a @ theta_z
 
             self.last_theta = theta
 
