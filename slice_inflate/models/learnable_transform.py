@@ -222,7 +222,8 @@ class AffineTransformModule(torch.nn.Module):
 
         # Translation matrix definition
         theta_t_offsets = self.get_gs_offsets_from_theta_tp(theta_tp)
-        # theta_t_offsets[:, 1:] = 0. # TODO check
+        if self.offset_clip_value == 0.:
+            theta_t_offsets = 0. * theta_t_offsets
         theta_t = torch.cat([theta_t_offsets, torch.ones(B, device=device).view(B,1)], dim=1)
         theta_t = torch.cat([
             torch.eye(4, device=device)[:4,:3].view(1,4,3).repeat(B,1,1),

@@ -14,7 +14,7 @@
     "sa_view": "2CH",
     "hla_view": "4CH",
     "offset_clip_value": 0.2,
-    "zoom_clip_value": 0.0,
+    "zoom_clip_value": 0.1,
     "affine_theta_optim_method": "R6-vector",
     "soft_cut_std": -999,
     "cuts_mode": "sa+hla",
