@@ -343,7 +343,7 @@ class MMWHSDataset(HybridIdDataset):
                     additional_data_3d[_3d_id]['prescan_label'], additional_data_3d[_3d_id]['prescan_nii_affine'], class_dict,
                     num_sa_slices=15, return_unrolled=True)
 
-                prescan_centroids_affine = get_centroid_reorient_grid_affine(tmp.int(), fixed_ref_path)
+                prescan_centroids_affine = get_centroid_reorient_grid_affine(tmp.int(), fixed_ref_path, DOF=6)
                 additional_data_3d[_3d_id]['prescan_view_affines']['centroids'] = prescan_centroids_affine
                 # works
                 # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views

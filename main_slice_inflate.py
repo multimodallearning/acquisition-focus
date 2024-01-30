@@ -336,7 +336,7 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
 
     if config.train_affine_theta:
         transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=config.lr*2.0)
-        transform_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(transform_optimizer, T_0=int(config.epochs/2)+1)
+        transform_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(transform_optimizer, T_0=int(config.epochs/4)+1)
     else:
         transform_optimizer = NoneOptimizer()
         transform_scheduler = None
@@ -1335,7 +1335,7 @@ if __name__ == '__main__':
                 Stage( # Optimize SA
                     r_params=r_params,
                     cuts_mode='sa',
-                    epochs=int(config_dict['epochs']*1.0),
+                    epochs=int(config_dict['epochs']*2.0),
                     soft_cut_std=-999,
                     do_augment=True,
                     use_affine_theta=True,
@@ -1346,7 +1346,7 @@ if __name__ == '__main__':
                 Stage( # Optimize hla
                     r_params=r_params,
                     cuts_mode='sa>hla',
-                    epochs=int(config_dict['epochs']*1.0),
+                    epochs=int(config_dict['epochs']*2.0),
                     soft_cut_std=-999,
                     do_augment=True,
                     use_affine_theta=True,
