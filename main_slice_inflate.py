@@ -1187,7 +1187,7 @@ def normal_run(run_name, config_dict, fold_properties, training_dataset, test_da
 
 def stage_sweep_run(run_name, config_dict, fold_properties, all_stages, training_dataset, test_dataset):
     for stage in all_stages:
-        stg_id = all_stages.stage_keys[all_stages.idx]
+        stg_id = all_stages.stage_keys[all_stages.idx-1]
 
         # Prepare stage settings
         stage.activate()
