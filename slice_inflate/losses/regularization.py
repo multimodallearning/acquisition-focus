@@ -7,31 +7,31 @@ class StageIterator(collections.abc.Iterator):
         super().__init__()
         self.stages = stages
         self.stage_keys = list(stages.keys())
-        self.previous = None
+        self.current = None
         self.idx = -1
         self.len = len(stages)
         self.verbose = verbose
 
     def __next__(self):
-        if self.previous is None:
-            # self.previous = self.stages.pop(0)
-            previous_key = self.stage_keys.pop(0)
-            self.previous = self.stages[previous_key]
+        if self.current is None:
+            # self.current = self.stages.pop(0)
+            self.current_key = self.stage_keys.pop(0)
+            self.current = self.stages[self.current_key]
         else:
             if not self.stage_keys: raise StopIteration()
             # nxt = self.stages.pop(0)
             nxt_key = self.stage_keys.pop(0)
             nxt = self.stages[nxt_key]
-            for key, value in self.previous.items():
+            for key, value in self.current.items():
                 if not key in nxt:
                     nxt[key] = value
-            previous_key = nxt_key
-            self.previous = nxt
+            self.current_key = nxt_key
+            self.current = nxt
         self.idx += 1
 
         if self.verbose:
-            print(f"Opening stage '{previous_key}' ({self.idx+1}/{self.len})")
-        return self.previous
+            print(f"Opening stage '{self.current_key}' ({self.idx+1}/{self.len})")
+        return self.current
 
 
 
