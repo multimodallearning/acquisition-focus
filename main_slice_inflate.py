@@ -444,7 +444,7 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
     elif config['clinical_view_affine_type'] == 'from-segmented':
         b_view_affines = batch['additional_data']['prescan_view_affines']
     nifti_affine = batch['additional_data']['nifti_affine']
-    base_affine = torch.as_tensor(b_view_affines['centroids']).to(b_label)
+    base_affine = torch.as_tensor(b_view_affines['centroids']).to(nifti_affine)
 
     # Transform volume to output space
     with torch.no_grad():
@@ -470,11 +470,11 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
     hla_input_grid_affine = base_affine.inverse() \
         @ torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(nifti_affine)
 
-    if config.do_augment_input_orientation:
+    if config.do_augment_input_orientation and phase in config.aug_phases:
         sa_input_grid_affine, hla_input_grid_affine = apply_affine_augmentation([sa_input_grid_affine, hla_input_grid_affine],
-            rotation_strength=0.,
+            rotation_strength=.1*config.sample_augment_strength,
             zoom_strength=.2*config.sample_augment_strength,
-            offset_strength=.1*config.sample_augment_strength,
+            offset_strength=0.,
         )
 
     if config.hla_view == 'RND':
@@ -498,11 +498,11 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
 
             # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
-            if config.do_augment_recon_orientation:
+            if config.do_augment_recon_orientation and phase in config.aug_phases:
                 sa_grid_affine = apply_affine_augmentation([sa_grid_affine],
-                    rotation_strength=0.,
+                    rotation_strength=.1*config.sample_augment_strength,
                     zoom_strength=.2*config.sample_augment_strength,
-                    offset_strength=.1*config.sample_augment_strength,
+                    offset_strength=0.,
                 )[0].to(nifti_affine)
 
             # from matplotlib import pyplot as plt
@@ -524,11 +524,11 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                     hla_atm, hla_cut_module,
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
             # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
-            if config.do_augment_recon_orientation:
+            if config.do_augment_recon_orientation and phase in config.aug_phases:
                 hla_grid_affine = apply_affine_augmentation([hla_grid_affine],
-                    rotation_strength=0.,
+                    rotation_strength=.1*config.sample_augment_strength,
                     zoom_strength=.2*config.sample_augment_strength,
-                    offset_strength=.1*config.sample_augment_strength,
+                    offset_strength=0.,
                 )[0].to(nifti_affine)
 
     if config.cuts_mode == 'sa':
@@ -695,7 +695,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             sa_atm.eval()
             hla_atm.eval()
 
-        dataset.train(augment=config.do_augment)
+        dataset.train()
     else:
         model.eval()
         sa_atm.eval()
@@ -1361,8 +1361,8 @@ if __name__ == '__main__':
                     'sa_offsets',
                 ], lambda_r=0.01)
 
-            all_params_stages = [
-                Stage( # Optimize SA
+            all_params_stages = dict(
+                opt_first=Stage( # Optimize SA
                     r_params=r_params,
                     cuts_mode='sa',
                     epochs=int(config_dict['epochs']*1.0),
@@ -1372,26 +1372,26 @@ if __name__ == '__main__':
                     do_output=True,
                     __activate_fn__=lambda self: None
                 ),
-                Stage( # Optimize hla
-                    r_params=r_params,
-                    cuts_mode='sa>hla',
-                    epochs=int(config_dict['epochs']*1.0),
-                    soft_cut_std=-999,
-                    use_affine_theta=True,
-                    train_affine_theta=True,
-                    do_output=True,
-                    __activate_fn__=set_previous_stage_transform_chk
-                ),
-                Stage( # Final optimized run
-                    do_output=True,
-                    cuts_mode='sa+hla',
-                    epochs=config_dict['epochs'],
-                    soft_cut_std=-999,
-                    use_affine_theta=True,
-                    train_affine_theta=False,
-                    __activate_fn__=set_previous_stage_transform_chk
-                ),
-                Stage( # Reference run
+                # opt_second=Stage( # Optimize hla
+                #     r_params=r_params,
+                #     cuts_mode='sa>hla',
+                #     epochs=int(config_dict['epochs']*1.0),
+                #     soft_cut_std=-999,
+                #     use_affine_theta=True,
+                #     train_affine_theta=True,
+                #     do_output=True,
+                #     __activate_fn__=set_previous_stage_transform_chk
+                # ),
+                # opt_both_fix=Stage( # Final optimized run
+                #     do_output=True,
+                #     cuts_mode='sa+hla',
+                #     epochs=config_dict['epochs'],
+                #     soft_cut_std=-999,
+                #     use_affine_theta=True,
+                #     train_affine_theta=False,
+                #     __activate_fn__=set_previous_stage_transform_chk
+                # ),
+                ref=Stage( # Reference run
                     do_output=True,
                     cuts_mode='sa+hla',
                     epochs=config_dict['epochs'],
@@ -1400,16 +1400,13 @@ if __name__ == '__main__':
                     use_affine_theta=False,
                     __activate_fn__=lambda self: None
                 ),
-            ]
+            )
 
             selected_stages = all_params_stages
 
             if 'stage_override' in config_dict and config_dict['stage_override'] is not None:
-                selected_stages = [all_params_stages[config_dict['stage_override']-1]]
-                stage_iterator = StageIterator(selected_stages, verbose=True)
-                stage_iterator.idx = config_dict['stage_override']-2
-            else:
-                stage_iterator = StageIterator(selected_stages, verbose=True)
+                selected_stages = {k:v for k,v in all_params_stages if config_dict['stage_override'] == k}
+            stage_iterator = StageIterator(selected_stages, verbose=True)
 
             stage_sweep_run(run_name_with_fold, config_dict, fold_properties, stage_iterator,
                             training_dataset=training_dataset, test_dataset=test_dataset)
