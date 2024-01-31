@@ -128,17 +128,18 @@ class MMWHSDataset(HybridIdDataset):
             hidden_augment_affine = torch.eye(4)
 
             if self.do_augment:
-                sample_augment_strength = self.self_attributes['sample_augment_strength']
-                known_augment_affine = get_random_affine(
-                    rotation_strength=0.,
-                    zoom_strength=.2*sample_augment_strength)
+                pass
+            #     sample_augment_strength = self.self_attributes['sample_augment_strength']
+            #     known_augment_affine = get_random_affine(
+            #         rotation_strength=0.,
+            #         zoom_strength=.2*sample_augment_strength)
 
-                hidden_augment_affine = get_random_affine(
-                    rotation_strength=sample_augment_strength * .02,
-                    zoom_strength=0.0)
+            #     hidden_augment_affine = get_random_affine(
+            #         rotation_strength=sample_augment_strength * .02,
+            #         zoom_strength=0.0)
 
-            additional_data['known_augment_affine'] = known_augment_affine.view(4,4)
-            additional_data['hidden_augment_affine'] = hidden_augment_affine.view(4,4)
+            # additional_data['known_augment_affine'] = known_augment_affine.view(4,4)
+            # additional_data['hidden_augment_affine'] = hidden_augment_affine.view(4,4)
 
         for key, val in additional_data.items():
             if isinstance(val, torch.Tensor):

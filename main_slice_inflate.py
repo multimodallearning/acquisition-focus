@@ -78,7 +78,7 @@ from slice_inflate.utils.nnunetv2_utils import get_segment_fn
 from slice_inflate.utils.nifti_utils import get_zooms
 from slice_inflate.models.nnunet_models import SkipConnector
 from slice_inflate.utils.nifti_utils import nifti_grid_sample, rescale_rot_components_with_diag, get_zooms
-
+from slice_inflate.models.learnable_transform import get_random_affine
 
 
 def prepare_data(config):
@@ -416,6 +416,23 @@ def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_
     return image_slc, soft_label_slc, grid_affine
 
 
+def apply_affine_augmentation(affine_list, zoom_strength=0.1, offset_strength=0.1, rotation_strength=0.1):
+    B = affine_list[0].shape[0]
+    b_affine = []
+    for _ in range(B):
+        augment_affine = get_random_affine(
+            rotation_strength=rotation_strength,
+            zoom_strength=zoom_strength,
+            offset_strength=offset_strength,
+        )
+        b_affine.append(augment_affine)
+    b_affine = torch.stack(b_affine)
+
+    for i in range(len(affine_list)):
+        affine_list[i] = affine_list[i] @ b_affine.to(affine_list[i])
+
+    return affine_list
+
 
 def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_module, hla_cut_module, segment_fn):
     b_label = batch['label']
@@ -427,16 +444,14 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
     elif config['clinical_view_affine_type'] == 'from-segmented':
         b_view_affines = batch['additional_data']['prescan_view_affines']
     nifti_affine = batch['additional_data']['nifti_affine']
-    known_augment_affine = batch['additional_data']['known_augment_affine']
-    hidden_augment_affine = batch['additional_data']['hidden_augment_affine']
-    base_affine = torch.as_tensor(b_view_affines['centroids']).to(known_augment_affine)
+    base_affine = torch.as_tensor(b_view_affines['centroids']).to(b_label)
 
     # Transform volume to output space
     with torch.no_grad():
         b_label, _, nifti_affine = nifti_grid_sample(b_label.unsqueeze(1), nifti_affine,
             fov_mm=torch.as_tensor(config.hires_fov_mm), fov_vox=torch.as_tensor(config.hires_fov_vox),
             is_label=True, pre_grid_sample_affine=base_affine)
-        b_image, _, nifti_affine = nifti_grid_sample(b_image.unsqueeze(1), nifti_affine,
+        b_image, _, _ = nifti_grid_sample(b_image.unsqueeze(1), nifti_affine,
             fov_mm=torch.as_tensor(config.hires_fov_mm), fov_vox=torch.as_tensor(config.hires_fov_vox),
             is_label=False, pre_grid_sample_affine=base_affine)
         b_label = b_label.squeeze(1)
@@ -451,16 +466,21 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
     hla_atm.use_affine_theta = config.use_affine_theta
 
     sa_input_grid_affine = base_affine.inverse() \
-        @ torch.as_tensor(b_view_affines[config.sa_view]).view(B,4,4).to(known_augment_affine) \
-        @ known_augment_affine
+        @ torch.as_tensor(b_view_affines[config.sa_view]).view(B,4,4).to(nifti_affine)
     hla_input_grid_affine = base_affine.inverse() \
-        @ torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(known_augment_affine) \
-        @ known_augment_affine
+        @ torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(nifti_affine)
+
+    if config.do_augment_input_orientation:
+        sa_input_grid_affine, hla_input_grid_affine = apply_affine_augmentation([sa_input_grid_affine, hla_input_grid_affine],
+            rotation_strength=0.,
+            zoom_strength=.2*config.sample_augment_strength,
+            offset_strength=.1*config.sample_augment_strength,
+        )
 
     if config.hla_view == 'RND':
         # Get a random view offset from prealingned volumes
-        sa_input_grid_affine = sa_input_grid_affine @ sa_atm.random_grid_affine.to(known_augment_affine)
-        hla_input_grid_affine = hla_input_grid_affine @ hla_atm.random_grid_affine.to(known_augment_affine)
+        sa_input_grid_affine = sa_input_grid_affine @ sa_atm.random_grid_affine.to(nifti_affine)
+        hla_input_grid_affine = hla_input_grid_affine @ hla_atm.random_grid_affine.to(nifti_affine)
 
     if 'sa' in config.cuts_mode:
         sa_ctx = torch.no_grad if not sa_atm.training else contextlib.nullcontext
@@ -478,7 +498,13 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
 
             # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
-            sa_grid_affine = sa_grid_affine.to(known_augment_affine) @ hidden_augment_affine
+            if config.do_augment_recon_orientation:
+                sa_grid_affine = apply_affine_augmentation([sa_grid_affine],
+                    rotation_strength=0.,
+                    zoom_strength=.2*config.sample_augment_strength,
+                    offset_strength=.1*config.sample_augment_strength,
+                )[0].to(nifti_affine)
+
             # from matplotlib import pyplot as plt
             # plt.imshow(sa_label_slc[0].argmax(0).squeeze().cpu().numpy())
             # plt.savefig('sa_label_slc.png')
@@ -498,8 +524,12 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                     hla_atm, hla_cut_module,
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
             # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
-            hla_grid_affine = hla_grid_affine.to(known_augment_affine) @ hidden_augment_affine
-
+            if config.do_augment_recon_orientation:
+                hla_grid_affine = apply_affine_augmentation([hla_grid_affine],
+                    rotation_strength=0.,
+                    zoom_strength=.2*config.sample_augment_strength,
+                    offset_strength=.1*config.sample_augment_strength,
+                )[0].to(nifti_affine)
 
     if config.cuts_mode == 'sa':
         slices = [sa_label_slc, sa_label_slc]
@@ -1337,7 +1367,6 @@ if __name__ == '__main__':
                     cuts_mode='sa',
                     epochs=int(config_dict['epochs']*1.0),
                     soft_cut_std=-999,
-                    do_augment=True,
                     use_affine_theta=True,
                     train_affine_theta=True,
                     do_output=True,
@@ -1348,7 +1377,6 @@ if __name__ == '__main__':
                     cuts_mode='sa>hla',
                     epochs=int(config_dict['epochs']*1.0),
                     soft_cut_std=-999,
-                    do_augment=True,
                     use_affine_theta=True,
                     train_affine_theta=True,
                     do_output=True,
@@ -1359,7 +1387,6 @@ if __name__ == '__main__':
                     cuts_mode='sa+hla',
                     epochs=config_dict['epochs'],
                     soft_cut_std=-999,
-                    do_augment=True,
                     use_affine_theta=True,
                     train_affine_theta=False,
                     __activate_fn__=set_previous_stage_transform_chk
@@ -1369,7 +1396,6 @@ if __name__ == '__main__':
                     cuts_mode='sa+hla',
                     epochs=config_dict['epochs'],
                     soft_cut_std=-999,
-                    do_augment=True,
                     train_affine_theta=False,
                     use_affine_theta=False,
                     __activate_fn__=lambda self: None
