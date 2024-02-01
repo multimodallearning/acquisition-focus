@@ -10,5 +10,5 @@ do
     log_file_name=$(basename $meta_config .json).log
 
     echo "Using meta-config $meta_config"
-    MY_CUDA_VISIBLE_DEVICES=4 python $main_script_path --meta_config_path $meta_config >> $SCRIPT_DIR/$log_file_name
+    MY_CUDA_VISIBLE_DEVICES=1 python $main_script_path --meta_config_path $meta_config >> $SCRIPT_DIR/$log_file_name
 done
