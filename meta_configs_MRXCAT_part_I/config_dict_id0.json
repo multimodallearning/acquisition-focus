@@ -1,7 +1,7 @@
 {
+    "meta_config_id": 0,
     "sa_view": "p2CH",
     "hla_view": "p4CH",
-    "meta_config_id": 0,
     "fold_override": 0,
     "dataset": [
         "mrxcat",
