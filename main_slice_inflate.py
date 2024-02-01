@@ -465,10 +465,19 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
     sa_atm.use_affine_theta = config.use_affine_theta
     hla_atm.use_affine_theta = config.use_affine_theta
 
-    sa_input_grid_affine = base_affine.inverse() \
-        @ torch.as_tensor(b_view_affines[config.sa_view]).view(B,4,4).to(nifti_affine)
-    hla_input_grid_affine = base_affine.inverse() \
-        @ torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(nifti_affine)
+    if config.sa_view == 'RND':
+        # Get a random view offset from prealingned volumes
+        sa_input_grid_affine = sa_atm.random_grid_affine.to(nifti_affine)
+    else:
+        sa_input_grid_affine = base_affine.inverse() \
+            @ torch.as_tensor(b_view_affines[config.sa_view]).view(B,4,4).to(nifti_affine)
+
+    if config.hla_view == 'RND':
+        # Get a random view offset from prealingned volumes
+        hla_input_grid_affine = hla_atm.random_grid_affine.to(nifti_affine)
+    else:
+        hla_input_grid_affine = base_affine.inverse() \
+            @ torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(nifti_affine)
 
     if config.do_augment_input_orientation and phase in config.aug_phases:
         sa_input_grid_affine, hla_input_grid_affine = apply_affine_augmentation([sa_input_grid_affine, hla_input_grid_affine],
@@ -477,10 +486,6 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
             offset_strength=0.,
         )
 
-    if config.hla_view == 'RND':
-        # Get a random view offset from prealingned volumes
-        sa_input_grid_affine = sa_input_grid_affine @ sa_atm.random_grid_affine.to(nifti_affine)
-        hla_input_grid_affine = hla_input_grid_affine @ hla_atm.random_grid_affine.to(nifti_affine)
 
     if 'sa' in config.cuts_mode:
         sa_ctx = torch.no_grad if not sa_atm.training else contextlib.nullcontext
