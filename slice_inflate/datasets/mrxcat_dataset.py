@@ -250,6 +250,8 @@ class MRXCATDataset(HybridIdDataset):
             file_id, is_label = MRXCATDataset.get_file_id(_file)
             nib_tmp = nib.load(_file)
             tmp = torch.from_numpy(nib_tmp.get_fdata()).squeeze()
+            if not is_label:
+                tmp = tmp.float()
             loaded_nii_affine = torch.as_tensor(nib_tmp.affine)
 
             tmp, _, hires_nii_affine = nifti_grid_sample(

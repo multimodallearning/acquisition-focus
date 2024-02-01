@@ -25,7 +25,7 @@ from slice_inflate.utils.torch_utils import cut_slice, soft_cut_slice
 from slice_inflate.datasets.clinical_cardiac_views import get_clinical_cardiac_view_affines
 from slice_inflate.utils.register_centroids import get_centroid_reorient_grid_affine
 from slice_inflate.utils.nnunetv2_utils import get_segment_fn
-
+import torch.cuda.amp as amp
 
 cache = Memory(location=os.environ['CACHE_PATH'])
 THIS_SCRIPT_DIR = get_script_dir()
@@ -251,6 +251,8 @@ class MMWHSDataset(HybridIdDataset):
             file_id, is_label = MMWHSDataset.get_file_id(_file)
             nib_tmp = nib.load(_file)
             tmp = torch.from_numpy(nib_tmp.get_fdata()).squeeze()
+            if not is_label:
+                tmp = tmp.float()
             loaded_nii_affine = torch.as_tensor(nib_tmp.affine)
 
             tmp, _, hires_nii_affine = nifti_grid_sample(

@@ -170,10 +170,6 @@ def get_segment_fn(model_training_output_path, fold, device):
             plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes
         )
 
-        return run_inference_on_image(b_image, b_spacing, network, parameters,
-            plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes
-        )
-
     return segment_closure
 
 def bounding_box_to_slice(bounding_box: List[List[int]]):
