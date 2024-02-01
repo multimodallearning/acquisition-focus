@@ -2,5 +2,5 @@
     "meta_config_id": 7,
     "sa_view": "RND",
     "hla_view": "RND",
-    "stage_override": 4
+    "stage_override": "ref"
 }

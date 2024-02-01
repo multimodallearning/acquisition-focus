@@ -29,5 +29,5 @@
         "mrxcat",
         "./data/datasets/MRXCAT/prepared_files"
     ],
-    "stage_override": 4
+    "stage_override": "ref"
 }

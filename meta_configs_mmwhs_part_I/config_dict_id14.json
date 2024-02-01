@@ -24,5 +24,5 @@
     ],
     "clinical_view_affine_type": "from-segmented",
     "label_slice_type": "from-segmented",
-    "stage_override": 4
+    "stage_override": "ref"
 }

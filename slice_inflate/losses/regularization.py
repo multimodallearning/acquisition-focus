@@ -14,12 +14,10 @@ class StageIterator(collections.abc.Iterator):
 
     def __next__(self):
         if self.current is None:
-            # self.current = self.stages.pop(0)
             self.current_key = self.stage_keys.pop(0)
             self.current = self.stages[self.current_key]
         else:
             if not self.stage_keys: raise StopIteration()
-            # nxt = self.stages.pop(0)
             nxt_key = self.stage_keys.pop(0)
             nxt = self.stages[nxt_key]
             for key, value in self.current.items():

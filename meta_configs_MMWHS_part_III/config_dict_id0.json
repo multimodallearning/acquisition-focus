@@ -2,5 +2,5 @@
     "meta_config_id": 0,
     "sa_view": "p2CH",
     "hla_view": "p4CH",
-    "stage_override": 4
+    "stage_override": "ref"
 }
