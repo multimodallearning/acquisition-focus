@@ -1405,7 +1405,7 @@ if __name__ == '__main__':
             selected_stages = all_params_stages
 
             if 'stage_override' in config_dict and config_dict['stage_override'] is not None:
-                selected_stages = {k:v for k,v in all_params_stages if config_dict['stage_override'] == k}
+                selected_stages = {k:v for k,v in all_params_stages.items() if config_dict['stage_override'] == k}
             stage_iterator = StageIterator(selected_stages, verbose=True)
 
             stage_sweep_run(run_name_with_fold, config_dict, fold_properties, stage_iterator,
