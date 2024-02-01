@@ -1372,25 +1372,25 @@ if __name__ == '__main__':
                     do_output=True,
                     __activate_fn__=lambda self: None
                 ),
-                # opt_second=Stage( # Optimize hla
-                #     r_params=r_params,
-                #     cuts_mode='sa>hla',
-                #     epochs=int(config_dict['epochs']*1.0),
-                #     soft_cut_std=-999,
-                #     use_affine_theta=True,
-                #     train_affine_theta=True,
-                #     do_output=True,
-                #     __activate_fn__=set_previous_stage_transform_chk
-                # ),
-                # opt_both_fix=Stage( # Final optimized run
-                #     do_output=True,
-                #     cuts_mode='sa+hla',
-                #     epochs=config_dict['epochs'],
-                #     soft_cut_std=-999,
-                #     use_affine_theta=True,
-                #     train_affine_theta=False,
-                #     __activate_fn__=set_previous_stage_transform_chk
-                # ),
+                opt_second=Stage( # Optimize hla
+                    r_params=r_params,
+                    cuts_mode='sa>hla',
+                    epochs=int(config_dict['epochs']*1.0),
+                    soft_cut_std=-999,
+                    use_affine_theta=True,
+                    train_affine_theta=True,
+                    do_output=True,
+                    __activate_fn__=set_previous_stage_transform_chk
+                ),
+                opt_both_fix=Stage( # Final optimized run
+                    do_output=True,
+                    cuts_mode='sa+hla',
+                    epochs=config_dict['epochs'],
+                    soft_cut_std=-999,
+                    use_affine_theta=True,
+                    train_affine_theta=False,
+                    __activate_fn__=set_previous_stage_transform_chk
+                ),
                 ref=Stage( # Reference run
                     do_output=True,
                     cuts_mode='sa+hla',
