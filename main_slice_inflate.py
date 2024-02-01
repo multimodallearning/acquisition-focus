@@ -467,14 +467,14 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
 
     if config.sa_view == 'RND':
         # Get a random view offset from prealingned volumes
-        sa_input_grid_affine = sa_atm.random_grid_affine.to(nifti_affine)
+        sa_input_grid_affine = sa_atm.random_grid_affine.repeat(B,1,1).to(nifti_affine)
     else:
         sa_input_grid_affine = base_affine.inverse() \
             @ torch.as_tensor(b_view_affines[config.sa_view]).view(B,4,4).to(nifti_affine)
 
     if config.hla_view == 'RND':
         # Get a random view offset from prealingned volumes
-        hla_input_grid_affine = hla_atm.random_grid_affine.to(nifti_affine)
+        hla_input_grid_affine = hla_atm.random_grid_affine.repeat(B,1,1).to(nifti_affine)
     else:
         hla_input_grid_affine = base_affine.inverse() \
             @ torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(nifti_affine)
