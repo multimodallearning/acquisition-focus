@@ -253,8 +253,6 @@ class MMWHSDataset(HybridIdDataset):
             tmp = torch.from_numpy(nib_tmp.get_fdata()).squeeze()
             loaded_nii_affine = torch.as_tensor(nib_tmp.affine)
 
-            # if is_label:
-            #     pre_gss.append(tmp)
             tmp, _, hires_nii_affine = nifti_grid_sample(
                 tmp.unsqueeze(0).unsqueeze(0),
                 loaded_nii_affine.view(1,4,4), ras_transform_mat=None,
