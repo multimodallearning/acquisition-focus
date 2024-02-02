@@ -8,9 +8,7 @@ import nibabel as nib
 from tqdm import tqdm
 from pathlib import Path
 from joblib import Memory
-import numpy as np
 import einops as eo
-from torch.utils.checkpoint import checkpoint
 
 import monai
 
@@ -21,12 +19,14 @@ from slice_inflate.utils.nifti_utils import nifti_grid_sample, get_zooms
 from slice_inflate.datasets.clinical_cardiac_views import get_clinical_cardiac_view_affines
 from slice_inflate.utils.register_centroids import get_centroid_reorient_grid_affine
 from slice_inflate.utils.nnunetv2_utils import get_segment_fn
+from slice_inflate.utils.torch_utils import get_batch_score_per_label
 from slice_inflate.utils.log_utils import log_oa_metrics, log_label_metrics
-from slice_inflate.utils.torch_utils import ensure_dense, get_batch_score_per_label, reduce_label_scores_epoch
 
 from slice_inflate.datasets.clinical_cardiac_views import get_class_volumes
 import monai
 
+from slice_inflate.utils.common_utils import DotDict
+from slice_inflate.utils.torch_utils import ensure_dense, get_batch_score_per_label, reduce_label_scores_epoch
 
 cache = Memory(location=os.environ['CACHE_PATH'])
 THIS_SCRIPT_DIR = get_script_dir()
@@ -368,10 +368,14 @@ class MRXCATDataset(HybridIdDataset):
                 # display_clinical_views(prescan, prescan_segmentation.to_sparse(), prescan_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
                 #                         output_to_file="my_output_lores.png", debug=False)
 
-        seg_metrics_nanmean_per_label, _, seg_metrics_nanmean_oa = reduce_label_scores_epoch(label_scores_dataset)[:3]
+        seg_metrics_nanmean_per_label, seg_metrics_std_per_label, seg_metrics_nanmean_oa, seg_metrics_std_oa  = reduce_label_scores_epoch(label_scores_dataset)
         log_label_metrics(f"dataset/prescan_mean", '', seg_metrics_nanmean_per_label, 0,
             logger_selected_metrics=(), print_selected_metrics=('dice', 'hd95'))
+        log_label_metrics(f"dataset/prescan_mean", '', seg_metrics_std_per_label, 0,
+            logger_selected_metrics=(), print_selected_metrics=('dice', 'hd95'))
         log_oa_metrics(f"dataset/prescan_mean_oa_exclude_bg", '', seg_metrics_nanmean_oa, 0,
+            logger_selected_metrics=(), print_selected_metrics=('dice', 'hd95'))
+        log_oa_metrics(f"dataset/prescan_mean_oa_exclude_bg", '', seg_metrics_std_oa, 0,
             logger_selected_metrics=(), print_selected_metrics=('dice', 'hd95'))
         print()
 

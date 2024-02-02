@@ -370,10 +370,14 @@ class MMWHSDataset(HybridIdDataset):
                 # display_clinical_views(prescan, prescan_segmentation.to_sparse(), prescan_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
                 #                         output_to_file="my_output_lores.png", debug=False)
 
-        seg_metrics_nanmean_per_label, _, seg_metrics_nanmean_oa = reduce_label_scores_epoch(label_scores_dataset)[:3]
+        seg_metrics_nanmean_per_label, seg_metrics_std_per_label, seg_metrics_nanmean_oa, seg_metrics_std_oa  = reduce_label_scores_epoch(label_scores_dataset)
         log_label_metrics(f"dataset/prescan_mean", '', seg_metrics_nanmean_per_label, 0,
             logger_selected_metrics=(), print_selected_metrics=('dice', 'hd95'))
+        log_label_metrics(f"dataset/prescan_mean", '', seg_metrics_std_per_label, 0,
+            logger_selected_metrics=(), print_selected_metrics=('dice', 'hd95'))
         log_oa_metrics(f"dataset/prescan_mean_oa_exclude_bg", '', seg_metrics_nanmean_oa, 0,
+            logger_selected_metrics=(), print_selected_metrics=('dice', 'hd95'))
+        log_oa_metrics(f"dataset/prescan_mean_oa_exclude_bg", '', seg_metrics_std_oa, 0,
             logger_selected_metrics=(), print_selected_metrics=('dice', 'hd95'))
         print()
 
