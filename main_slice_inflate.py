@@ -1291,7 +1291,6 @@ if __name__ == '__main__':
     THIS_REPO = Repo(THIS_SCRIPT_DIR)
     PROJECT_NAME = "slice_inflate"
 
-    training_dataset, test_dataset = None, None
     test_all_parameters_updated = get_test_func_all_parameters_updated()
     # %%
 
@@ -1307,16 +1306,14 @@ if __name__ == '__main__':
 
     run_test_once_only = not (config_dict.test_only_and_output_to in ["", None])
 
-    if training_dataset is None:
-        train_config = DotDict(config_dict.copy())
-        if run_test_once_only:
-            train_config['state'] = 'empty'
-        training_dataset = prepare_data(train_config)
+    train_config = DotDict(config_dict.copy())
+    if run_test_once_only:
+        train_config['state'] = 'empty'
+    training_dataset = prepare_data(train_config)
 
-    if test_dataset is None:
-        test_config = DotDict(config_dict.copy())
-        test_config['state'] = 'test'
-        test_dataset = prepare_data(test_config)
+    test_config = DotDict(config_dict.copy())
+    test_config['state'] = 'test'
+    test_dataset = prepare_data(test_config)
 
     # Configure folds
     if config_dict.num_folds < 1:

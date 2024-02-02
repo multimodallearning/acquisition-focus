@@ -1,31 +1,32 @@
 import os
-import time
-import glob
 import json
 import re
 import warnings
 import torch
-import torch.nn.functional as F
+
 import nibabel as nib
 from tqdm import tqdm
 from pathlib import Path
 from joblib import Memory
-import numpy as np
 import einops as eo
-from torch.utils.checkpoint import checkpoint
 
 import monai
 
 from slice_inflate.utils.common_utils import DotDict, get_script_dir
-from slice_inflate.utils.torch_utils import ensure_dense, restore_sparsity, calc_dist_map, get_rotation_matrix_3d_from_angles
-from slice_inflate.models.learnable_transform import get_random_affine
+from slice_inflate.utils.torch_utils import ensure_dense
 from slice_inflate.datasets.hybrid_id_dataset import HybridIdDataset
-from slice_inflate.utils.nifti_utils import crop_around_label_center, nifti_grid_sample, get_zooms
-from slice_inflate.utils.torch_utils import cut_slice, soft_cut_slice
+from slice_inflate.utils.nifti_utils import nifti_grid_sample, get_zooms
 from slice_inflate.datasets.clinical_cardiac_views import get_clinical_cardiac_view_affines
 from slice_inflate.utils.register_centroids import get_centroid_reorient_grid_affine
 from slice_inflate.utils.nnunetv2_utils import get_segment_fn
-import torch.cuda.amp as amp
+from slice_inflate.utils.torch_utils import get_batch_score_per_label
+from slice_inflate.utils.log_utils import log_oa_metrics, log_label_metrics
+
+from slice_inflate.datasets.clinical_cardiac_views import get_class_volumes
+import monai
+
+from slice_inflate.utils.common_utils import DotDict
+from slice_inflate.utils.torch_utils import ensure_dense, get_batch_score_per_label, reduce_label_scores_epoch
 
 cache = Memory(location=os.environ['CACHE_PATH'])
 THIS_SCRIPT_DIR = get_script_dir()
@@ -242,7 +243,7 @@ class MMWHSDataset(HybridIdDataset):
 
         class_dict = {tag:idx for idx,tag in enumerate(self.label_tags)}
 
-        prescan_seg_dices = []
+        label_scores_dataset = {}
         fixed_ref_path = Path(THIS_SCRIPT_DIR, 'slice_inflate/datasets/ref_heart.nii.gz')
 
         for _3d_id, _file in tqdm(id_paths_to_load, desc=description):
@@ -328,17 +329,10 @@ class MMWHSDataset(HybridIdDataset):
                 # Segment using nnunet v2 model
                 lores_spacing = get_zooms(prescan_nii_affine)
                 prescan_segmentation = segment_fn(prescan_image.cuda(), lores_spacing.view(1,3)).cpu()
+                prescan_segmentation = prescan_segmentation.permute(0,3,1,2)# NNUNET does sth weird with the dimensions
+                # permute(0,1,3,2).permute(0,2,1,3)
                 additional_data_3d[_3d_id]['prescan_image'] = prescan_image.squeeze()
                 additional_data_3d[_3d_id]['prescan_label'] = prescan_segmentation.squeeze()
-
-                oh_seg = torch.nn.functional.one_hot(
-                    prescan_segmentation.long(),
-                    len(self.label_tags)
-                ).permute(0,4,2,3,1)
-
-                gt = additional_data_3d[_3d_id]['prescan_gt']
-                D,H,W = gt.shape
-                prescan_seg_dices.append(monai.metrics.compute_dice(oh_seg, gt.view(1,1,D,H,W))[:,1:].mean())
 
                 additional_data_3d[_3d_id]['prescan_view_affines'] = get_clinical_cardiac_view_affines(
                     additional_data_3d[_3d_id]['prescan_label'], additional_data_3d[_3d_id]['prescan_nii_affine'], class_dict,
@@ -350,6 +344,19 @@ class MMWHSDataset(HybridIdDataset):
                 # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
                 # display_clinical_views(prescan, prescan_segmentation.to_sparse(), prescan_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
                 #                         output_to_file="my_output_lores.png", debug=False)
+
+                # Calculate dice score
+                prescan_seg_interp = torch.nn.functional.interpolate(prescan_segmentation[None], size=tmp.shape, mode='nearest')[0]
+                pred_prescan_seg_oh = eo.rearrange(torch.nn.functional.one_hot(prescan_seg_interp.long(), len(self.label_tags)), 'b d h w oh -> b oh d h w')
+                target_oh = eo.rearrange(torch.nn.functional.one_hot(label_data_3d[_3d_id][None].long(), len(self.label_tags)), 'b d h w oh -> b oh d h w')
+                case_dice = monai.metrics.compute_dice(pred_prescan_seg_oh, label_data_3d[_3d_id][None,None].long())
+                label_scores_dataset = get_batch_score_per_label(label_scores_dataset, 'dice',
+                    case_dice, self.label_tags, exclude_bg=True)
+
+                case_hd95 = monai.metrics.compute_hausdorff_distance(pred_prescan_seg_oh, target_oh, percentile=95) * get_zooms(loaded_nii_affine[None]).norm()
+                case_hd95 = torch.cat([torch.zeros(1,1).to(case_hd95), case_hd95], dim=1) # Add zero score for background
+                label_scores_dataset = get_batch_score_per_label(label_scores_dataset, 'hd95',
+                    case_hd95, self.label_tags, exclude_bg=True)
 
             elif is_label and self.clinical_view_affine_type == 'from-gt':
                 # Take GT for prescan
@@ -363,7 +370,11 @@ class MMWHSDataset(HybridIdDataset):
                 # display_clinical_views(prescan, prescan_segmentation.to_sparse(), prescan_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
                 #                         output_to_file="my_output_lores.png", debug=False)
 
-        print(f"Prescan segmentation mean FG dice: {torch.as_tensor(prescan_seg_dices).mean():.2f}")
+        seg_metrics_nanmean_per_label, _, seg_metrics_nanmean_oa = reduce_label_scores_epoch(label_scores_dataset)[:3]
+        log_label_metrics(f"dataset/prescan_mean", '', seg_metrics_nanmean_per_label, 0,
+            logger_selected_metrics=(), print_selected_metrics=('dice', 'hd95'))
+        log_oa_metrics(f"dataset/prescan_mean_oa_exclude_bg", '', seg_metrics_nanmean_oa, 0,
+            logger_selected_metrics=(), print_selected_metrics=('dice', 'hd95'))
         print()
 
         # Initialize 3d modified labels as unmodified labels
