@@ -1,0 +1,18 @@
+{
+    "meta_config_id": 13,
+    "sa_view": "axial",
+    "hla_view": "coronal",
+    "prescan_fov_mm": [
+        192.0,
+        192.0,
+        192.0
+    ],
+    "prescan_fov_vox": [
+        32,
+        32,
+        32
+    ],
+    "clinical_view_affine_type": "from-segmented",
+    "label_slice_type": "from-segmented",
+    "optimize_lv_only": true
+}

@@ -62,7 +62,7 @@
     ],
     "clinical_view_affine_type": "from-gt",
     "label_slice_type": "from-gt",
-    "optimize_lv_only": true,
+    "optimize_lv_only": false,
     "rotate_slice_to_min_principle": false,
     "max_load_3d_num": null,
     "lr": 0.001,
