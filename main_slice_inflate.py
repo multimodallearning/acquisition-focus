@@ -598,7 +598,7 @@ def kl_divergence(z, mean, std):
 
 
 
-def get_ae_loss_value(y_hat, y_target, class_weights):
+def get_ae_loss_value(y_hat, y_target):
     return DC_and_CE_loss({}, {})(y_hat, y_target.argmax(1, keepdim=True))
 
 
@@ -641,6 +641,11 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cu
 
         torch.cuda.empty_cache()
 
+        bg_lv_selector = torch.as_tensor(np.logical_or(
+            np.array(label_tags) == 'LV',
+            np.array(label_tags) == 'background')
+        )
+
         ### Calculate loss ###
         assert y_hat.dim() == 5, \
             f"Input shape for loss must be {5}D: BxNUM_CLASSESxSPATIAL but is {y_hat.shape}"
@@ -648,9 +653,15 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cu
             f"Target shape for loss must be {5}D: BxNUM_CLASSESxSPATIAL but is {b_target.shape}"
 
         if "vae" in type(model).__name__.lower():
-            loss = get_vae_loss_value(y_hat, b_target, z, mean, std, class_weights, model)
+            if config.optimize_lv_only:
+                loss = get_vae_loss_value(y_hat[:,bg_lv_selector], b_target[:,bg_lv_selector], z, mean, std, class_weights, model)
+            else:
+                loss = get_vae_loss_value(y_hat, b_target, z, mean, std, class_weights, model)
         else:
-            loss = get_ae_loss_value(y_hat, b_target, class_weights)
+            if config.optimize_lv_only:
+                loss = get_ae_loss_value(y_hat[:,bg_lv_selector], b_target[:,bg_lv_selector])
+            else:
+                loss = get_ae_loss_value(y_hat, b_target)
 
     return y_hat, b_target, loss, b_input
 
