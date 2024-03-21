@@ -1,7 +1,6 @@
 import os
 import json
 import re
-import warnings
 import torch
 
 import nibabel as nib
@@ -22,7 +21,6 @@ from slice_inflate.utils.nnunetv2_utils import get_segment_fn
 from slice_inflate.utils.torch_utils import get_batch_score_per_label
 from slice_inflate.utils.log_utils import log_oa_metrics, log_label_metrics
 
-from slice_inflate.datasets.clinical_cardiac_views import get_class_volumes
 import monai
 
 from slice_inflate.utils.common_utils import DotDict
@@ -46,11 +44,6 @@ class MMWHSDataset(HybridIdDataset):
                  **kwargs):
         self.state = state
 
-        if kwargs['use_2d_normal_to'] is not None:
-            warnings.warn(
-                "Static 2D data extraction for this dataset is skipped.")
-            kwargs['use_2d_normal_to'] = None
-
         if kwargs['use_binarized_labels']:
             label_tags=("background", "foreground")
 
@@ -66,46 +59,24 @@ class MMWHSDataset(HybridIdDataset):
         return _input
 
     def __getitem__(self, dataset_id, use_2d_override=None):
-        use_2d = self.use_2d(use_2d_override)
-        if isinstance(dataset_id, str) and use_2d:
-            dataset_idx = self.switch_2d_identifiers(dataset_id)
-        elif isinstance(dataset_id, str) and not use_2d:
+        if isinstance(dataset_id, str):
             dataset_idx = self.switch_3d_identifiers(dataset_id)
         else:
             dataset_idx = dataset_id
 
-        if use_2d:
-            all_ids = self.get_2d_ids()
-            _id = all_ids[dataset_idx]
-            image = self.img_data_2d.get(_id, torch.tensor([]))
-            label = self.label_data_2d.get(_id, torch.tensor([]))
+        all_ids = self.get_3d_ids()
+        _id = all_ids[dataset_idx]
+        image = self.img_data_3d.get(_id, torch.tensor([]))
+        label = self.label_data_3d.get(_id, torch.tensor([]))
 
-            # For 2D id cut last 4 "003rW100"
-            _3d_id = self.get_3d_from_2d_identifiers(_id)
-            image_path = self.img_paths.get(_3d_id)
-            label_path = self.label_paths.get(_3d_id, "")
+        image_path = self.img_paths[_id]
+        label_path = self.label_paths.get(_id, [])
 
-            # Additional data will only have ids for 3D samples
-            additional_data = self.additional_data_3d.get(_3d_id, "")
-
-        else:
-            all_ids = self.get_3d_ids()
-            _id = all_ids[dataset_idx]
-            image = self.img_data_3d.get(_id, torch.tensor([]))
-            label = self.label_data_3d.get(_id, torch.tensor([]))
-
-            image_path = self.img_paths[_id]
-            label_path = self.label_paths.get(_id, [])
-
-            additional_data = self.additional_data_3d.get(_id, [])
+        additional_data = self.additional_data_3d.get(_id, [])
 
         if self.use_modified:
-            if use_2d:
-                modified_label = self.modified_label_data_2d.get(
-                    _id, label.detach().clone())
-            else:
-                modified_label = self.modified_label_data_3d.get(
-                    _id, label.detach().clone())
+            modified_label = self.modified_label_data_3d.get(
+                _id, label.detach().clone())
         else:
             modified_label = label.detach().clone()
 
@@ -114,33 +85,6 @@ class MMWHSDataset(HybridIdDataset):
 
         modified_label, _ = ensure_dense(modified_label)
         modified_label = modified_label.to(device=self.device)
-
-        augment_affine = None
-
-        if self.augment_at_collate:
-            raise NotImplementedError()
-            # hla_image, hla_label = image, label
-            # sa_image_slc, sa_label_slc = torch.tensor([]), torch.tensor([])
-            # hla_image_slc, hla_label_slc = torch.tensor([]), torch.tensor([])
-            # sa_affine, hla_affine = torch.tensor([]), torch.tensor([])
-
-        else:
-            known_augment_affine = torch.eye(4)
-            hidden_augment_affine = torch.eye(4)
-
-            if self.do_augment:
-                pass
-            #     sample_augment_strength = self.self_attributes['sample_augment_strength']
-            #     known_augment_affine = get_random_affine(
-            #         rotation_strength=0.,
-            #         zoom_strength=.2*sample_augment_strength)
-
-            #     hidden_augment_affine = get_random_affine(
-            #         rotation_strength=sample_augment_strength * .02,
-            #         zoom_strength=0.0)
-
-            # additional_data['known_augment_affine'] = known_augment_affine.view(4,4)
-            # additional_data['hidden_augment_affine'] = hidden_augment_affine.view(4,4)
 
         for key, val in additional_data.items():
             if isinstance(val, torch.Tensor):
@@ -189,9 +133,6 @@ class MMWHSDataset(HybridIdDataset):
         with(split_file.open('r')) as split_file:
             split_dict = json.load(split_file)
 
-        if self.crop_3d_region is not None:
-            self.crop_3d_region = torch.as_tensor(self.crop_3d_region)
-
         if self.state.lower() == "train":
             files = split_dict['train_files']
 
@@ -199,10 +140,11 @@ class MMWHSDataset(HybridIdDataset):
             files = split_dict['test_files']
 
         elif self.state.lower() == "empty":
-            state_phantoms = []
+            files = []
+
         else:
             raise Exception(
-                "Unknown data state. Choose either 'train or 'test'")
+                "Unknown data state. Choose either 'train or 'test' or 'empty'")
 
 
         # First read filepaths
@@ -385,16 +327,6 @@ class MMWHSDataset(HybridIdDataset):
         for label_id in label_data_3d.keys():
             modified_label_data_3d[label_id] = label_data_3d[label_id]
 
-        # Postprocessing of 3d volumes
-        # if self.crop_around_3d_label_center is not None:
-        #     for _3d_id, img, label in \
-        #         zip(img_data_3d.keys(), img_data_3d.values(), label_data_3d.values()):
-        #         img, label = crop_around_label_center(img, label, \
-        #             torch.as_tensor(self.crop_around_3d_label_center)
-        #         )
-        #         img_data_3d[_3d_id] = img
-        #         label_data_3d[_3d_id] = label
-
         return dict(
             img_paths=img_paths,
             label_paths=label_paths,
@@ -403,7 +335,3 @@ class MMWHSDataset(HybridIdDataset):
             modified_label_data_3d=modified_label_data_3d,
             additional_data_3d=additional_data_3d
         )
-
-    @staticmethod
-    def replace_label_values(label):
-       raise NotImplementedError()

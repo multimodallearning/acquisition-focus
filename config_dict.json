@@ -1,6 +1,5 @@
 {
     "num_folds": 3,
-    "state": "train",
     "fold_override": null,
     "epochs": 80,
     "test_only_and_output_to": null,
@@ -18,7 +17,6 @@
     "offset_clip_value": 0.2,
     "zoom_clip_value": 0.0,
     "affine_theta_optim_method": "R6-vector",
-    "soft_cut_std": -999,
     "cuts_mode": "sa+hla",
     "use_2d_normal_to": null,
     "use_binarized_labels": false,
@@ -26,10 +24,6 @@
         "mmwhs",
         "./data/datasets/MMWHS/prepared_files"
     ],
-    "crop_3d_region": null,
-    "crop_2d_slices_gt_num_threshold": 0,
-    "crop_around_3d_label_center": null,
-    "crop_around_2d_label_center": null,
     "hires_fov_mm": [
         192.0,
         192.0,
@@ -64,11 +58,9 @@
     "label_slice_type": "from-gt",
     "optimize_lv_only": false,
     "rotate_slice_to_min_principle": false,
-    "max_load_3d_num": null,
     "lr": 0.001,
     "use_scheduling": true,
     "model_type": "hybrid-unet",
-    "encoder_training_only": false,
     "save_every": "best",
     "mdl_save_prefix": "data/models",
     "debug": false,

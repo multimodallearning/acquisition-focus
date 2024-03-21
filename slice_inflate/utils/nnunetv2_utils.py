@@ -4,7 +4,7 @@ from copy import deepcopy
 from contextlib import contextmanager
 import traceback
 import warnings
-# os.environ['CUDA_VISIBLE_DEVICES'] = '15'
+
 from typing import List, Tuple, Union
 import numpy as np
 
@@ -12,20 +12,14 @@ import torch
 import torch.nn as nn
 from torch._dynamo import OptimizedModule
 import torch.nn.functional as F
-import einops as eo
 
 from scipy.ndimage import gaussian_filter
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
 from nnunetv2.utilities.helpers import empty_cache, dummy_context
-from batchgenerators.dataloading.multi_threaded_augmenter import MultiThreadedAugmenter
-from nnunetv2.inference.predict_from_raw_data import load_trained_model_for_inference #,predict_from_data_iterator
-# from nnunetv2.inference.data_iterators import get_data_iterator_from_raw_npy_data
-# from nnunetv2.inference.data_iterators import PreprocessAdapterFromNpy
+from nnunetv2.inference.predict_from_raw_data import load_trained_model_for_inference
 
 from slice_inflate.utils.nifti_utils import nifti_grid_sample
-# from slice_inflate.utils.nnunetv2_utils import get_segment_fn
-# from slice_inflate.utils.nifti_utils import get_zooms
 
 NUM_PROCESSES = 3
 
@@ -121,23 +115,6 @@ def run_inference_on_image(b_image: torch.Tensor, b_spacing: torch.Tensor,
 
     return torch.as_tensor(np.array(seg)).to(b_image.device)
 
-    with suppress_stdout():
-        data = get_data_iterator_from_raw_npy_data([im for im in b_image.cpu().numpy()], None, properties, None,
-                                                   plans_manager, dataset_json, configuration_manager,
-                                                   num_processes=NUM_PROCESSES, pin_memory=False)
-
-        # configuration_manager.spacing = [1.5,1.5]
-        # configuration_manager.patch_size = [128,128]
-        # configuration_manager.normalization_schemes = ['ZScoreNormalization']
-
-        # data[0]['data'].shape == [1,1,160,160]
-        # data[0]['data'].mean() == 0.0
-        # data[0]['data'].std() == 1.0
-        seg = run_inference(data, network, parameters,
-            plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes,
-            device=b_image.device)
-    return torch.as_tensor(seg).to(b_image.device)
-
 
 
 def run_inference(data, network, parameters,
@@ -174,42 +151,6 @@ def get_segment_fn(model_training_output_path, fold, device):
 
 def bounding_box_to_slice(bounding_box: List[List[int]]):
     return tuple([slice(*i) for i in bounding_box])
-
-# def get_data_iterator_from_raw_npy_data(image_or_list_of_images: Union[np.ndarray, List[np.ndarray]],
-#                                         segs_from_prev_stage_or_list_of_segs_from_prev_stage: Union[None,
-#                                                                                                     np.ndarray,
-#                                                                                                     List[np.ndarray]],
-#                                         properties_or_list_of_properties: Union[dict, List[dict]],
-#                                         truncated_ofname: Union[str, List[str], None],
-#                                         plans_manager: PlansManager,
-#                                         dataset_json: dict,
-#                                         configuration_manager: ConfigurationManager,
-#                                         num_processes: int = 3,
-#                                         pin_memory: bool = False
-#                                         ):
-#     list_of_images = [image_or_list_of_images] if not isinstance(image_or_list_of_images, list) else \
-#         image_or_list_of_images
-
-#     if isinstance(segs_from_prev_stage_or_list_of_segs_from_prev_stage, np.ndarray):
-#         segs_from_prev_stage_or_list_of_segs_from_prev_stage = [segs_from_prev_stage_or_list_of_segs_from_prev_stage]
-
-#     if isinstance(truncated_ofname, str):
-#         truncated_ofname = [truncated_ofname]
-
-#     if isinstance(properties_or_list_of_properties, dict):
-#         properties_or_list_of_properties = [properties_or_list_of_properties]
-
-#     num_processes = min(num_processes, len(list_of_images))
-#     ppa = PreprocessAdapterFromNpy(list_of_images, segs_from_prev_stage_or_list_of_segs_from_prev_stage,
-#                                    properties_or_list_of_properties, truncated_ofname,
-#                                    plans_manager, dataset_json, configuration_manager, num_processes)
-#     if num_processes == 0:
-#         mta = SingleThreadedAugmenter(ppa, None)
-#     else:
-#         # raise NotImplementedError()
-#         mta = MultiThreadedAugmenter(ppa, None, num_processes, 1, None, pin_memory=pin_memory)
-#     return mta
-
 
 class SingleThreadedAugmenter(object):
     """

@@ -1,6 +1,0 @@
-{
-    "meta_config_id": "aug",
-    "do_augment_input_orientation": true,
-    "do_augment_recon_orientation": true,
-    "aug_phases": ["val"]
-}

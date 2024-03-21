@@ -124,53 +124,26 @@ def get_norms(model):
 
 
 
-def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, load_model_only=False, encoder_training_only=False):
+def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, load_model_only=False):
 
     device = config.device
-    assert config.model_type in ['vae', 'ae', 'hybrid-ae', 'unet', 'hybrid-unet', 'unet-wo-skip', 'hybrid-unet-wo-skip']
+    assert config.model_type in ['hybrid-unet']
     if not _path is None:
         _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
-    if config.model_type == 'vae':
-        model = BlendowskiVAE(std_max=10.0, epoch=0, epoch_reach_std_max=250,
-            in_channels=num_classes, out_channels=num_classes)
+    enc_mode = '2d'
+    dec_mode = '3d'
+    init_dict['use_onehot_input'] = False
+    init_dict['input_channels'] = num_classes*2
+    init_dict['pool_op_kernel_sizes'][-1] = [2,2,2]
+    init_dict['norm_op'] = nn.InstanceNorm3d
+    # init_dict['convolutional_upsampling'] = True
+    nnunet_model = Generic_UNet_Hybrid(**init_dict, use_skip_connections=True, encoder_mode=enc_mode, decoder_mode=dec_mode)
 
-    elif config.model_type == 'ae':
-        model = BlendowskiAE(in_channels=num_classes, out_channels=num_classes)
-
-    elif config.model_type == 'hybrid-ae':
-        model = HybridAE(in_channels=num_classes*2, out_channels=num_classes)
-
-    elif 'unet' in config.model_type:
-        assert config.model_type
-        init_dict_path = Path(THIS_SCRIPT_DIR, "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
-        with open(init_dict_path, 'rb') as f:
-            init_dict = dill.load(f)
-        init_dict['num_classes'] = num_classes
-        init_dict['deep_supervision'] = False
-        init_dict['final_nonlin'] = torch.nn.Identity()
-
-        use_skip_connections = True if not 'wo-skip' in config.model_type else False
-        if 'hybrid' in config.model_type:
-            enc_mode = '2d'
-            dec_mode = '3d'
-            init_dict['use_onehot_input'] = False
-            init_dict['input_channels'] = num_classes*2
-            init_dict['pool_op_kernel_sizes'][-1] = [2,2,2]
-            init_dict['norm_op'] = nn.InstanceNorm3d
-            # init_dict['convolutional_upsampling'] = True
-            nnunet_model = Generic_UNet_Hybrid(**init_dict, use_skip_connections=use_skip_connections, encoder_mode=enc_mode, decoder_mode=dec_mode)
-        else:
-            enc_mode = '3d'
-            dec_mode = '3d'
-            init_dict['use_onehot_input'] = True
-            # nnunet_model = Generic_UNet(**init_dict, use_skip_connections=use_skip_connections)
-            nnunet_model = Generic_UNet_Hybrid(**init_dict, use_skip_connections=use_skip_connections, encoder_mode=enc_mode, decoder_mode=dec_mode)
-
-        seg_outputs = list(filter(lambda elem: 'seg_outputs' in elem[0], nnunet_model.named_parameters()))
-        # Disable gradients of non-used deep supervision
-        for so_idx in range(len(seg_outputs)-1):
-            seg_outputs[so_idx][1].requires_grad = False
+    seg_outputs = list(filter(lambda elem: 'seg_outputs' in elem[0], nnunet_model.named_parameters()))
+    # Disable gradients of non-used deep supervision
+    for so_idx in range(len(seg_outputs)-1):
+        seg_outputs[so_idx][1].requires_grad = False
 
         class InterfaceModel(torch.nn.Module):
             def __init__(self, nnunet_model):
@@ -201,12 +174,6 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
     else:
         print(f"Generating fresh '{type(model).__name__}' model.")
         epx = 0
-
-    if encoder_training_only:
-        decoder_modules = filter(lambda elem: 'decoder' in elem[0], model.named_modules())
-        for nmod in decoder_modules:
-            for param in nmod[1].parameters():
-                param.requires_grad = False
 
     print(f"Trainable param count model: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
     print(f"Non-trainable param count model: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}")
@@ -289,12 +256,8 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
     else:
         hla_atm = get_atm(config, num_classes, view='hla', _path = _path)
 
-    if config['soft_cut_std'] > 0:
-        sa_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
-        hla_cut_module = SoftCutModule(soft_cut_softness=config['soft_cut_std'])
-    else:
-        sa_cut_module = HardCutModule()
-        hla_cut_module = HardCutModule()
+    sa_cut_module = HardCutModule()
+    hla_cut_module = HardCutModule()
 
     sa_atm.to(device)
     hla_atm.to(device)
@@ -528,6 +491,7 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                     # hidden_augment_affine,
                     hla_atm, hla_cut_module,
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
+
             # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
             if config.do_augment_recon_orientation and phase in config.aug_phases:
                 hla_grid_affine = apply_affine_augmentation([hla_grid_affine],
@@ -1021,8 +985,7 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
     mdl_chk_path = config.model_checkpoint_path if 'model_checkpoint_path' in config else None
     (model, optimizer, scheduler, scaler), epx_start = get_model(
         config, len(training_dataset), len(training_dataset.label_tags),
-        THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=mdl_chk_path, load_model_only=False,
-        encoder_training_only=config.encoder_training_only)
+        THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=mdl_chk_path, load_model_only=False)
 
     # Load transformation model from checkpoint, if any
     transform_mdl_chk_path = config.transform_model_checkpoint_path if 'transform_model_checkpoint_path' in config else None
@@ -1037,15 +1000,6 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
     all_schedulers = dict(scheduler=scheduler, transform_scheduler=transform_scheduler)
 
     r_params = stage['r_params'] if stage is not None and 'r_params' in stage else None
-    # all_bn_counts = torch.zeros([len(training_dataset.label_tags)], device='cpu')
-
-    # for bn_counts in training_dataset.bincounts_3d.values():
-    #     all_bn_counts += bn_counts
-
-    # class_weights = 1 / (all_bn_counts).float().pow(.35)
-    # class_weights /= class_weights.mean()
-
-    # class_weights = class_weights.to(device=config.device)
     class_weights = None
 
     autocast_enabled = 'cuda' in config.device and config['use_autocast']
@@ -1317,14 +1271,12 @@ if __name__ == '__main__':
 
     # Configure folds
     if config_dict.num_folds < 1:
-        train_idxs = range(training_dataset.__len__(use_2d_override=False))
+        train_idxs = range(len(training_dataset))
         val_idxs = []
         fold_idx = -1
         fold_iter = ([fold_idx, (train_idxs, val_idxs)],)
 
     else:
-        # kf = KFold(n_splits=config_dict.num_folds)
-        # fold_iter = enumerate(kf.split(range(training_dataset.__len__(use_2d_override=False))))
         fold_iter = []
         for fold_idx in range(config_dict.num_folds):
             current_fold_idxs = training_dataset.data_split['train_folds'][f"fold_{fold_idx}"]
@@ -1379,7 +1331,6 @@ if __name__ == '__main__':
                     r_params=r_params,
                     cuts_mode='sa',
                     epochs=int(config_dict['epochs']*1.0),
-                    soft_cut_std=-999,
                     use_affine_theta=True,
                     train_affine_theta=True,
                     do_output=True,
@@ -1389,7 +1340,6 @@ if __name__ == '__main__':
                     r_params=r_params,
                     cuts_mode='sa>hla',
                     epochs=int(config_dict['epochs']*1.0),
-                    soft_cut_std=-999,
                     use_affine_theta=True,
                     train_affine_theta=True,
                     do_output=True,
@@ -1399,7 +1349,6 @@ if __name__ == '__main__':
                     do_output=True,
                     cuts_mode='sa+hla',
                     epochs=config_dict['epochs'],
-                    soft_cut_std=-999,
                     use_affine_theta=True,
                     train_affine_theta=False,
                     __activate_fn__=set_previous_stage_transform_chk
@@ -1408,7 +1357,6 @@ if __name__ == '__main__':
                     do_output=True,
                     cuts_mode='sa+hla',
                     epochs=config_dict['epochs'],
-                    soft_cut_std=-999,
                     train_affine_theta=False,
                     use_affine_theta=False,
                     __activate_fn__=lambda self: None
