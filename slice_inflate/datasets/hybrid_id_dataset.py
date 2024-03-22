@@ -52,10 +52,6 @@ class HybridIdDataset(Dataset):
         self.self_attributes['modified_label_data_3d'] = self.modified_label_data_3d = all_3d_data_dict.pop('modified_label_data_3d', {})
         self.self_attributes['additional_data_3d'] = self.additional_data_3d = all_3d_data_dict.pop('additional_data_3d', {})
 
-        # Postprocessing of 3d volumes
-        print("Postprocessing 3D volumes")
-        orig_3d_num = len(self.label_data_3d.keys())
-
         if self.ensure_labeled_pairs:
             labeled_keys = set(self.label_data_3d.keys())
             unlabelled_imgs = set(self.img_data_3d.keys()) - labeled_keys
@@ -66,10 +62,7 @@ class HybridIdDataset(Dataset):
             for del_key in unlabelled_modified_labels:
                 del self.modified_label_data_3d[del_key]
 
-        postprocessed_3d_num = len(self.label_data_3d.keys())
-
-        print(f"Removed {orig_3d_num - postprocessed_3d_num} 3D images in postprocessing")
-        #check for consistency
+        # Check for consistency
         print(f"Equal image and label numbers: {set(self.img_data_3d)==set(self.label_data_3d)==set(self.modified_label_data_3d)} ({len(self.img_data_3d)})")
 
         # Now make sure dicts are ordered
@@ -132,11 +125,11 @@ class HybridIdDataset(Dataset):
     def get_3d_item(self, _3d_dataset_id):
         return self.__getitem__(_3d_dataset_id)
 
-    def train(self, use_modified=True):
-        self.use_modified = use_modified
+    def train(self):
+        pass
 
-    def eval(self, augment=False, use_modified=False):
-        self.train(augment, use_modified)
+    def eval(self):
+        pass
 
     @abstractmethod
     def get_file_id(file_path):

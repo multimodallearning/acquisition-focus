@@ -49,11 +49,9 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import wandb
 import nibabel as nib
-# import torch._dynamo
-# torch._dynamo.config.verbose=True
+
 import contextlib
 from matplotlib import pyplot as plt
-from mpl_toolkits.axes_grid1 import ImageGrid
 from slice_inflate.utils.nifti_utils import crop_around_label_center
 from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, \
     log_oa_metrics, log_affine_param_stats, log_frameless_image, get_cuda_mem_info_str
@@ -93,18 +91,23 @@ def prepare_data(config):
 
     kwargs = {k:v for k,v in config.items()}
 
+    cache_dir = 'git-' + config.git_commit.replace('!', '')
+    cache_path = Path(os.environ['CACHE_PATH'], cache_dir)
+    cache_path.mkdir(parents=True, exist_ok=True)
     arghash = joblib.hash(joblib.hash(args)+joblib.hash(kwargs))
-    cache_path = Path(os.environ['CACHE_PATH'], arghash, 'dataset.dil')
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if config.use_caching and cache_path.is_file():
-        print("Loading dataset from cache:", cache_path)
-        with open(cache_path, 'rb') as file:
-            dataset = dill.load(file)
+    hashfile = cache_path / f"argshash_{arghash}_dataset.dil"
+    if config.use_caching:
+        if cache_path.is_file():
+            print("Loading dataset from cache:", hashfile)
+            with open(cache_path, 'rb') as file:
+                dataset = dill.load(file)
+        else:
+            dataset = dataset_class(*args, **kwargs)
+            print("Caching dataset:", hashfile)
+            with open(cache_path, 'wb') as file:
+                dill.dump(dataset, file)
     else:
         dataset = dataset_class(*args, **kwargs)
-        with open(cache_path, 'wb') as file:
-            dill.dump(dataset, file)
 
     return dataset
 
@@ -133,6 +136,13 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
 
     enc_mode = '2d'
     dec_mode = '3d'
+
+    init_dict_path = Path(THIS_SCRIPT_DIR, "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
+    with open(init_dict_path, 'rb') as f:
+        init_dict = dill.load(f)
+    init_dict['num_classes'] = num_classes
+    init_dict['deep_supervision'] = False
+    init_dict['final_nonlin'] = torch.nn.Identity()
     init_dict['use_onehot_input'] = False
     init_dict['input_channels'] = num_classes*2
     init_dict['pool_op_kernel_sizes'][-1] = [2,2,2]
@@ -157,11 +167,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
                 else:
                     return y_hat
 
-        model = InterfaceModel(nnunet_model)
-
-    else:
-        raise ValueError
-
+    model = InterfaceModel(nnunet_model)
     model.to(device)
 
     if _path:
@@ -682,9 +688,6 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         hla_atm.eval()
         dataset.eval()
 
-    if isinstance(model, BlendowskiVAE):
-        model.set_epoch(epx)
-
     segment_fn = dataset.segment_fn
 
     bbar = tqdm(enumerate(dataloader), desc=phase, total=len(dataloader))
@@ -968,10 +971,8 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
 
     if not run_test_once_only:
         train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
-            sampler=train_subsampler, pin_memory=False, drop_last=True, # TODO Determine, why last batch is not transformed correctly
-            collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
+            sampler=train_subsampler, pin_memory=False, drop_last=True
         )
-        training_dataset.set_augment_at_collate(False) # CAUTION: THIS INTERFERES WITH GRADIENT COMPUTATION IN AFFINE MODULES
 
         val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
             sampler=val_subsampler, pin_memory=False, drop_last=False
