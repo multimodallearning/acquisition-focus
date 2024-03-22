@@ -62,6 +62,8 @@ from sklearn.model_selection import KFold
 import numpy as np
 import monai
 
+from related_works.epix2vox.epix2vox import EPix2VoxModel128, get_optimizer_and_scheduler
+
 from nnunetv2.training.loss.compound_losses import DC_and_CE_loss
 from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset
 from slice_inflate.datasets.mrxcat_dataset import MRXCATDataset
@@ -127,7 +129,7 @@ def get_norms(model):
 def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, load_model_only=False, encoder_training_only=False):
 
     device = config.device
-    assert config.model_type in ['vae', 'ae', 'hybrid-ae', 'unet', 'hybrid-unet', 'unet-wo-skip', 'hybrid-unet-wo-skip']
+    assert config.model_type in ['vae', 'ae', 'hybrid-ae', 'unet', 'hybrid-unet', 'unet-wo-skip', 'hybrid-unet-wo-skip', 'hybrid-EPix2Vox']
     if not _path is None:
         _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
@@ -186,6 +188,31 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
 
         model = InterfaceModel(nnunet_model)
 
+    elif config.model_type == 'hybrid-EPix2Vox':
+        epix_model = EPix2VoxModel128(
+            use_merger=True, use_refiner=True, n_views=2,
+            epoch_start_use_merger=0, epoch_start_use_refiner=0
+        )
+
+        class EPix2Vox_InterfaceModel(torch.nn.Module):
+            def __init__(self, epix_model):
+                super().__init__()
+                self.epix_model = epix_model
+
+            def forward(self, *args, **kwargs):
+                input, epx = args
+                slice_fg = [slc[:,1:].sum(dim=1, keepdim=True) for slc in input.chunk(2, dim=1)]
+                slices = torch.cat(slice_fg, dim=1)
+                slices = torch.nn.functional.interpolate(slices, size=[224,224])
+                B,N_SLICES,SPAT_H,SPAT_W = slices.shape
+                slices = slices.view(B,N_SLICES,1,SPAT_H,SPAT_W).repeat(1,1,3,1,1) * 255.
+                y_hat = self.epix_model(slices, epx)
+                y_hat = y_hat.view(B,1,128,128,128)
+                y_hat = torch.cat([1.-y_hat, y_hat], dim=1) # Create bg / fg channels
+                return y_hat
+
+        model = EPix2Vox_InterfaceModel(epix_model)
+
     else:
         raise ValueError
 
@@ -211,10 +238,14 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
     print(f"Trainable param count model: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
     print(f"Non-trainable param count model: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}")
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+    if config.model_type == 'hybrid-EPix2Vox':
+        optimizer, scheduler = get_optimizer_and_scheduler(model.epix_model.encoder, model.epix_model.decoder, model.epix_model.merger, model.epix_model.refiner)
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.995)
+
     scaler = amp.GradScaler()
 
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.995)
 
     if _path and not load_model_only:
         assert Path(_path).is_dir()
@@ -634,8 +665,12 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cu
         elif config.model_type in ['unet', 'unet-wo-skip', 'hybrid-unet-wo-skip']:
             y_hat = model(b_input)
         elif config.model_type == 'hybrid-unet':
-            # b_grid_affines[0], b_grid_affines[1] = b_grid_affines[0].detach(), b_grid_affines[1].detach()
             y_hat = model(b_input, b_grid_affines)
+        elif config.model_type == 'hybrid-EPix2Vox':
+            y_hat = model(b_input, epx)
+            target_bg = b_target[:,0:1]
+            target_fg = b_target[:,1:].sum(dim=1, keepdim=True) # Only binary labels are supported
+            b_target = torch.cat([target_bg, target_fg], dim=1)
         else:
             raise ValueError
 
@@ -725,6 +760,11 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
     bbar = tqdm(enumerate(dataloader), desc=phase, total=len(dataloader))
     lst_mem = {}
+    if config.model_type == 'hybrid-EPix2Vox':
+        eval_label_tags = ('background', 'foreground')
+    else:
+        eval_label_tags = dataset.label_tags
+
     for batch_idx, batch in bbar:
         bbar.set_description(f"{phase}, {get_cuda_mem_info_str()}")
         if phase == 'train':
@@ -816,39 +856,39 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         # nifti_zooms = (nii_output_affine[:3,:3]*nii_output_affine[:3,:3]).sum(1).sqrt().detach().cpu()
 
         # Calculate fast dice score
-        pred_seg_oh = eo.rearrange(torch.nn.functional.one_hot(pred_seg, len(training_dataset.label_tags)), 'b d h w oh -> b oh d h w')
+        pred_seg_oh = eo.rearrange(torch.nn.functional.one_hot(pred_seg, len(eval_label_tags)), 'b d h w oh -> b oh d h w')
 
         b_dice = monai.metrics.compute_dice(pred_seg_oh, b_target)
 
         label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'dice',
-            b_dice, training_dataset.label_tags, exclude_bg=True)
+            b_dice, eval_label_tags, exclude_bg=True)
 
         if (epx % 20 == 0 and epx > 0) or (epx+1 == config.epochs) or config.debug or config.test_only_and_output_to:
             b_sz = pred_seg_oh.shape[0]
 
             b_iou = monai.metrics.compute_iou(pred_seg_oh, b_target)
             label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'iou',
-                b_iou, training_dataset.label_tags, exclude_bg=True)
+                b_iou, eval_label_tags, exclude_bg=True)
 
             b_hd = monai.metrics.compute_hausdorff_distance(pred_seg_oh, b_target) * nifti_zooms.norm()
             b_hd = torch.cat([torch.zeros(b_sz,1).to(b_hd), b_hd], dim=1) # Add zero score for background
             label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd',
-                b_hd, training_dataset.label_tags, exclude_bg=True)
+                b_hd, eval_label_tags, exclude_bg=True)
 
             b_hd95 = monai.metrics.compute_hausdorff_distance(pred_seg_oh, b_target, percentile=95) * nifti_zooms.norm()
             b_hd95 = torch.cat([torch.zeros(b_sz,1).to(b_hd95), b_hd95], dim=1) # Add zero score for background
             label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'hd95',
-                b_hd95, training_dataset.label_tags, exclude_bg=True)
+                b_hd95, eval_label_tags, exclude_bg=True)
 
-            b_vol_ml = get_class_volumes(pred_seg, nifti_zooms, len(training_dataset.label_tags), unit='ml')
-            b_vol_ml_target = get_class_volumes(b_target.argmax(1), nifti_zooms, len(training_dataset.label_tags), unit='ml')
+            b_vol_ml = get_class_volumes(pred_seg, nifti_zooms, len(eval_label_tags), unit='ml')
+            b_vol_ml_target = get_class_volumes(b_target.argmax(1), nifti_zooms, len(eval_label_tags), unit='ml')
 
             b_vol_diff = (b_vol_ml - b_vol_ml_target).abs()
             b_vol_rel_diff = (b_vol_diff / b_vol_ml_target)
             label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'delta_vol_ml',
-                b_vol_diff, training_dataset.label_tags, exclude_bg=True)
+                b_vol_diff, eval_label_tags, exclude_bg=True)
             label_scores_epoch = get_batch_score_per_label(label_scores_epoch, 'delta_vol_rel',
-                b_vol_rel_diff, training_dataset.label_tags, exclude_bg=True)
+                b_vol_rel_diff, eval_label_tags, exclude_bg=True)
 
         if store_net_output_to not in ["", None]:
             store_path = Path(store_net_output_to, f"output_batch{batch_idx:05d}.pth")
@@ -954,7 +994,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         save_input = torch.stack(list(epx_input.values()))
 
         if 'hybrid' in config.model_type:
-            num_classes = len(training_dataset.label_tags)
+            num_classes = len(eval_label_tags)
             save_input = save_input.chunk(2,dim=1)
             save_input = torch.cat([slc.argmax(1, keepdim=True) for slc in save_input], dim=1)
 
