@@ -1,7 +1,0 @@
-{
-    "meta_config_id": 2,
-    "sa_view": "2CH",
-    "hla_view": "SA-7",
-    "stage_override": "ref",
-    "model_type": "hybrid-EPix2Vox"
-}

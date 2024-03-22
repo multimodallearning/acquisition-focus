@@ -51,9 +51,6 @@ class MMWHSDataset(HybridIdDataset):
                 "Static 2D data extraction for this dataset is skipped.")
             kwargs['use_2d_normal_to'] = None
 
-        if kwargs['use_binarized_labels']:
-            label_tags=("background", "foreground")
-
         self.nnunet_segment_model_path = "/home/weihsbach/storage/staff/christianweihsbach/nnunet/nnUNetV2_results/Dataset671_MMWHS_ac_focus/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d"
         kwargs['nnunet_segment_model_path'] = self.nnunet_segment_model_path
 
@@ -269,11 +266,7 @@ class MMWHSDataset(HybridIdDataset):
             hires_nii_affine = hires_nii_affine[0]
 
             if is_label:
-                if self.use_binarized_labels:
-                    bin_tmp = tmp.clone()
-                    bin_tmp[bin_tmp>0] = 1.0
-                    label_data_3d[_3d_id] = bin_tmp.long()
-                else:
+
                     label_data_3d[_3d_id] = tmp.long()
 
             else:

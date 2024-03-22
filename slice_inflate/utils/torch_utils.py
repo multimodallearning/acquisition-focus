@@ -698,3 +698,10 @@ def soft_cut_slice(b_volume, std=50.0):
     b_volume = (b_volume * probs.view(W,1,1,1,1)).sum(0, keepdim=True)
 
     return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
+
+
+
+def get_binarized_from_onehot_label(onehot_label):
+    onehot_bg = onehot_label[:,0:1]
+    onehot_fg = onehot_label[:,1:].sum(dim=1, keepdim=True)
+    return torch.cat([onehot_bg, onehot_fg], dim=1)

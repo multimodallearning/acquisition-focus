@@ -71,7 +71,7 @@ from slice_inflate.datasets.mrxcat_dataset import MRXCATDataset
 from slice_inflate.utils.common_utils import DotDict, in_notebook
 from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
     get_batch_dice_over_all, get_batch_score_per_label, save_model, \
-    reduce_label_scores_epoch, get_test_func_all_parameters_updated, anomaly_hook, cut_slice
+    reduce_label_scores_epoch, get_test_func_all_parameters_updated, anomaly_hook, cut_slice, get_binarized_from_onehot_label
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.models.learnable_transform import AffineTransformModule, SoftCutModule, HardCutModule, get_random_ortho6_vector
 from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
@@ -667,10 +667,8 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cu
         elif config.model_type == 'hybrid-unet':
             y_hat = model(b_input, b_grid_affines)
         elif config.model_type == 'hybrid-EPix2Vox':
+            assert config.use_binarized_labels == True, "EPix2Vox only supports binary labels."
             y_hat = model(b_input, epx)
-            target_bg = b_target[:,0:1]
-            target_fg = b_target[:,1:].sum(dim=1, keepdim=True) # Only binary labels are supported
-            b_target = torch.cat([target_bg, target_fg], dim=1)
         else:
             raise ValueError
 
@@ -680,6 +678,10 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cu
             np.array(label_tags) == 'LV',
             np.array(label_tags) == 'background')
         )
+
+        if config.use_binarized_labels:
+            b_target = get_binarized_from_onehot_label(b_target)
+            y_hat = get_binarized_from_onehot_label(y_hat)
 
         ### Calculate loss ###
         assert y_hat.dim() == 5, \
@@ -760,8 +762,8 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
 
     bbar = tqdm(enumerate(dataloader), desc=phase, total=len(dataloader))
     lst_mem = {}
-    if config.model_type == 'hybrid-EPix2Vox':
-        eval_label_tags = ('background', 'foreground')
+    if config.use_binarized_labels:
+        eval_label_tags = ("background", "foreground")
     else:
         eval_label_tags = dataset.label_tags
 

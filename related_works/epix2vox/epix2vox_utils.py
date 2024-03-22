@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from mpl_toolkits.mplot3d import Axes3D
-import epix2vox_losses as net_loss
 from datetime import datetime as dt
 
 
