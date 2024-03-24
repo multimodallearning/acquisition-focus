@@ -1,0 +1,12 @@
+{
+    "meta_config_id": 26,
+    "sa_view": "p2CH",
+    "hla_view": "p4CH",
+    "stage_override": "ref",
+    "model_type": "hybrid-Pix2Vox",
+    "use_binarized_labels": true,
+    "dataset": [
+        "mrxcat",
+        "./data/datasets/MRXCAT/prepared_files"
+    ]
+}
