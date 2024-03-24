@@ -126,10 +126,29 @@ def get_norms(model):
 
 
 
+class EPix2Vox_InterfaceModel(torch.nn.Module):
+    def __init__(self, epix_model):
+        super().__init__()
+        self.epix_model = epix_model
+
+    def forward(self, *args, **kwargs):
+        input, epx = args
+        slice_fg = [slc[:,1:].sum(dim=1, keepdim=True) for slc in input.chunk(2, dim=1)]
+        slices = torch.cat(slice_fg, dim=1)
+        slices = torch.nn.functional.interpolate(slices, size=[224,224])
+        B,N_SLICES,SPAT_H,SPAT_W = slices.shape
+        slices = slices.view(B,N_SLICES,1,SPAT_H,SPAT_W).repeat(1,1,3,1,1) * 255.
+        y_hat = self.epix_model(slices, epx)
+        y_hat = y_hat.view(B,1,128,128,128)
+        y_hat = torch.cat([1.-y_hat, y_hat], dim=1) # Create bg / fg channels
+        return y_hat
+
+
+
 def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, load_model_only=False, encoder_training_only=False):
 
     device = config.device
-    assert config.model_type in ['vae', 'ae', 'hybrid-ae', 'unet', 'hybrid-unet', 'unet-wo-skip', 'hybrid-unet-wo-skip', 'hybrid-EPix2Vox']
+    assert config.model_type in ['vae', 'ae', 'hybrid-ae', 'unet', 'hybrid-unet', 'unet-wo-skip', 'hybrid-unet-wo-skip', 'hybrid-EPix2Vox', 'hybrid-Pix2Vox']
     if not _path is None:
         _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
@@ -190,27 +209,16 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
 
     elif config.model_type == 'hybrid-EPix2Vox':
         epix_model = EPix2VoxModel128(
-            use_merger=True, use_refiner=True, n_views=2,
+            use_merger=True, use_refiner=True, n_views=2, use_epix2vox=True,
             epoch_start_use_merger=0, epoch_start_use_refiner=0
         )
+        model = EPix2Vox_InterfaceModel(epix_model)
 
-        class EPix2Vox_InterfaceModel(torch.nn.Module):
-            def __init__(self, epix_model):
-                super().__init__()
-                self.epix_model = epix_model
-
-            def forward(self, *args, **kwargs):
-                input, epx = args
-                slice_fg = [slc[:,1:].sum(dim=1, keepdim=True) for slc in input.chunk(2, dim=1)]
-                slices = torch.cat(slice_fg, dim=1)
-                slices = torch.nn.functional.interpolate(slices, size=[224,224])
-                B,N_SLICES,SPAT_H,SPAT_W = slices.shape
-                slices = slices.view(B,N_SLICES,1,SPAT_H,SPAT_W).repeat(1,1,3,1,1) * 255.
-                y_hat = self.epix_model(slices, epx)
-                y_hat = y_hat.view(B,1,128,128,128)
-                y_hat = torch.cat([1.-y_hat, y_hat], dim=1) # Create bg / fg channels
-                return y_hat
-
+    elif config.model_type == 'hybrid-Pix2Vox':
+        epix_model = EPix2VoxModel128(
+            use_merger=True, use_refiner=True, n_views=2, use_epix2vox=False,
+            epoch_start_use_merger=0, epoch_start_use_refiner=0
+        )
         model = EPix2Vox_InterfaceModel(epix_model)
 
     else:
@@ -238,7 +246,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
     print(f"Trainable param count model: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
     print(f"Non-trainable param count model: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}")
 
-    if config.model_type == 'hybrid-EPix2Vox':
+    if config.model_type in ['hybrid-EPix2Vox', 'hybrid-Pix2Vox']:
         optimizer, scheduler = get_optimizer_and_scheduler(model.epix_model.encoder, model.epix_model.decoder, model.epix_model.merger, model.epix_model.refiner)
     else:
         optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
@@ -666,8 +674,8 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cu
             y_hat = model(b_input)
         elif config.model_type == 'hybrid-unet':
             y_hat = model(b_input, b_grid_affines)
-        elif config.model_type == 'hybrid-EPix2Vox':
-            assert config.use_binarized_labels == True, "EPix2Vox only supports binary labels."
+        elif config.model_type in ['hybrid-EPix2Vox', 'hybrid-Pix2Vox']:
+            assert config.use_binarized_labels == True, "(E)Pix2Vox only supports binary labels."
             y_hat = model(b_input, epx)
         else:
             raise ValueError

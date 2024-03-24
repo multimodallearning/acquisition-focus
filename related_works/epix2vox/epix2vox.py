@@ -65,6 +65,7 @@ def get_optimizer_and_scheduler(encoder, decoder, merger, refiner):
 class EPix2VoxModel128(torch.nn.Module):
     def __init__(self,
         use_merger=True, use_refiner=True, n_views=9,
+        use_epix2vox=True,
         epoch_start_use_merger=0, epoch_start_use_refiner=0):
 
         super().__init__()
@@ -73,7 +74,7 @@ class EPix2VoxModel128(torch.nn.Module):
             NETWORK=DotDict(
                 LEAKY_VALUE=.2,
                 TCONV_USE_BIAS=False,
-                USE_EP2V=True,
+                USE_EP2V=use_epix2vox,
             )
         )
 
