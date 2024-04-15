@@ -726,19 +726,12 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
                 scaler.update()
                 opt.zero_grad()
             else:
-                # for mod in [sa_atm, hla_atm]:
-                #     # r_grad_params = [p.grad.view(-1) for p in mod.parameters() if p.requires_grad]
-                #     # if r_grad_params:
-                #         # all_grad_values = torch.cat(r_grad_params)
-                #     torch.nn.utils.clip_grad_norm_(mod.parameters(), .001)
                 for name, opt in all_optimizers.items():
                     if name == 'transform_optimizer' and not config.train_affine_theta:
                         continue
                     opt.step()
                     opt.zero_grad()
-            # test_all_parameters_updated(model)
-            # test_all_parameters_updated(sa_atm)
-            # test_all_parameters_updated(hla_atm)
+
             epx_losses.append((loss_accum*config.num_grad_accum_steps).item())
 
         else:
@@ -1146,12 +1139,6 @@ def set_previous_stage_transform_chk(self):
     self['transform_model_checkpoint_path'] = self['save_path']
 
 
-
-def set_debug_stage_transform_chk(self):
-    assert self['epochs'] < 50, "Debug stage must not run for more than 50 epochs"
-    self['transform_model_checkpoint_path'] = "data/models/20240125__21_11_31_coal-adjugate_stage-1_fold-1_best"
-
-
 if __name__ == '__main__':
     # Add argument parser for additional config file path
     parser = argparse.ArgumentParser()
@@ -1167,9 +1154,6 @@ if __name__ == '__main__':
     NOW_STR = datetime.now().strftime("%Y%m%d__%H_%M_%S")
     THIS_REPO = Repo(THIS_SCRIPT_DIR)
     PROJECT_NAME = "slice_inflate"
-
-    test_all_parameters_updated = get_test_func_all_parameters_updated()
-    # %%
 
     with open(Path(THIS_SCRIPT_DIR, 'config_dict.json'), 'r') as f:
         config_dict = DotDict(json.load(f))

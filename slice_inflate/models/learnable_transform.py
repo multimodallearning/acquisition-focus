@@ -1,17 +1,10 @@
-from pathlib import Path
-
 import torch
 import torch.nn as nn
 import torch.cuda.amp as amp
-import numpy as np
 import einops as eo
 from slice_inflate.utils.nifti_utils import nifti_grid_sample
 from slice_inflate.utils.torch_utils import determine_network_output_size
 
-import dill
-from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
-from slice_inflate.utils.common_utils import get_script_dir
-from slice_inflate.utils.torch_utils import torch_manual_seeded
 from slice_inflate.datasets.clinical_cardiac_views import get_inertia_tensor, get_main_principal_axes, get_pix_affine_from_center_and_plane_vects, get_torch_grid_affine_from_pix_affine, get_center_and_median
 
 
@@ -378,39 +371,14 @@ class HardCutModule(torch.nn.Module):
 
 
 
-class SoftCutModule(torch.nn.Module):
-
-    def __init__(self, soft_cut_softness:float=0.125):
-        super().__init__()
-        self.soft_cut_softness = soft_cut_softness
-
-    def get_probs(self, W):
-        center = (W-1)/2
-
-        n_dist = torch.distributions.normal.Normal(
-            center,
-            torch.tensor(self.soft_cut_softness * W/2))
-
-        probs = torch.arange(0, W)
-        probs = n_dist.log_prob(probs).exp()
-        probs = probs / probs.max()
-        return probs
-
-    def forward(self, b_volume):
-        B,C,D,H,W = b_volume.shape
-        b_volume = eo.rearrange(b_volume, 'B C D H W -> W B C D H')
-
-        probs = self.get_probs(W).view(W,1,1,1,1).to(b_volume.device)
-        b_volume = (b_volume * probs).sum(0, keepdim=True)
-
-        return eo.rearrange(b_volume, ' W B C D H -> B C D H W')
-
 def get_random_ortho6_vector(rotation_strength=0.2, constrained=True):
     params = torch.tensor([[1.,0.,0., 0.,1.,0.]])
     rand_r = torch.rand_like(params) * rotation_strength - rotation_strength/2
     if constrained:
         return params + rand_r
     return rand_r
+
+
 
 def get_random_affine(rotation_strength=0.2, zoom_strength=0.2, offset_strength=0.0):
     rand_z = torch.rand(1) * zoom_strength - zoom_strength/2 + 1.0
