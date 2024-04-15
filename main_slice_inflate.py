@@ -6,8 +6,6 @@ import einops as eo
 from datetime import datetime
 from git import Repo
 import joblib
-import copy
-from enum import Enum
 import argparse
 
 import randomname
@@ -49,13 +47,12 @@ from slice_inflate.models.interface_models import NNUNET_InterfaceModel, EPix2Vo
 
 from slice_inflate.utils.common_utils import DotDict
 from slice_inflate.utils.torch_utils import get_batch_score_per_label, save_model, \
-    reduce_label_scores_epoch, get_test_func_all_parameters_updated, get_binarized_from_onehot_label
+    reduce_label_scores_epoch, get_binarized_from_onehot_label
 
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.models.learnable_transform import AffineTransformModule, HardCutModule
 from slice_inflate.losses.regularization import init_regularization_params, Stage, StageIterator
 from slice_inflate.utils.nifti_utils import get_zooms
-from slice_inflate.models.nnunet_models import SkipConnector
 from slice_inflate.utils.nifti_utils import nifti_grid_sample, get_zooms
 from slice_inflate.models.learnable_transform import get_random_affine
 
@@ -110,12 +107,11 @@ def get_norms(model):
 def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, load_model_only=False):
 
     device = config.device
-    assert config.model_type in ['vae', 'ae', 'hybrid-ae', 'unet', 'hybrid-unet', 'unet-wo-skip', 'hybrid-unet-wo-skip', 'hybrid-EPix2Vox', 'hybrid-Pix2Vox']
+    assert config.model_type in ['hybrid-unet', 'hybrid-EPix2Vox', 'hybrid-Pix2Vox']
     if not _path is None:
         _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
     if config.model_type == 'hybrid-unet':
-
         enc_mode = '2d'
         dec_mode = '3d'
 
@@ -558,12 +554,12 @@ def kl_divergence(z, mean, std):
 
 
 
-def get_ae_loss_value(y_hat, y_target):
+def get_loss_value(y_hat, y_target):
     return DC_and_CE_loss({}, {})(y_hat, y_target.argmax(1, keepdim=True))
 
 
 def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
-    recon_loss = get_ae_loss_value(y_hat, y_target, class_weights)#torch.nn.MSELoss()(y_hat, y_target)#gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
+    recon_loss = get_loss_value(y_hat, y_target, class_weights)#torch.nn.MSELoss()(y_hat, y_target)#gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
     # recon_loss = eo.reduce(recon_loss, 'B C spatial -> B ()', 'mean')
     kl = kl_divergence(z, mean, std)
 
@@ -618,16 +614,10 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cu
         assert b_target.dim() == 5, \
             f"Target shape for loss must be {5}D: BxNUM_CLASSESxSPATIAL but is {b_target.shape}"
 
-        if "vae" in type(model).__name__.lower():
-            if config.optimize_lv_only:
-                loss = get_vae_loss_value(y_hat[:,bg_lv_selector], b_target[:,bg_lv_selector], z, mean, std, class_weights, model)
-            else:
-                loss = get_vae_loss_value(y_hat, b_target, z, mean, std, class_weights, model)
+        if config.optimize_lv_only:
+            loss = get_loss_value(y_hat[:,bg_lv_selector], b_target[:,bg_lv_selector])
         else:
-            if config.optimize_lv_only:
-                loss = get_ae_loss_value(y_hat[:,bg_lv_selector], b_target[:,bg_lv_selector])
-            else:
-                loss = get_ae_loss_value(y_hat, b_target)
+            loss = get_loss_value(y_hat, b_target)
 
     return y_hat, b_target, loss, b_input
 
@@ -1094,7 +1084,6 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
 
 
 
-# %%
 def normal_run(run_name, config_dict, fold_properties, training_dataset, test_dataset):
 
     with wandb.init(project=PROJECT_NAME, group="training", job_type="train",
