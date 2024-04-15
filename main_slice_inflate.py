@@ -1099,48 +1099,6 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
         if config.debug or run_test_once_only:
             break
 
-# %%
-# Config overrides
-# config_dict['wandb_mode'] = 'disabled'
-# config_dict['debug'] = True
-# Model loading
-# config_dict['checkpoint_path'] = 'ethereal-serenity-1138'
-# config_dict['fold_override'] = 0
-
-# Define sweep override dict
-sweep_config_dict = dict(
-    method='grid',
-    metric=dict(goal='maximize', name='scores/val_dice_mean_left_atrium_fold0'),
-    parameters=dict(
-        # disturbance_mode=dict(
-        #     values=[
-        #        'LabelDisturbanceMode.AFFINE',
-        #     ]
-        # ),
-        # disturbance_strength=dict(
-        #     values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
-        # ),
-        # disturbed_percentage=dict(
-        #     values=[0.3, 0.6]
-        # ),
-        # data_param_mode=dict(
-        #     values=[
-        #         DataParamMode.INSTANCE_PARAMS,
-        #         DataParamMode.DISABLED,
-        #     ]
-        # ),
-        use_risk_regularization=dict(
-            values=[False, True]
-        ),
-        use_fixed_weighting=dict(
-            values=[False, True]
-        ),
-        # fixed_weight_min_quantile=dict(
-        #     values=[0.9, 0.8, 0.6, 0.4, 0.2, 0.0]
-        # ),
-    )
-)
-
 
 
 # %%
@@ -1181,43 +1139,6 @@ def stage_sweep_run(run_name, config_dict, fold_properties, all_stages, training
         wandb.finish()
         torch.cuda.empty_cache()
         print(get_cuda_mem_info_str())
-
-
-
-def wandb_sweep_run(config_dict, fold_properties, training_dataset, test_dataset):
-    with wandb.init(
-            settings=wandb.Settings(start_method="thread"),
-            mode=config_dict['wandb_mode']) as run:
-
-        run.name = f"{NOW_STR}_{run.name}_{get_fold_postfix(fold_properties)}"
-        print("Running", run.name)
-        config = wandb.config
-
-        run_dl(run.name, config, fold_properties, training_dataset=training_dataset, test_dataset=test_dataset)
-
-
-
-def clean_sweep_dict(config_dict):
-    # Integrate all config_dict entries into sweep_dict.parameters -> sweep overrides config_dict
-    cp_config_dict = copy.deepcopy(config_dict)
-
-    for del_key in sweep_config_dict['parameters'].keys():
-        if del_key in cp_config_dict:
-            del cp_config_dict[del_key]
-    merged_sweep_config_dict = copy.deepcopy(sweep_config_dict)
-
-    for key, value in cp_config_dict.items():
-        merged_sweep_config_dict['parameters'][key] = dict(value=value)
-
-    # Convert enum values in parameters to string. They will be identified by their numerical index otherwise
-    for key, param_dict in merged_sweep_config_dict['parameters'].items():
-        if 'value' in param_dict and isinstance(param_dict['value'], Enum):
-            param_dict['value'] = str(param_dict['value'])
-        if 'values' in param_dict:
-            param_dict['values'] = [str(elem) if isinstance(elem, Enum) else elem for elem in param_dict['values']]
-
-        merged_sweep_config_dict['parameters'][key] = param_dict
-    return merged_sweep_config_dict
 
 
 
@@ -1308,15 +1229,6 @@ if __name__ == '__main__':
         run_name_with_fold = run_name + f"_{get_fold_postfix(fold_properties)}"
         if config_dict['sweep_type'] is None:
             normal_run(run_name_with_fold, config_dict, fold_properties, training_dataset, test_dataset)
-
-        elif config_dict['sweep_type'] == 'wandb_sweep':
-            merged_sweep_config_dict = clean_sweep_dict(config_dict)
-            sweep_id = wandb.sweep(merged_sweep_config_dict, project=PROJECT_NAME)
-
-            def closure_wandb_sweep_run():
-                return wandb_sweep_run(config_dict, fold_properties, training_dataset=training_dataset, test_dataset=test_dataset)
-
-            wandb.agent(sweep_id, function=closure_wandb_sweep_run)
 
         elif config_dict['sweep_type'] == 'stage-sweep':
 
