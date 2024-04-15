@@ -106,5 +106,59 @@
         "id": 25,
         "fold": 2,
         "access_key": "rap1ide/slice_inflate/t2pokc6u"
+    },
+    {
+        "name": "20240324__16_29_59_azure-status_fold-0_stage-ref",
+        "id": 26,
+        "fold": 0,
+        "access_key": "rap1ide/slice_inflate/6r8d090c"
+    },
+    {
+        "name": "20240324__16_29_59_azure-status_fold-1_stage-ref",
+        "id": 26,
+        "fold": 1,
+        "access_key": "rap1ide/slice_inflate/y9d2757k"
+    },
+    {
+        "name": "20240324__16_29_59_azure-status_fold-2_stage-ref",
+        "id": 26,
+        "fold": 2,
+        "access_key": "rap1ide/slice_inflate/3qw4nb2v"
+    },
+    {
+        "name": "20240324__17_53_13_free-switch_fold-0_stage-ref",
+        "id": 27,
+        "fold": 0,
+        "access_key": "rap1ide/slice_inflate/int50f9u"
+    },
+    {
+        "name": "20240324__17_53_13_free-switch_fold-1_stage-ref",
+        "id": 27,
+        "fold": 1,
+        "access_key": "rap1ide/slice_inflate/0omkb26p"
+    },
+    {
+        "name": "20240324__17_53_13_free-switch_fold-2_stage-ref",
+        "id": 27,
+        "fold": 2,
+        "access_key": "rap1ide/slice_inflate/gkk28km8"
+    },
+    {
+        "name": "20240324__19_18_07_warm-plisse_fold-0_stage-ref",
+        "id": 28,
+        "fold": 0,
+        "access_key": "rap1ide/slice_inflate/2vzrsh01"
+    },
+    {
+        "name": "20240324__19_18_07_warm-plisse_fold-1_stage-ref",
+        "id": 28,
+        "fold": 1,
+        "access_key": "rap1ide/slice_inflate/7sc7u2ax"
+    },
+    {
+        "name": "20240324__19_18_07_warm-plisse_fold-2_stage-ref",
+        "id": 28,
+        "fold": 2,
+        "access_key": "rap1ide/slice_inflate/7t2gz31n"
     }
 ]

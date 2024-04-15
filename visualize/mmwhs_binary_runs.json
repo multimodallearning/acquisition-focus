@@ -106,5 +106,59 @@
         "id": 25,
         "fold": 2,
         "access_key": "rap1ide/slice_inflate/0a128lph"
+    },
+    {
+        "name": "20240324__13_44_23_denim-canal_fold-0_stage-ref",
+        "id": 26,
+        "fold": 0,
+        "access_key": "rap1ide/slice_inflate/xm5xdh8u"
+    },
+    {
+        "name": "20240324__13_44_23_denim-canal_fold-1_stage-ref",
+        "id": 26,
+        "fold": 1,
+        "access_key": "rap1ide/slice_inflate/k67ilx7l"
+    },
+    {
+        "name": "20240324__13_44_23_denim-canal_fold-2_stage-ref",
+        "id": 26,
+        "fold": 2,
+        "access_key": "rap1ide/slice_inflate/646fdmbl"
+    },
+    {
+        "name": "20240324__14_39_33_reduced-mud_fold-0_stage-ref",
+        "id": 27,
+        "fold": 0,
+        "access_key": "rap1ide/slice_inflate/xze5i6hi"
+    },
+    {
+        "name": "20240324__14_39_33_reduced-mud_fold-1_stage-ref",
+        "id": 27,
+        "fold": 1,
+        "access_key": "rap1ide/slice_inflate/9b34ejds"
+    },
+    {
+        "name": "20240324__14_39_33_reduced-mud_fold-2_stage-ref",
+        "id": 27,
+        "fold": 2,
+        "access_key": "rap1ide/slice_inflate/54q0xkb1"
+    },
+    {
+        "name": "20240324__15_33_47_achromatic-debt_fold-0_stage-ref",
+        "id": 28,
+        "fold": 0,
+        "access_key": "rap1ide/slice_inflate/npzuhios"
+    },
+    {
+        "name": "20240324__15_33_47_achromatic-debt_fold-1_stage-ref",
+        "id": 28,
+        "fold": 1,
+        "access_key": "rap1ide/slice_inflate/4qz64yxb"
+    },
+    {
+        "name": "20240324__15_33_47_achromatic-debt_fold-2_stage-ref",
+        "id": 28,
+        "fold": 2,
+        "access_key": "rap1ide/slice_inflate/8nxwltjq"
     }
 ]
