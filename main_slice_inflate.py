@@ -1,22 +1,4 @@
-# ---
-# jupyter:
-#   jupytext:
-#     formats: ipynb,py:percent
-#     text_representation:
-#       extension: .py
-#       format_name: percent
-#       format_version: '1.3'
-#       jupytext_version: 1.14.4
-#   kernelspec:
-#     display_name: 'Python 3.9.13 (''.venv'': poetry)'
-#     language: python
-#     name: python3
-# ---
-
-# %%
 import os
-import sys
-import re
 from pathlib import Path
 import json
 import dill
@@ -41,6 +23,7 @@ os.environ.update(get_vars(os.environ.get('MY_CUDA_VISIBLE_DEVICES','0')))
 import torch
 torch.set_printoptions(sci_mode=False)
 # torch.autograd.set_detect_anomaly(True)
+# import nibabel as nib
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.cuda.amp as amp
@@ -48,15 +31,11 @@ from torch.utils.data import DataLoader
 
 from tqdm import tqdm
 import wandb
-import nibabel as nib
 
 import contextlib
-from matplotlib import pyplot as plt
-from slice_inflate.utils.nifti_utils import crop_around_label_center
 from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, \
     log_oa_metrics, log_affine_param_stats, log_frameless_image, get_cuda_mem_info_str
 from slice_inflate.datasets.clinical_cardiac_views import get_class_volumes
-from sklearn.model_selection import KFold
 import numpy as np
 import monai
 
@@ -66,18 +45,18 @@ from nnunetv2.training.loss.compound_losses import DC_and_CE_loss
 from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset
 from slice_inflate.datasets.mrxcat_dataset import MRXCATDataset
 
-from slice_inflate.utils.common_utils import DotDict, in_notebook
-from slice_inflate.utils.torch_utils import reset_determinism, ensure_dense, \
-    get_batch_dice_over_all, get_batch_score_per_label, save_model, \
-    reduce_label_scores_epoch, get_test_func_all_parameters_updated, anomaly_hook, cut_slice, get_binarized_from_onehot_label
+from slice_inflate.models.interface_models import NNUNET_InterfaceModel, EPix2Vox_InterfaceModel
+
+from slice_inflate.utils.common_utils import DotDict
+from slice_inflate.utils.torch_utils import get_batch_score_per_label, save_model, \
+    reduce_label_scores_epoch, get_test_func_all_parameters_updated, get_binarized_from_onehot_label
+
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
-from slice_inflate.models.learnable_transform import AffineTransformModule, SoftCutModule, HardCutModule, get_random_ortho6_vector
-from slice_inflate.models.ae_models import BlendowskiAE, BlendowskiVAE, HybridAE
-from slice_inflate.losses.regularization import optimize_sa_angles, optimize_sa_offsets, optimize_hla_angles, optimize_hla_offsets, init_regularization_params, deactivate_r_params, Stage, StageIterator
-from slice_inflate.utils.nnunetv2_utils import get_segment_fn
+from slice_inflate.models.learnable_transform import AffineTransformModule, HardCutModule
+from slice_inflate.losses.regularization import init_regularization_params, Stage, StageIterator
 from slice_inflate.utils.nifti_utils import get_zooms
 from slice_inflate.models.nnunet_models import SkipConnector
-from slice_inflate.utils.nifti_utils import nifti_grid_sample, rescale_rot_components_with_diag, get_zooms
+from slice_inflate.utils.nifti_utils import nifti_grid_sample, get_zooms
 from slice_inflate.models.learnable_transform import get_random_affine
 
 
@@ -128,40 +107,6 @@ def get_norms(model):
     return norms
 
 
-
-class InterfaceModel(torch.nn.Module):
-    def __init__(self, nnunet_model):
-        super().__init__()
-        self.nnunet_model = nnunet_model
-
-    def forward(self, *args, **kwargs):
-        y_hat = self.nnunet_model(*args, **kwargs)
-        if isinstance(y_hat, tuple):
-            return y_hat[0]
-        else:
-            return y_hat
-
-
-
-class EPix2Vox_InterfaceModel(torch.nn.Module):
-    def __init__(self, epix_model):
-        super().__init__()
-        self.epix_model = epix_model
-
-    def forward(self, *args, **kwargs):
-        input, epx = args
-        slice_fg = [slc[:,1:].sum(dim=1, keepdim=True) for slc in input.chunk(2, dim=1)]
-        slices = torch.cat(slice_fg, dim=1)
-        slices = torch.nn.functional.interpolate(slices, size=[224,224])
-        B,N_SLICES,SPAT_H,SPAT_W = slices.shape
-        slices = slices.view(B,N_SLICES,1,SPAT_H,SPAT_W).repeat(1,1,3,1,1) * 255.
-        y_hat = self.epix_model(slices, epx)
-        y_hat = y_hat.view(B,1,128,128,128)
-        y_hat = torch.cat([1.-y_hat, y_hat], dim=1) # Create bg / fg channels
-        return y_hat
-
-
-
 def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, load_model_only=False):
 
     device = config.device
@@ -191,7 +136,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
         # Disable gradients of non-used deep supervision
         for so_idx in range(len(seg_outputs)-1):
             seg_outputs[so_idx][1].requires_grad = False
-            model = InterfaceModel(nnunet_model)
+            model = NNUNET_InterfaceModel(nnunet_model)
 
     elif config.model_type == 'hybrid-EPix2Vox':
         epix_model = EPix2VoxModel128(
