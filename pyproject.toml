@@ -33,6 +33,7 @@ black = "^23.12.1"
 nnunet = "^1.7.1"
 randomname = "^0.2.1"
 pytorch-run-on-recommended-gpu = "^1.0.4"
+torchvision = "^0.15"
 
 [build-system]
 requires = ["poetry-core"]

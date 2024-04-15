@@ -210,12 +210,7 @@ class MRXCATDataset(HybridIdDataset):
             hires_nii_affine = hires_nii_affine[0]
 
             if is_label:
-                if self.use_binarized_labels:
-                    bin_tmp = tmp.clone()
-                    bin_tmp[bin_tmp>0] = 1.0
-                    label_data_3d[_3d_id] = bin_tmp.long()
-                else:
-                    label_data_3d[_3d_id] = tmp.long()
+                label_data_3d[_3d_id] = tmp.long()
 
             else:
                 if self.do_normalize:  # Normalize image to zero mean and unit std

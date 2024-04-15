@@ -1,0 +1,8 @@
+{
+    "meta_config_id": 20,
+    "sa_view": "p2CH",
+    "hla_view": "p4CH",
+    "stage_override": "ref",
+    "model_type": "hybrid-unet",
+    "use_binarized_labels": true
+}
