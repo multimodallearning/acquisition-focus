@@ -1,19 +1,6 @@
 import torch
 from torch.utils.checkpoint import checkpoint
-import einops as eo
 import torch.cuda.amp as amp
-
-def flip_mat_rows_old(affine_mat):
-    affine_mat[:,:3] = affine_mat[:,:3].flip(1)
-    return affine_mat
-
-
-
-def switch_0_2_mat_dim_old(affine_mat):
-    affine_mat = flip_mat_rows_old(affine_mat.clone())
-    affine_mat = affine_mat.transpose(2,1)
-    affine_mat = flip_mat_rows_old(affine_mat)
-    return affine_mat.transpose(2,1)
 
 
 
@@ -43,30 +30,6 @@ def rescale_rot_components_with_diag(affine, scaler):
     scale_mat[:,-1,-1] = 1.
     affine = affine @ scale_mat
     return affine
-
-
-
-def extract_rot_matrix(affine_mat):
-    extractor = torch.eye(4).view(1,4,4).to(affine_mat)
-    offset = torch.zeros_like(extractor)
-    offset[:,-1,-1] = 1.
-    return (affine_mat @ (extractor-offset)) + offset
-
-
-
-def extract_translation_matrix(affine_mat):
-    extractor = torch.zeros_like(affine_mat)
-    extractor[:,-1,-1] = 1.
-    offset = torch.eye(4).view(1,4,4).to(affine_mat)
-    return affine_mat @ extractor + (offset-extractor)
-
-
-
-def extract_translation_comp_only_matrix(affine_mat):
-    extractor = torch.zeros_like(affine_mat)
-    extractor[:,-1,-1] = 1.
-    offset = torch.eye(4).view(1,4,4).to(affine_mat)
-    return affine_mat @ extractor - extractor
 
 
 
@@ -158,8 +121,6 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
     assert isinstance(volume, torch.Tensor) and isinstance(volume_affine, torch.Tensor)
     if pre_grid_sample_affine is not None:
         assert isinstance(pre_grid_sample_affine, torch.Tensor)
-    # if pre_grid_sample_hidden_affine is not None:
-    #     assert isinstance(pre_grid_sample_hidden_affine, torch.Tensor)
 
     device = volume.device
     initial_dtype = volume.dtype
@@ -176,9 +137,6 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
     if pre_grid_sample_affine is not None:
         assert pre_grid_sample_affine.dim() == 3 \
             and B == pre_grid_sample_affine.shape[0]
-    # if pre_grid_sample_hidden_affine is not None:
-    #     assert pre_grid_sample_hidden_affine.dim() == 3 \
-    #         and B == pre_grid_sample_hidden_affine.shape[0]
 
     fov_mm = fov_mm.to(device).to(device).double()
     fov_vox = fov_vox.to(device).to(device).double()
@@ -197,15 +155,10 @@ def nifti_grid_sample(volume:torch.Tensor, volume_affine:torch.Tensor, ras_trans
         pre_grid_sample_affine = torch.eye(4)[None]
     pre_grid_sample_affine = pre_grid_sample_affine.to(device).double()
 
-    # if pre_grid_sample_hidden_affine is None:
-    #     pre_grid_sample_hidden_affine = torch.eye(4)[None]
-    # pre_grid_sample_hidden_affine = pre_grid_sample_hidden_affine.to(device).double()
-
     # Get affines
     grid_affine, transformed_nii_affine = get_grid_affine_and_nii_affine(
         volume_affine, ras_transform_mat, fov_vox_i, fov_mm, fov_vox, pre_grid_sample_affine
     )
-    # augmented_grid_affine = (grid_affine @ pre_grid_sample_hidden_affine)
 
     if 'int' in str(initial_dtype):
         volume = volume.to(dtype=dtype)
@@ -283,6 +236,7 @@ def crop_around_label_center(label: torch.Tensor, volume_affine: torch.Tensor,
             dtype=torch.float32)
 
     return cropped_label, cropped_image, cropped_nii_affine
+
 
 
 def get_zooms(nii_affine):

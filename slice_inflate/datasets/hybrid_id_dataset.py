@@ -52,16 +52,6 @@ class HybridIdDataset(Dataset):
         self.self_attributes['modified_label_data_3d'] = self.modified_label_data_3d = all_3d_data_dict.pop('modified_label_data_3d', {})
         self.self_attributes['additional_data_3d'] = self.additional_data_3d = all_3d_data_dict.pop('additional_data_3d', {})
 
-        if self.ensure_labeled_pairs:
-            labeled_keys = set(self.label_data_3d.keys())
-            unlabelled_imgs = set(self.img_data_3d.keys()) - labeled_keys
-            unlabelled_modified_labels = set([self.extract_3d_id(key) for key in self.modified_label_data_3d.keys()]) - labeled_keys
-
-            for del_key in unlabelled_imgs:
-                del self.img_data_3d[del_key]
-            for del_key in unlabelled_modified_labels:
-                del self.modified_label_data_3d[del_key]
-
         # Check for consistency
         print(f"Equal image and label numbers: {set(self.img_data_3d)==set(self.label_data_3d)==set(self.modified_label_data_3d)} ({len(self.img_data_3d)})")
 
@@ -74,31 +64,8 @@ class HybridIdDataset(Dataset):
 
         print("Data import finished.")
 
-    def extract_3d_id(self, _input):
-        raise NotImplementedError()
-
-    def extract_short_3d_id(self, _input):
-        raise NotImplementedError()
-
-    def get_short_3d_ids(self):
-        return [self.extract_short_3d_id(_id) for _id in self.get_3d_ids()]
-
     def get_3d_ids(self):
         return list(self.img_data_3d.keys())
-
-    def get_id_dicts(self):
-        all_3d_ids = self.get_3d_ids()
-        id_dicts = []
-
-        for _3d_dataset_idx, _3d_id in enumerate(self.get_3d_ids()):
-            id_dicts.append(
-                {
-                    '3d_id': _3d_id,
-                    '3d_dataset_idx': all_3d_ids.index(_3d_id),
-                }
-            )
-
-        return id_dicts
 
     def switch_3d_identifiers(self, _3d_identifiers):
         if isinstance(_3d_identifiers, (torch.Tensor, np.ndarray)):
@@ -122,14 +89,9 @@ class HybridIdDataset(Dataset):
     def __getitem__(self, dataset_id):
         raise NotImplementedError()
 
-    def get_3d_item(self, _3d_dataset_id):
-        return self.__getitem__(_3d_dataset_id)
-
-    def train(self):
-        pass
-
-    def eval(self):
-        pass
+    @abstractmethod
+    def extract_3d_id(self, _input):
+        raise NotImplementedError()
 
     @abstractmethod
     def get_file_id(file_path):

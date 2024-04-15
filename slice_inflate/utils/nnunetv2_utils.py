@@ -34,6 +34,8 @@ def suppress_stdout():
         finally:
             sys.stdout = old_stdout
 
+
+
 def load_network(model_training_output_path, fold):
     use_folds = [fold] if isinstance(fold, int) else fold # We only trained one fold
     checkpoint_name = "checkpoint_final.pth"
@@ -45,6 +47,8 @@ def load_network(model_training_output_path, fold):
     patch_size = plans_manager.get_configuration('3d_fullres').patch_size
 
     return network, parameters, patch_size, configuration_manager, inference_allowed_mirroring_axes, plans_manager, dataset_json
+
+
 
 def get_model_from_network(network, parameters=None):
     model = deepcopy(network)

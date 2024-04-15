@@ -55,9 +55,6 @@ class MRXCATDataset(HybridIdDataset):
     def extract_3d_id(self, _input):
         return _input[:8]
 
-    def extract_short_3d_id(self, _input):
-        return _input[:8]
-
     def __getitem__(self, dataset_id, use_2d_override=None):
         if isinstance(dataset_id, str):
             dataset_idx = self.switch_3d_identifiers(dataset_id)

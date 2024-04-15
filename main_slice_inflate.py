@@ -57,6 +57,7 @@ from slice_inflate.utils.nifti_utils import nifti_grid_sample, get_zooms
 from slice_inflate.models.learnable_transform import get_random_affine
 
 
+
 def prepare_data(config):
     args = [config.dataset[1]]
 
@@ -82,7 +83,7 @@ def prepare_data(config):
         else:
             dataset = dataset_class(*args, **kwargs)
             print("Caching dataset:", hashfile)
-            with open(cache_path, 'wb') as file:
+            with open(hashfile, 'wb') as file:
                 dill.dump(dataset, file)
     else:
         dataset = dataset_class(*args, **kwargs)
@@ -667,7 +668,6 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             sa_atm.eval()
             hla_atm.eval()
 
-        dataset.train()
     else:
         model.eval()
         sa_atm.eval()

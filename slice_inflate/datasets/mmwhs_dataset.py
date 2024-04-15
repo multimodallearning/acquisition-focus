@@ -55,9 +55,6 @@ class MMWHSDataset(HybridIdDataset):
     def extract_3d_id(self, _input):
         return _input
 
-    def extract_short_3d_id(self, _input):
-        return _input
-
     def __getitem__(self, dataset_id, use_2d_override=None):
         if isinstance(dataset_id, str):
             dataset_idx = self.switch_3d_identifiers(dataset_id)
@@ -211,8 +208,7 @@ class MMWHSDataset(HybridIdDataset):
             hires_nii_affine = hires_nii_affine[0]
 
             if is_label:
-
-                    label_data_3d[_3d_id] = tmp.long()
+                label_data_3d[_3d_id] = tmp.long()
 
             else:
                 if self.do_normalize:  # Normalize image to zero mean and unit std
