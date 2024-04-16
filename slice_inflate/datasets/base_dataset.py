@@ -55,7 +55,6 @@ class BaseDataset(Dataset):
 
         self.label_tags = label_tags
         self.disturbed_idxs = []
-        self.use_modified = False
 
         # Load base 3D data
         all_3d_data_dict = self.load_data(self.self_attributes)
@@ -64,18 +63,16 @@ class BaseDataset(Dataset):
         self.self_attributes['label_paths'] = self.label_paths = all_3d_data_dict.pop('label_paths', {})
         self.self_attributes['img_data_3d'] = self.img_data_3d = all_3d_data_dict.pop('img_data_3d', {})
         self.self_attributes['label_data_3d'] = self.label_data_3d = all_3d_data_dict.pop('label_data_3d', {})
-        self.self_attributes['modified_label_data_3d'] = self.modified_label_data_3d = all_3d_data_dict.pop('modified_label_data_3d', {})
         self.self_attributes['additional_data_3d'] = self.additional_data_3d = all_3d_data_dict.pop('additional_data_3d', {})
 
         # Check for consistency
-        print(f"Equal image and label numbers: {set(self.img_data_3d)==set(self.label_data_3d)==set(self.modified_label_data_3d)} ({len(self.img_data_3d)})")
+        print(f"Equal image and label numbers: {set(self.img_data_3d)==set(self.label_data_3d)} ({len(self.img_data_3d)})")
 
         # Now make sure dicts are ordered
         self.img_paths = OrderedDict(sorted(self.img_paths.items()))
         self.label_paths = OrderedDict(sorted(self.label_paths.items()))
         self.img_data_3d = OrderedDict(sorted(self.img_data_3d.items()))
         self.label_data_3d = OrderedDict(sorted(self.label_data_3d.items()))
-        self.modified_label_data_3d = OrderedDict(sorted(self.modified_label_data_3d.items()))
 
         print("Data import finished.")
 
@@ -116,18 +113,8 @@ class BaseDataset(Dataset):
 
         additional_data = self.additional_data_3d.get(_id, [])
 
-        if self.use_modified:
-            modified_label = self.modified_label_data_3d.get(
-                    _id, label.detach().clone())
-
-        else:
-            modified_label = label.detach().clone()
-
         image = image.to(device=self.device)
         label = label.to(device=self.device)
-
-        modified_label, _ = ensure_dense(modified_label)
-        modified_label = modified_label.to(device=self.device)
 
         for key, val in additional_data.items():
             if isinstance(val, torch.Tensor):
@@ -140,27 +127,12 @@ class BaseDataset(Dataset):
             label_path=label_path,
 
             image=image.to(device=self.device),
-            label=label.long().to(device=self.device),
+            label=ensure_dense(label).long().to(device=self.device),
 
             additional_data=additional_data
         )
 
-    @abstractmethod
-    def extract_3d_id(self, _input):
-        raise NotImplementedError()
-
-    @abstractmethod
-    def get_file_id(file_path):
-        raise NotImplementedError()
-
-    @staticmethod
-    @abstractmethod
-    def extract_2d_data(self_attributes: dict):
-        raise NotImplementedError()
-
     def load_data(self):
-
-
         segment_fn = get_segment_fn(self.nnunet_segment_model_path, 0, torch.device('cuda'))
 
         files = []
@@ -210,7 +182,6 @@ class BaseDataset(Dataset):
 
         img_data_3d = {}
         label_data_3d = {}
-        modified_label_data_3d = {}
         additional_data_3d = {}
 
         # Load data from files
@@ -353,15 +324,23 @@ class BaseDataset(Dataset):
             logger_selected_metrics=(), print_selected_metrics=('dice', 'hd95'))
         print()
 
-        # Initialize 3d modified labels as unmodified labels
-        for label_id in label_data_3d.keys():
-            modified_label_data_3d[label_id] = label_data_3d[label_id]
-
         return dict(
             img_paths=img_paths,
             label_paths=label_paths,
             img_data_3d=img_data_3d,
             label_data_3d=label_data_3d,
-            modified_label_data_3d=modified_label_data_3d,
             additional_data_3d=additional_data_3d
         )
+
+    @abstractmethod
+    def extract_3d_id(self, _input):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def get_file_id(file_path):
+        raise NotImplementedError()
+
+    @staticmethod
+    @abstractmethod
+    def extract_2d_data(self_attributes: dict):
+        raise NotImplementedError()
