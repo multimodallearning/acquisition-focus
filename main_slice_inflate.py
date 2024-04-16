@@ -664,7 +664,6 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, dataset, dataloa
         model.eval()
         sa_atm.eval()
         hla_atm.eval()
-        dataset.eval()
 
     segment_fn = dataset.segment_fn
 
