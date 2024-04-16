@@ -47,35 +47,3 @@ class Stage(dict):
 
     def activate(self, *args, **kwargs):
         self.__activate_fn__(self, *args, **kwargs)
-
-
-
-class RegularizationParam():
-    def __init__(self, name, target_val, lambda_r, active, call_fn):
-        self.name = name
-        self.target_val = target_val
-        self.lambda_r = lambda_r
-        self.active = active
-        self.call_fn = call_fn
-
-    def set_call_fn(self, lmbd):
-        self.call_fn = lmbd
-
-    def __call__(self):
-
-        if self.active:
-            return self.lambda_r * self.call_fn(self.target_val)
-        return torch.tensor(0.0)
-
-    def __repr__(self):
-        return f'{self.name} -> {self.target_val} (active={self.active}, lambda_r={self.lambda_r})'
-
-
-
-def init_regularization_params(name_list, target_val=0.0, lambda_r=0.0, active=False):
-    params = {}
-    for name in name_list:
-        params[name] = RegularizationParam(
-            name, target_val, lambda_r, active, lambda: None
-        )
-    return params

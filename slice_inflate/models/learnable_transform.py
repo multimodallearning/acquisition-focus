@@ -263,7 +263,7 @@ class AffineTransformModule(torch.nn.Module):
             if not x_soft_label_is_none:
                 # nifti_affine is the affine of the original volume
                 x_soft_label_pre_mlp, _, transformed_nii_affine = nifti_grid_sample(x_soft_label, nifti_affine,
-                    fov_mm=self.volume_fov_mm, fov_vox=self.volume_fov_vox, is_label=False,
+                    target_fov_mm=self.volume_fov_mm, target_fov_vox=self.volume_fov_vox, is_label=False,
                     pre_grid_sample_affine=grid_affine_pre_mlp
                 )
                 # import nibabel as nib
@@ -305,7 +305,7 @@ class AffineTransformModule(torch.nn.Module):
         if not x_soft_label_is_none:
             # nifti_affine is the affine of the original volume
             y_soft_label, grid_affine, transformed_nii_affine = nifti_grid_sample(x_soft_label, nifti_affine,
-                fov_mm=self.slice_fov_mm, fov_vox=self.slice_fov_vox, is_label=False,
+                target_fov_mm=self.slice_fov_mm, target_fov_vox=self.slice_fov_vox, is_label=False,
                 pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
                 # pre_grid_sample_hidden_affine=grid_affine_augment
             )
@@ -314,7 +314,7 @@ class AffineTransformModule(torch.nn.Module):
             if not x_label_is_none:
                 # nifti_affine is the affine of the original volume
                 y_label, _, _ = nifti_grid_sample(x_label, nifti_affine,
-                    fov_mm=self.slice_fov_mm, fov_vox=self.slice_fov_vox, is_label=True,
+                    target_fov_mm=self.slice_fov_mm, target_fov_vox=self.slice_fov_vox, is_label=True,
                     pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
                     # pre_grid_sample_hidden_affine=grid_affine_augment
                 )
@@ -322,7 +322,7 @@ class AffineTransformModule(torch.nn.Module):
             if not x_image_is_none:
                 # nifti_affine is the affine of the original volume
                 y_image, _, _ = nifti_grid_sample(x_image, nifti_affine,
-                    fov_mm=self.slice_fov_mm, fov_vox=self.slice_fov_vox, is_label=False,
+                    target_fov_mm=self.slice_fov_mm, target_fov_vox=self.slice_fov_vox, is_label=False,
                     pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
                     # pre_grid_sample_hidden_affine=grid_affine_augment
                 )

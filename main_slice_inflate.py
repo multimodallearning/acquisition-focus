@@ -49,10 +49,9 @@ from slice_inflate.utils.python_utils import DotDict
 from slice_inflate.utils.torch_utils import get_batch_score_per_label, save_model, \
     reduce_label_scores_epoch, get_binarized_from_onehot_label
 
+from slice_inflate.running.stages import Stage, StageIterator
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.models.learnable_transform import AffineTransformModule, HardCutModule
-from slice_inflate.losses.regularization import Stage, StageIterator
-from slice_inflate.utils.nifti_utils import get_zooms
 from slice_inflate.utils.nifti_utils import nifti_grid_sample, get_zooms
 from slice_inflate.models.learnable_transform import get_random_affine
 
@@ -397,10 +396,10 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, segment_
     # Transform volume to output space
     with torch.no_grad():
         b_label, _, nifti_affine = nifti_grid_sample(b_label.unsqueeze(1), nifti_affine,
-            fov_mm=torch.as_tensor(config.hires_fov_mm), fov_vox=torch.as_tensor(config.hires_fov_vox),
+            target_fov_mm=torch.as_tensor(config.hires_fov_mm), target_fov_vox=torch.as_tensor(config.hires_fov_vox),
             is_label=True, pre_grid_sample_affine=base_affine)
         b_image, _, _ = nifti_grid_sample(b_image.unsqueeze(1), nifti_affine,
-            fov_mm=torch.as_tensor(config.hires_fov_mm), fov_vox=torch.as_tensor(config.hires_fov_vox),
+            target_fov_mm=torch.as_tensor(config.hires_fov_mm), target_fov_vox=torch.as_tensor(config.hires_fov_vox),
             is_label=False, pre_grid_sample_affine=base_affine)
         b_label = b_label.squeeze(1)
         b_image = b_image.squeeze(1)

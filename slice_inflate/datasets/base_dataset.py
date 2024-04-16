@@ -127,7 +127,7 @@ class BaseDataset(Dataset):
             label_path=label_path,
 
             image=image.to(device=self.device),
-            label=ensure_dense(label).long().to(device=self.device),
+            label=ensure_dense(label)[0].long().to(device=self.device),
 
             additional_data=additional_data
         )
