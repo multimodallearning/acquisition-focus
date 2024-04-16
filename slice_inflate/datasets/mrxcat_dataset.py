@@ -182,7 +182,7 @@ class MRXCATDataset(HybridIdDataset):
         class_dict = {tag:idx for idx,tag in enumerate(self.label_tags)}
 
         label_scores_dataset = {}
-        fixed_ref_path = Path(THIS_SCRIPT_DIR, 'slice_inflate/datasets/ref_heart.nii.gz')
+        fixed_ref_path = Path(THIS_SCRIPT_DIR, './ref_heart.nii.gz')
 
         for _3d_id, _file in tqdm(id_paths_to_load, desc=description):
             additional_data_3d[_3d_id] = additional_data_3d.get(_3d_id, {})
