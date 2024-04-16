@@ -356,21 +356,6 @@ class AffineTransformModule(torch.nn.Module):
 
 
 
-class HardCutModule(torch.nn.Module):
-
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, b_volume):
-        B,C,D,H,W = b_volume.shape
-        b_volume = eo.rearrange(b_volume, 'B C D H W -> W B C D H')
-
-        center = W//2
-        cut = b_volume[center:center+1, ...]
-        return eo.rearrange(cut, ' W B C D H -> B C D H W')
-
-
-
 def rotate_slice_to_min_principle(x_input, nii_affine, is_label=False, align_affine_override=None):
     assert x_input.shape[-1] == 1
     B = x_input.shape[0]

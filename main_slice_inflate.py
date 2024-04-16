@@ -1,59 +1,54 @@
 import os
 from pathlib import Path
 import json
-import dill
-import einops as eo
 from datetime import datetime
+import argparse
+import contextlib
+
+import dill
 from git import Repo
 import joblib
-import argparse
-
 import randomname
-
-from slice_inflate.utils.python_utils import get_script_dir
-THIS_SCRIPT_DIR = get_script_dir()
-
-os.environ['CACHE_PATH'] = str(Path(THIS_SCRIPT_DIR, '.cache'))
+from tqdm import tqdm
+import wandb
 
 from pytorch_run_on_recommended_gpu.run_on_recommended_gpu import get_cuda_environ_vars as get_vars
-os.environ.update(get_vars(os.environ.get('MY_CUDA_VISIBLE_DEVICES','0')))
-
+os.environ.update(get_vars(os.environ.get('CUDA_VISIBLE_DEVICES','0')))
 import torch
-torch.set_printoptions(sci_mode=False)
-# torch.autograd.set_detect_anomaly(True)
+import einops as eo
 # import nibabel as nib
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.cuda.amp as amp
 from torch.utils.data import DataLoader
 
-from tqdm import tqdm
-import wandb
+from slice_inflate.utils.python_utils import get_script_dir
+THIS_SCRIPT_DIR = get_script_dir()
 
-import contextlib
+os.environ['CACHE_PATH'] = str(Path(THIS_SCRIPT_DIR, '.cache'))
+# torch.autograd.set_detect_anomaly(True)
+
+
+
 from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, \
     log_oa_metrics, log_affine_param_stats, log_frameless_image, get_cuda_mem_info_str
 from slice_inflate.utils.clinical_cardiac_views import get_class_volumes
 import numpy as np
 import monai
 
-from related_works.epix2vox.epix2vox import EPix2VoxModel128, get_optimizer_and_scheduler
 
+from slice_inflate.running.stages import Stage, StageIterator
 from nnunetv2.training.loss.compound_losses import DC_and_CE_loss
 from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset
 from slice_inflate.datasets.mrxcat_dataset import MRXCATDataset
-
 from slice_inflate.models.interface_models import NNUNET_InterfaceModel, EPix2Vox_InterfaceModel
-
+from slice_inflate.models.learnable_transform import AffineTransformModule, get_random_affine
+from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.utils.python_utils import DotDict
 from slice_inflate.utils.torch_utils import get_batch_score_per_label, save_model, \
     reduce_label_scores_epoch, get_binarized_from_onehot_label
-
-from slice_inflate.running.stages import Stage, StageIterator
-from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
-from slice_inflate.models.learnable_transform import AffineTransformModule, HardCutModule
 from slice_inflate.utils.nifti_utils import nifti_grid_sample, get_zooms
-from slice_inflate.models.learnable_transform import get_random_affine
+from slice_inflate.related_works.epix2vox.epix2vox import EPix2VoxModel128, get_optimizer_and_scheduler
 
 
 
@@ -91,20 +86,7 @@ def prepare_data(config):
 
 
 
-def get_norms(model):
-    norms = {}
-    for name, mod in model.named_modules():
-        mod_norm = 0
-        for p in mod.parameters():
-            if p.grad is not None:
-                param_norm = p.grad.data.norm(2)
-                mod_norm += param_norm.item() ** 2
-        mod_norm = mod_norm ** 0.5
-        norms[name] = mod_norm
-    return norms
-
-
-def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, load_model_only=False):
+def get_model(config, num_classes, THIS_SCRIPT_DIR, _path=None, load_model_only=False):
 
     device = config.device
     assert config.model_type in ['hybrid-unet', 'hybrid-EPix2Vox', 'hybrid-Pix2Vox']
@@ -223,6 +205,8 @@ def get_atm(config, num_classes, view, _path=None):
 
     return atm
 
+
+
 class NoneOptimizer():
     def __init__(self):
         super().__init__()
@@ -232,6 +216,8 @@ class NoneOptimizer():
         pass
     def state_dict(self):
         return {}
+
+
 
 def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, hla_atm_override=None):
     device = config.device
@@ -300,7 +286,6 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
 
 
 
-# %%
 def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_pre_mlp,
                     # hidden_augment_affine,
                     atm, image=None, segment_fn=None):
@@ -379,6 +364,7 @@ def apply_affine_augmentation(affine_list, zoom_strength=0.1, offset_strength=0.
         affine_list[i] = affine_list[i] @ b_affine.to(affine_list[i])
 
     return affine_list
+
 
 
 def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, segment_fn):
@@ -513,36 +499,6 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, segment_
     # b_target = b_target.to(device=config.device)
 
     return b_input, b_target, grid_affines
-
-
-
-def gaussian_likelihood(y_hat, log_var_scale, y_target):
-    B,C,*_ = y_hat.shape
-    scale = torch.exp(log_var_scale/2)
-    dist = torch.distributions.Normal(y_hat, scale)
-
-    # measure prob of seeing image under p(x|z)
-    log_pxz = dist.log_prob(y_target)
-
-    # GLH
-    return log_pxz
-
-
-
-def kl_divergence(z, mean, std):
-    # See https://towardsdatascience.com/variational-autoencoder-demystified-with-pytorch-implementation-3a06bee395ed
-    B,*_ = z.shape
-    p = torch.distributions.Normal(torch.zeros_like(mean), torch.ones_like(std))
-    q = torch.distributions.Normal(mean, std)
-
-    log_qzx = q.log_prob(z)
-    log_pz = p.log_prob(z)
-
-    # KL divergence
-    kl = (log_qzx - log_pz)
-
-    # Reduce spatial dimensions
-    return kl.reshape(B,-1)
 
 
 
@@ -945,7 +901,7 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
     # Load from checkpoint, if any
     mdl_chk_path = config.model_checkpoint_path if 'model_checkpoint_path' in config else None
     (model, optimizer, scheduler, scaler), epx_start = get_model(
-        config, len(training_dataset), len(training_dataset.label_tags),
+        config, len(training_dataset.label_tags),
         THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=mdl_chk_path, load_model_only=False)
 
     # Load transformation model from checkpoint, if any
@@ -1037,13 +993,6 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
                 optimizer=optimizer,
                 scheduler=scheduler,
                 scaler=scaler)
-
-            # (model, optimizer, scheduler, scaler) = \
-            #     get_model(
-            #         config, len(training_dataset),
-            #         len(training_dataset.label_tags),
-            #         THIS_SCRIPT_DIR=THIS_SCRIPT_DIR,
-            #         _path=_path, device=config.device)
 
         # End of epoch loop
 
