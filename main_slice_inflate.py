@@ -249,30 +249,24 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
     else:
         hla_atm = get_atm(config, num_classes, view='hla', _path = _path)
 
-    sa_cut_module = HardCutModule()
-    hla_cut_module = HardCutModule()
-
     sa_atm.to(device)
     hla_atm.to(device)
-    sa_cut_module.to(device)
-    hla_cut_module.to(device)
-
 
     def set_requires_grad(module_list, requires_grad=True):
         for mod in module_list:
             for param in mod.parameters():
                 param.requires_grad = requires_grad
 
-    set_requires_grad([sa_atm, hla_atm, sa_cut_module, hla_cut_module], False)
+    set_requires_grad([sa_atm, hla_atm], False)
 
     if config.cuts_mode == 'sa':
-        set_requires_grad([sa_atm.localisation_net, sa_cut_module], True)
+        set_requires_grad([sa_atm.localisation_net], True)
     elif config.cuts_mode in ['hla', 'sa>hla']:
-        set_requires_grad([hla_atm.localisation_net, hla_cut_module], True)
+        set_requires_grad([hla_atm.localisation_net], True)
     elif config.cuts_mode == 'sa+hla':
         set_requires_grad([
-            sa_atm.localisation_net, sa_cut_module,
-            hla_atm.localisation_net, hla_cut_module
+            sa_atm.localisation_net,
+            hla_atm.localisation_net,
         ], True)
     else:
         raise ValueError()
@@ -280,8 +274,6 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
     transform_parameters = (
         list(sa_atm.parameters())
         + list(hla_atm.parameters())
-        + list(sa_cut_module.parameters())
-        + list(hla_cut_module.parameters())
     )
 
     # else:
@@ -305,14 +297,14 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
     else:
         print(f"Generated fresh transform optimizer.")
 
-    return (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer, transform_scheduler
+    return (sa_atm, hla_atm), transform_optimizer, transform_scheduler
 
 
 
 # %%
 def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_pre_mlp,
                     # hidden_augment_affine,
-                    atm, cut_module, image=None, segment_fn=None):
+                    atm, image=None, segment_fn=None):
 
     img_is_invalid = image is None or image.dim() == 0
 
@@ -390,7 +382,7 @@ def apply_affine_augmentation(affine_list, zoom_strength=0.1, offset_strength=0.
     return affine_list
 
 
-def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_module, hla_cut_module, segment_fn):
+def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, segment_fn):
     b_label = batch['label']
     b_image = batch['image']
 
@@ -455,7 +447,7 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                     nifti_affine,
                     sa_input_grid_affine,
                     # hidden_augment_affine,
-                    sa_atm, sa_cut_module,
+                    sa_atm,
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
 
             # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
@@ -482,7 +474,7 @@ def get_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, sa_cut_m
                     nifti_affine,
                     hla_input_grid_affine,
                     # hidden_augment_affine,
-                    hla_atm, hla_cut_module,
+                    hla_atm,
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
 
             # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
@@ -568,11 +560,11 @@ def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
 
     return elbo
 
-def model_step(config, phase, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, batch, label_tags, class_weights, segment_fn, autocast_enabled=False):
+def model_step(config, phase, epx, model, sa_atm, hla_atm, batch, label_tags, class_weights, segment_fn, autocast_enabled=False):
 
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
-        b_input, b_target, b_grid_affines = get_model_input(batch, phase, config, len(label_tags), sa_atm, hla_atm, sa_cut_module, hla_cut_module, segment_fn)
+        b_input, b_target, b_grid_affines = get_model_input(batch, phase, config, len(label_tags), sa_atm, hla_atm, segment_fn)
 
         # nib.save(nib.Nifti1Image((
         #     b_target[0].argmax(0)
@@ -624,7 +616,7 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, sa_cut_module, hla_cu
 
 
 
-def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, dataset, dataloader, class_weights, phase='train',
+def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, dataset, dataloader, class_weights, phase='train',
     autocast_enabled=False, all_optimizers=None, scaler=None, store_net_output_to=None, r_params=None):
     PHASES = ['train', 'val', 'test']
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
@@ -688,7 +680,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
         if phase == 'train':
             y_hat, b_target, loss, b_input = model_step(
                 config, phase, epx,
-                model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
+                model, sa_atm, hla_atm,
                 batch,
                 dataset.label_tags, class_weights, segment_fn, autocast_enabled)
 
@@ -728,7 +720,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, h
             with torch.no_grad():
                 y_hat, b_target, loss, b_input = model_step(
                     config, phase, epx,
-                    model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
+                    model, sa_atm, hla_atm,
                     batch,
                     dataset.label_tags, class_weights, segment_fn, autocast_enabled)
 
@@ -977,7 +969,7 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
     sa_atm_override = stage['sa_atm'] if stage is not None and 'sa_atm' in stage else None
     hla_atm_override = stage['hla_atm'] if stage is not None and 'hla_atm' in stage else None
 
-    (sa_atm, hla_atm, sa_cut_module, hla_cut_module), transform_optimizer, transform_scheduler = get_transform_model(
+    (sa_atm, hla_atm), transform_optimizer, transform_scheduler = get_transform_model(
         config, len(training_dataset.label_tags), _path=transform_mdl_chk_path,
         sa_atm_override=sa_atm_override, hla_atm_override=hla_atm_override)
 
@@ -1002,7 +994,7 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
 
         if not run_test_once_only:
             train_loss, mean_transform_dict = epoch_iter(
-                epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module,
+                epx, global_idx, config, model, sa_atm, hla_atm,
                 training_dataset, train_dataloader, class_weights,
                 phase='train', autocast_enabled=autocast_enabled,
                 all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None,
@@ -1011,10 +1003,10 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
             if stage:
                 stage.update(mean_transform_dict)
 
-            val_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, training_dataset, val_dataloader, class_weights,
+            val_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, training_dataset, val_dataloader, class_weights,
                 phase='val', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=None)
 
-        test_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, sa_cut_module, hla_cut_module, test_dataset, test_dataloader, class_weights,
+        test_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, test_dataset, test_dataloader, class_weights,
             phase='test', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=config.test_only_and_output_to)
 
         quality_metric = val_loss
@@ -1046,8 +1038,6 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
                     model=model,
                     sa_atm=sa_atm,
                     hla_atm=hla_atm,
-                    sa_cut_module=sa_cut_module,
-                    hla_cut_module=hla_cut_module,
                     optimizer=all_optimizers['optimizer'],
                     transform_optimizer=all_optimizers['transform_optimizer'],
                     scheduler=scheduler,
@@ -1064,8 +1054,6 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
                 model=model,
                 sa_atm=sa_atm,
                 hla_atm=hla_atm,
-                sa_cut_module=sa_cut_module,
-                hla_cut_module=hla_cut_module,
                 optimizer=optimizer,
                 scheduler=scheduler,
                 scaler=scaler)

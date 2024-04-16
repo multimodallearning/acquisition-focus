@@ -1,11 +1,5 @@
 import os
 import inspect
-import numpy as np
-import torch
-import torch.nn.functional as F
-from contextlib import contextmanager
-
-from enum import Enum, auto
 
 
 
@@ -25,32 +19,8 @@ class DotDict(dict):
 
 
 
-class DataParamMode(Enum): # TODO clean
-    INSTANCE_PARAMS = auto()
-    DISABLED = auto()
-
-
-
-class LabelDisturbanceMode(Enum):
-    FLIP_ROLL = auto()
-    AFFINE = auto()
-
-
-
-def in_notebook():
-    try:
-        get_ipython().__class__.__name__
-        return True
-    except NameError:
-        return False
-
-
-
 def get_script_dir():
-    if in_notebook:
-        return os.path.abspath('')
-    else:
-        frame = inspect.stack()[1]
-        module = inspect.getmodule(frame[0])
-        filename = module.__file__
-        return os.path.dirname(os.path.realpath(filename))
+    frame = inspect.stack()[1]
+    module = inspect.getmodule(frame[0])
+    filename = module.__file__
+    return os.path.dirname(os.path.realpath(filename))
