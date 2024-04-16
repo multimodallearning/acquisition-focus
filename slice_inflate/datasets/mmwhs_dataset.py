@@ -31,6 +31,7 @@ class MMWHSDataset(BaseDataset):
     def extract_3d_id(self, _input):
         return _input
 
+    @staticmethod
     def get_file_id(file_path):
         file_path = Path(file_path)
         modality, patient_id, type_str = re.findall(

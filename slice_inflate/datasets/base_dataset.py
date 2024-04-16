@@ -57,7 +57,7 @@ class BaseDataset(Dataset):
         self.disturbed_idxs = []
 
         # Load base 3D data
-        all_3d_data_dict = self.load_data(self.self_attributes)
+        all_3d_data_dict = self.load_data()
 
         self.self_attributes['img_paths'] = self.img_paths = all_3d_data_dict.pop('img_paths', {})
         self.self_attributes['label_paths'] = self.label_paths = all_3d_data_dict.pop('label_paths', {})
@@ -207,8 +207,8 @@ class BaseDataset(Dataset):
 
             tmp, _, hires_nii_affine = nifti_grid_sample(
                 tmp.unsqueeze(0).unsqueeze(0),
-                loaded_nii_affine.view(1,4,4), ras_transform_mat=None,
-                fov_mm=torch.as_tensor(self.hires_fov_mm), fov_vox=torch.as_tensor(self.hires_fov_vox),
+                loaded_nii_affine.view(1,4,4), ras_transform_affine=None,
+                target_fov_mm=torch.as_tensor(self.self_attributes['hires_fov_mm']), target_fov_vox=torch.as_tensor(self.self_attributes['hires_fov_vox']),
                 is_label=is_label,
                 pre_grid_sample_affine=None,
                 # pre_grid_sample_hidden_affine=None,
@@ -244,8 +244,8 @@ class BaseDataset(Dataset):
                 # Save prescan gt
                 prescan_label, _, prescan_nii_affine = nifti_grid_sample(
                     tmp.unsqueeze(0).unsqueeze(0),
-                    hires_nii_affine.view(1,4,4), ras_transform_mat=None,
-                    fov_mm=torch.as_tensor(self.prescan_fov_mm), fov_vox=torch.as_tensor(self.prescan_fov_vox),
+                    hires_nii_affine.view(1,4,4), ras_transform_affine=None,
+                    target_fov_mm=torch.as_tensor(self.self_attributes['prescan_fov_mm']), target_fov_vox=torch.as_tensor(self.self_attributes['prescan_fov_vox']),
                     is_label=True,
                     pre_grid_sample_affine=None,
                     # pre_grid_sample_hidden_affine=None,
@@ -258,12 +258,12 @@ class BaseDataset(Dataset):
                 additional_data_3d[_3d_id]['prescan_nii_affine'] = prescan_nii_affine.squeeze()
                 additional_data_3d[_3d_id]['prescan_gt'] = prescan_label.squeeze()
 
-            if not is_label and self.clinical_view_affine_type == 'from-segmented':
+            if not is_label and self.self_attributes['clinical_view_affine_type'] == 'from-segmented':
                 # Segment from image
                 prescan_image, _, prescan_nii_affine = nifti_grid_sample(
                     tmp.unsqueeze(0).unsqueeze(0),
-                    hires_nii_affine.view(1,4,4), ras_transform_mat=None,
-                    fov_mm=torch.as_tensor(self.prescan_fov_mm), fov_vox=torch.as_tensor(self.prescan_fov_vox),
+                    hires_nii_affine.view(1,4,4), ras_transform_affine=None,
+                    target_fov_mm=torch.as_tensor(self.self_attributes['prescan_fov_mm']), target_fov_vox=torch.as_tensor(self.self_attributes['prescan_fov_vox']),
                     is_label=False,
                     pre_grid_sample_affine=None,
                     # pre_grid_sample_hidden_affine=None,
@@ -301,7 +301,7 @@ class BaseDataset(Dataset):
                 label_scores_dataset = get_batch_score_per_label(label_scores_dataset, 'hd95',
                     case_hd95, self.label_tags, exclude_bg=True)
 
-            elif is_label and self.clinical_view_affine_type == 'from-gt':
+            elif is_label and self.self_attributes['clinical_view_affine_type'] == 'from-gt':
                 # Take GT for prescan
                 additional_data_3d[_3d_id]['prescan_label'] = additional_data_3d[_3d_id]['prescan_gt']
 
@@ -336,11 +336,7 @@ class BaseDataset(Dataset):
     def extract_3d_id(self, _input):
         raise NotImplementedError()
 
-    @abstractmethod
-    def get_file_id(file_path):
-        raise NotImplementedError()
-
     @staticmethod
     @abstractmethod
-    def extract_2d_data(self_attributes: dict):
+    def get_file_id( file_path):
         raise NotImplementedError()

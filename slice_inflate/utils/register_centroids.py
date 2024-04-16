@@ -1,6 +1,6 @@
 import nibabel as nib
 import torch
-from slice_inflate.utils.clinical_cardiac_views import get_center_and_median, get_sub_sp_tensor
+from slice_inflate.utils.sparse_tensor_utils import get_center_and_median, get_sub_sp_tensor
 from slice_inflate.models.learnable_transform import compute_rotation_matrix_from_ortho6d
 
 

@@ -1,6 +1,6 @@
 import torch
-from torch.utils.checkpoint import checkpoint
 import torch.cuda.amp as amp
+from torch.utils.checkpoint import checkpoint
 
 
 

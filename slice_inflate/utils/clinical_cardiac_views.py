@@ -183,7 +183,7 @@ def get_slice_center_inertia_in_volume_space(sp_label, volume_affine, pix_affine
     slicing_grid_affine = get_torch_grid_affine_from_pix_affine(pix_affine, label_shape)
 
     lbl_slice, *_ = nifti_grid_sample(sp_label.to_dense()[None,None], volume_affine[None],
-        fov_mm=FOV_MM, fov_vox=FOV_VOX,
+        target_fov_mm=FOV_MM, target_fov_vox=FOV_VOX,
         is_label=True, pre_grid_sample_affine=slicing_grid_affine[None],
         dtype=torch.float32
     )

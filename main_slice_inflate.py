@@ -174,7 +174,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, loa
         optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.995)
 
-    scaler = amp.GradScaler()
+    scaler = torch.cuda.amp.GradScaler()
 
 
     if _path and not load_model_only:
