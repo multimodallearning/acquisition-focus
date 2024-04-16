@@ -51,7 +51,7 @@ from slice_inflate.utils.torch_utils import get_batch_score_per_label, save_mode
 
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
 from slice_inflate.models.learnable_transform import AffineTransformModule, HardCutModule
-from slice_inflate.losses.regularization import init_regularization_params, Stage, StageIterator
+from slice_inflate.losses.regularization import Stage, StageIterator
 from slice_inflate.utils.nifti_utils import get_zooms
 from slice_inflate.utils.nifti_utils import nifti_grid_sample, get_zooms
 from slice_inflate.models.learnable_transform import get_random_affine
@@ -617,7 +617,7 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, batch, label_tags, cl
 
 
 def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, dataset, dataloader, class_weights, phase='train',
-    autocast_enabled=False, all_optimizers=None, scaler=None, store_net_output_to=None, r_params=None):
+    autocast_enabled=False, all_optimizers=None, scaler=None, store_net_output_to=None):
     PHASES = ['train', 'val', 'test']
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
 
@@ -683,12 +683,6 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, dataset, dataloa
                 batch,
                 dataset.label_tags, class_weights, segment_fn, autocast_enabled)
 
-            if r_params is None:
-                regularization = 0.0
-            else:
-                regularization = torch.cat([r().view(1,1).to(device=loss.device) for r in r_params.values()]).sum()
-
-            loss = loss + regularization
             loss_accum = loss / config.num_grad_accum_steps
 
             if config.use_autocast:
@@ -975,7 +969,6 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
     all_optimizers = dict(optimizer=optimizer, transform_optimizer=transform_optimizer)
     all_schedulers = dict(scheduler=scheduler, transform_scheduler=transform_scheduler)
 
-    r_params = stage['r_params'] if stage is not None and 'r_params' in stage else None
     class_weights = None
 
     autocast_enabled = 'cuda' in config.device and config['use_autocast']
@@ -996,8 +989,7 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
                 epx, global_idx, config, model, sa_atm, hla_atm,
                 training_dataset, train_dataloader, class_weights,
                 phase='train', autocast_enabled=autocast_enabled,
-                all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None,
-                r_params=r_params)
+                all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None)
 
             if stage:
                 stage.update(mean_transform_dict)
@@ -1191,18 +1183,8 @@ if __name__ == '__main__':
             normal_run(run_name_with_fold, config_dict, fold_properties, training_dataset, test_dataset)
 
         elif config_dict['sweep_type'] == 'stage-sweep':
-
-            r_params = init_regularization_params(
-                [
-                    'hla_angles',
-                    'hla_offsets',
-                    'sa_angles',
-                    'sa_offsets',
-                ], lambda_r=0.01)
-
             all_params_stages = dict(
                 opt_first=Stage( # Optimize SA
-                    r_params=r_params,
                     cuts_mode='sa',
                     epochs=int(config_dict['epochs']*1.0),
                     use_affine_theta=True,
@@ -1211,7 +1193,6 @@ if __name__ == '__main__':
                     __activate_fn__=lambda self: None
                 ),
                 opt_second=Stage( # Optimize hla
-                    r_params=r_params,
                     cuts_mode='sa>hla',
                     epochs=int(config_dict['epochs']*1.0),
                     use_affine_theta=True,
