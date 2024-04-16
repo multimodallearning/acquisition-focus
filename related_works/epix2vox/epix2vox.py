@@ -5,7 +5,7 @@ import torch
 import torchvision.models
 from torch.optim import Adam
 
-from slice_inflate.utils.common_utils import DotDict
+from slice_inflate.utils.python_utils import DotDict
 
 from related_works.epix2vox.models.encoder_128 import Encoder as Encoder128
 from related_works.epix2vox.models.decoder_128 import Decoder as Decoder128

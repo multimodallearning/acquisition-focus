@@ -2,88 +2,8 @@ import numpy as np
 import torch
 from matplotlib import pyplot as plt
 from slice_inflate.utils.nifti_utils import nifti_grid_sample
+from slice_inflate.utils.sparse_tensor_utils import get_inertia_tensor, get_main_principal_axes, get_sub_sp_tensor
 
-
-
-def get_sub_sp_tensor(sp_tensor, eq_value: tuple):
-    values = sp_tensor._values()
-    indices = sp_tensor._indices()
-    sub_marker = torch.tensor([False]*values.numel())
-
-    for val in eq_value:
-        sub_marker |= sp_tensor._values() == val
-
-    return torch.sparse_coo_tensor(
-        indices[:,sub_marker],
-        values[sub_marker], size=sp_tensor.size()
-    )
-
-def replace_sp_tensor_values(sp_tensor, existing_values:tuple, new_values:tuple):
-    values = sp_tensor._values()
-    updated_values = values.clone()
-    indices = sp_tensor._indices()
-
-    for c_val, n_val in zip(existing_values, new_values):
-        updated_values[values == c_val] = n_val
-
-    return torch.sparse_coo_tensor(
-        indices,
-        updated_values, size=sp_tensor.size()
-    )
-
-def get_inertia_tensor(label):
-    # see https://en.wikipedia.org/wiki/Moment_of_inertia#Inertia_tensor
-    assert label.dim() == 3
-
-    if label.is_sparse:
-        sp_label = label
-    else:
-        sp_label = label.to_sparse()
-    idxs = sp_label._indices()
-    center = idxs.float().mean(1)
-    dists = idxs - center.view(3,1)
-    r2 = torch.linalg.vector_norm(dists, 2, dim=0)**2
-    I = torch.zeros(3,3)
-
-    for i in range(3):
-        x_i = dists[i]
-        for j in range(3):
-            x_j = dists[j]
-            kron = float(i==j)
-            I[i,j] = (r2 * kron - x_i * x_j).sum()
-    # print("inertia\n", I)
-    return center, I
-
-
-
-def get_center_and_median(label):
-    # see https://en.wikipedia.org/wiki/Moment_of_inertia#Inertia_tensor
-    assert label.dim() == 3
-
-    if label.is_sparse:
-        sp_label = label
-    else:
-        sp_label = label.to_sparse()
-
-    idxs = sp_label._indices()
-    if idxs.numel() == 0:
-        none_ret = torch.as_tensor(label.shape).to(label.device) / 2.
-        return none_ret, none_ret
-
-    center = idxs.float().mean(1)
-    median = idxs.float().median(1).values
-
-    return center, median
-
-
-
-def get_main_principal_axes(I):
-    assert I.shape == (3,3)
-    eigenvectors = torch.linalg.eig(I).eigenvectors.real.T
-    eigenvalues = torch.linalg.eig(I).eigenvalues.real
-    sorted_vectors = eigenvectors[eigenvalues.argsort()]
-
-    return sorted_vectors[0], sorted_vectors[1], sorted_vectors[2] #min, mid, max
 
 
 def proj_to_base_vect(vector, base_vector):
@@ -91,6 +11,7 @@ def proj_to_base_vect(vector, base_vector):
     assert D == 3
     base_vector = base_vector / torch.linalg.vector_norm(base_vector,2)
     return vector @ base_vector.view(3,1) * base_vector
+
 
 
 def get_fact_min_dist(idxs, center, fact, dir):
@@ -108,6 +29,7 @@ def get_fact_min_dist(idxs, center, fact, dir):
     return current_min_dist
 
 
+
 def get_extent_vect(start_fact, end_fact, idxs, center, dir):
     MIN_DIST = 1.73/2 # sqrt(3) vox
 
@@ -121,6 +43,7 @@ def get_extent_vect(start_fact, end_fact, idxs, center, dir):
             start_fact += (end_fact - start_fact)/2.
 
     return (start_fact+end_fact)/2. * dir
+
 
 
 def get_min_max_extent_along_axis(label, dir):
@@ -139,6 +62,7 @@ def get_min_max_extent_along_axis(label, dir):
     return  p_positive_extend, p_negative_extend
 
 
+
 def get_torch_grid_affine_from_pix_affine(pix_affine, shape):
     pt_affine = pix_affine.clone()
     pt_affine[:3,:3] = pt_affine[:3,:3].flip(0,1).T
@@ -147,9 +71,9 @@ def get_torch_grid_affine_from_pix_affine(pix_affine, shape):
     return pt_affine
 
 
+
 def get_pix_affine_from_center_and_plane_vects(px_center, main_plane_vect, plane_vect_two,
                                            px_center_projected=None, do_return_normal_three=False):
-
     # Normalize
     main_plane_vect /=torch.linalg.norm(main_plane_vect,2)
     plane_vect_two /=torch.linalg.norm(plane_vect_two,2)
@@ -173,6 +97,7 @@ def get_pix_affine_from_center_and_plane_vects(px_center, main_plane_vect, plane
         return affine, normal_three
 
     return affine
+
 
 
 def display_inertia(sp_label, affine=None):
@@ -204,6 +129,7 @@ def display_inertia(sp_label, affine=None):
         tr_label = torch.nn.functional.grid_sample(sp_label.to_dense().view([1,1]+list(sp_label.shape)).float(),
                                                     grid=grid, align_corners=False, mode='nearest')[0,0].int()
         plot_inertia(tr_label)
+
 
 
 def display_clinical_views(volume:torch.Tensor, sp_label:torch.Tensor, volume_affine:torch.Tensor,
@@ -248,6 +174,7 @@ def display_clinical_views(volume:torch.Tensor, sp_label:torch.Tensor, volume_af
     plt.close()
 
 
+
 def get_slice_center_inertia_in_volume_space(sp_label, volume_affine, pix_affine, label_shape, debug=False):
     FOV_MM = torch.tensor([300.,300.,1.])
     FOV_VOX = torch.tensor([128,128,1])
@@ -277,6 +204,7 @@ def get_slice_center_inertia_in_volume_space(sp_label, volume_affine, pix_affine
     return volume_space_min_principal, volume_space_mid_principal, volume_space_max_principal
 
 
+
 def get_vector_projection(projectee, base_vect, orthogonal_to_base=False):
     if orthogonal_to_base:
         return projectee - projectee @ base_vect * base_vect
@@ -284,10 +212,12 @@ def get_vector_projection(projectee, base_vect, orthogonal_to_base=False):
     return projectee @ base_vect * base_vect
 
 
+
 def get_angle_between_vectors(v1, v2):
     v1 = v1 / torch.linalg.norm(v1,2)
     v2 = v2 / torch.linalg.norm(v2,2)
     return torch.acos(v1 @ v2)
+
 
 
 def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_dict: dict,
@@ -298,8 +228,6 @@ def get_clinical_cardiac_view_affines(label: torch.Tensor, volume_affine, class_
     assert 'MYO' in class_dict
     assert 'LA' in class_dict
     assert num_sa_slices % 2 == 1 # We need a center slice
-
-    # nifti_zooms = (volume_affine[:3,:3]**2).sum(0).sqrt() # Currently zooms are not used
 
     label_shape = list(label.shape)
 

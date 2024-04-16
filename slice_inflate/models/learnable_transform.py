@@ -7,7 +7,7 @@ from slice_inflate.utils.torch_utils import determine_network_output_size
 
 from slice_inflate.utils.transform_utils import angle_axis_to_rotation_matrix, get_random_affine, compute_rotation_matrix_from_ortho6d
 
-from slice_inflate.datasets.clinical_cardiac_views import get_inertia_tensor, get_main_principal_axes, get_pix_affine_from_center_and_plane_vects, get_torch_grid_affine_from_pix_affine, get_center_and_median
+from slice_inflate.utils.clinical_cardiac_views import get_inertia_tensor, get_main_principal_axes, get_pix_affine_from_center_and_plane_vects, get_torch_grid_affine_from_pix_affine, get_center_and_median
 
 
 class ConvNet(torch.nn.Module):

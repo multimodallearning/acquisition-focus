@@ -1,5 +1,5 @@
 import torch
-from slice_inflate.datasets.clinical_cardiac_views import get_inertia_tensor, get_main_principal_axes, get_pix_affine_from_center_and_plane_vects, get_torch_grid_affine_from_pix_affine, get_center_and_median
+from slice_inflate.utils.clinical_cardiac_views import get_inertia_tensor, get_main_principal_axes, get_pix_affine_from_center_and_plane_vects, get_torch_grid_affine_from_pix_affine, get_center_and_median
 
 
 def get_random_affine(rotation_strength=0.2, zoom_strength=0.2, offset_strength=0.0):

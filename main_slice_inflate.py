@@ -10,7 +10,7 @@ import argparse
 
 import randomname
 
-from slice_inflate.utils.common_utils import get_script_dir
+from slice_inflate.utils.python_utils import get_script_dir
 THIS_SCRIPT_DIR = get_script_dir()
 
 os.environ['CACHE_PATH'] = str(Path(THIS_SCRIPT_DIR, '.cache'))
@@ -33,7 +33,7 @@ import wandb
 import contextlib
 from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, \
     log_oa_metrics, log_affine_param_stats, log_frameless_image, get_cuda_mem_info_str
-from slice_inflate.datasets.clinical_cardiac_views import get_class_volumes
+from slice_inflate.utils.clinical_cardiac_views import get_class_volumes
 import numpy as np
 import monai
 
@@ -45,7 +45,7 @@ from slice_inflate.datasets.mrxcat_dataset import MRXCATDataset
 
 from slice_inflate.models.interface_models import NNUNET_InterfaceModel, EPix2Vox_InterfaceModel
 
-from slice_inflate.utils.common_utils import DotDict
+from slice_inflate.utils.python_utils import DotDict
 from slice_inflate.utils.torch_utils import get_batch_score_per_label, save_model, \
     reduce_label_scores_epoch, get_binarized_from_onehot_label
 
@@ -551,16 +551,8 @@ def get_loss_value(y_hat, y_target):
     return DC_and_CE_loss({}, {})(y_hat, y_target.argmax(1, keepdim=True))
 
 
-def get_vae_loss_value(y_hat, y_target, z, mean, std, class_weights, model):
-    recon_loss = get_loss_value(y_hat, y_target, class_weights)#torch.nn.MSELoss()(y_hat, y_target)#gaussian_likelihood(y_hat, model.log_var_scale, y_target.float())
-    # recon_loss = eo.reduce(recon_loss, 'B C spatial -> B ()', 'mean')
-    kl = kl_divergence(z, mean, std)
 
-    elbo = (0.1*kl + recon_loss).mean()
-
-    return elbo
-
-def model_step(config, phase, epx, model, sa_atm, hla_atm, batch, label_tags, class_weights, segment_fn, autocast_enabled=False):
+def model_step(config, phase, epx, model, sa_atm, hla_atm, batch, label_tags, segment_fn, autocast_enabled=False):
 
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
@@ -616,7 +608,7 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, batch, label_tags, cl
 
 
 
-def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, dataset, dataloader, class_weights, phase='train',
+def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, dataset, dataloader, phase='train',
     autocast_enabled=False, all_optimizers=None, scaler=None, store_net_output_to=None):
     PHASES = ['train', 'val', 'test']
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
@@ -681,7 +673,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, dataset, dataloa
                 config, phase, epx,
                 model, sa_atm, hla_atm,
                 batch,
-                dataset.label_tags, class_weights, segment_fn, autocast_enabled)
+                dataset.label_tags, segment_fn, autocast_enabled)
 
             loss_accum = loss / config.num_grad_accum_steps
 
@@ -715,7 +707,7 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, dataset, dataloa
                     config, phase, epx,
                     model, sa_atm, hla_atm,
                     batch,
-                    dataset.label_tags, class_weights, segment_fn, autocast_enabled)
+                    dataset.label_tags, segment_fn, autocast_enabled)
 
             epx_losses.append(loss.item())
 
@@ -969,8 +961,6 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
     all_optimizers = dict(optimizer=optimizer, transform_optimizer=transform_optimizer)
     all_schedulers = dict(scheduler=scheduler, transform_scheduler=transform_scheduler)
 
-    class_weights = None
-
     autocast_enabled = 'cuda' in config.device and config['use_autocast']
 
     # c_model = torch.compile(model)
@@ -987,17 +977,17 @@ def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None,
         if not run_test_once_only:
             train_loss, mean_transform_dict = epoch_iter(
                 epx, global_idx, config, model, sa_atm, hla_atm,
-                training_dataset, train_dataloader, class_weights,
+                training_dataset, train_dataloader,
                 phase='train', autocast_enabled=autocast_enabled,
                 all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None)
 
             if stage:
                 stage.update(mean_transform_dict)
 
-            val_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, training_dataset, val_dataloader, class_weights,
+            val_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, training_dataset, val_dataloader,
                 phase='val', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=None)
 
-        test_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, test_dataset, test_dataloader, class_weights,
+        test_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, test_dataset, test_dataloader,
             phase='test', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=config.test_only_and_output_to)
 
         quality_metric = val_loss
