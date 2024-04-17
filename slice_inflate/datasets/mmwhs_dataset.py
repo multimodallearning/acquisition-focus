@@ -45,7 +45,7 @@ class MMWHSDataset(BaseDataset):
     def set_segment_fn(self, fold_idx):
         base_segment_fn = get_segment_fn(self.self_attributes['nnunet_segment_model_path'], fold_idx)
 
-        def segment_fn(input):
-            return base_segment_fn(input).permute(0,3,1,2) # Additional permutation is needed for MMWHS (nnUNet related error)
+        def segment_fn(b_image: torch.Tensor, b_spacing: torch.Tensor):
+            return base_segment_fn(b_image, b_spacing).permute(0,3,1,2) # Additional permutation is needed for MMWHS (nnUNet related error)
 
         self.segment_fn = segment_fn

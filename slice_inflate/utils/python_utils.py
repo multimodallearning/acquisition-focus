@@ -1,3 +1,5 @@
+import os
+from contextlib import contextmanager
 from pathlib import Path
 import sys
 import inspect
@@ -27,3 +29,15 @@ def get_script_dir(base_script=False):
     module = inspect.getmodule(frame[0])
     filename = module.__file__
     return Path(filename).resolve().parent
+
+
+
+@contextmanager
+def suppress_stdout():
+    with open(os.devnull, "w") as devnull:
+        old_stdout = sys.stdout
+        sys.stdout = devnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout

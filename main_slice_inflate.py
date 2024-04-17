@@ -27,9 +27,9 @@ import einops as eo
 
 import numpy as np
 import monai
-from nnunetv2.training.loss.compound_losses import DC_and_CE_loss
 
 from slice_inflate.running.stages import Stage, StageIterator
+from slice_inflate.utils.nnunetv2_utils import DC_and_CE_loss
 from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset
 from slice_inflate.datasets.mrxcat_dataset import MRXCATDataset
 from slice_inflate.models.interface_models import EPix2Vox_InterfaceModel

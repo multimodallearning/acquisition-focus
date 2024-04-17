@@ -16,27 +16,22 @@ from torch._dynamo import OptimizedModule
 import torch.nn.functional as F
 
 from scipy.ndimage import gaussian_filter
-import nnunetv2
-from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
-from nnunetv2.utilities.label_handling.label_handling import LabelManager
-from nnunetv2.utilities.helpers import empty_cache, dummy_context
-from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
+from acvl_utils.cropping_and_padding.bounding_boxes import bounding_box_to_slice
 
 from slice_inflate.utils.nifti_utils import nifti_grid_sample
 import slice_inflate.models.segmentation as segmentation_models
+from slice_inflate.utils.python_utils import suppress_stdout
+
+with suppress_stdout():
+    import nnunetv2
+    from nnunetv2.training.loss import compound_losses
+    from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
+    from nnunetv2.utilities.label_handling.label_handling import LabelManager
+    from nnunetv2.utilities.helpers import empty_cache, dummy_context
+    from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
+    DC_and_CE_loss = compound_losses.DC_and_CE_loss
 
 NUM_PROCESSES = 3
-
-
-@contextmanager
-def suppress_stdout():
-    with open(os.devnull, "w") as devnull:
-        old_stdout = sys.stdout
-        sys.stdout = devnull
-        try:
-            yield
-        finally:
-            sys.stdout = old_stdout
 
 
 
@@ -100,7 +95,7 @@ def run_inference_on_image(b_image: torch.Tensor, b_spacing: torch.Tensor,
             * torch.as_tensor([1,-1,1,1]) # TODO: check why inverting middle axis is needed
             )[None]
         resampled, *_ = nifti_grid_sample(img.view(1,1,*img_shape), volume_affine,
-            fov_mm=target_fov_mm, fov_vox=target_fov_vox)
+            target_fov_mm=target_fov_mm, target_fov_vox=target_fov_vox)
 
         resampled = (resampled - resampled.mean()) / resampled.std()
         data_elem = dict(
@@ -159,37 +154,6 @@ def get_segment_fn(trained_model_path, fold=0):
 
     return segment_closure
 
-def bounding_box_to_slice(bounding_box: List[List[int]]):
-    return tuple([slice(*i) for i in bounding_box])
-
-class SingleThreadedAugmenter(object):
-    """
-    Use this for debugging custom transforms. It does not use a background thread and you can therefore easily debug
-    into your augmentations. This should not be used for training. If you want a generator that uses (a) background
-    process(es), use MultiThreadedAugmenter.
-    Args:
-        data_loader (generator or DataLoaderBase instance): Your data loader. Must have a .next() function and return
-        a dict that complies with our data structure
-
-        transform (Transform instance): Any of our transformations. If you want to use multiple transformations then
-        use our Compose transform! Can be None (in that case no transform will be applied)
-    """
-    def __init__(self, data_loader, transform):
-        self.data_loader = data_loader
-        self.transform = transform
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        item = next(self.data_loader)
-        if self.transform is not None:
-            item = self.transform(**item)
-        return item
-
-    def next(self):
-        return self.__next__()
-
 
 
 def predict_from_data_iterator(data_iterator,
@@ -210,7 +174,7 @@ def predict_from_data_iterator(data_iterator,
     """
     each element returned by data_iterator must be a dict with 'data', 'ofile' and 'data_properites' keys!
     """
-    if num_processes_segmentation_export == 0 or 'NNUNET_DEBUG_FLAG' in os.environ:
+    if num_processes_segmentation_export == 0:
             network = network.to(device)
 
             r = []
@@ -262,7 +226,7 @@ def predict_from_data_iterator(data_iterator,
             ret = r
 
     else:
-        raise NotImplementedError()
+        raise NotImplementedError("Multithreaded prediction is disabled.")
     # clear device cache
     empty_cache(device)
     return ret
@@ -283,13 +247,6 @@ def predict_logits_from_preprocessed_data(data: torch.Tensor,
                                           verbose: bool = True,
                                           device: torch.device = torch.device('cuda')
                                           ) -> torch.Tensor:
-    """
-    IMPORTANT! IF YOU ARE RUNNING THE CASCADE, THE SEGMENTATION FROM THE PREVIOUS STAGE MUST ALREADY BE STACKED ON
-    TOP OF THE IMAGE AS ONE-HOT REPRESENTATION! SEE PreprocessAdapter ON HOW THIS SHOULD BE DONE!
-    """
-    # we have some code duplication here but this allows us to run with perform_everything_on_gpu=True as
-    # default and not have the entire program crash in case of GPU out of memory. Neat. That should make
-    # things a lot faster for some datasets.
     label_manager = plans_manager.get_label_manager(dataset_json)
     num_seg_heads = label_manager.num_segmentation_heads
 
