@@ -183,18 +183,6 @@ def get_atm(config, num_classes, view, _path=None):
 
 
 
-class NoneOptimizer():
-    def __init__(self):
-        super().__init__()
-    def step(self):
-        pass
-    def zero_grad(self):
-        pass
-    def state_dict(self):
-        return {}
-
-
-
 def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, hla_atm_override=None):
     device = config.device
 
@@ -836,7 +824,7 @@ def get_fold_postfix(fold_properties):
     fold_idx, _ = fold_properties
     return f'fold-{fold_idx}' if fold_idx != -1 else ""
 
-def run_dl(run_name, config, fold_properties, stage=None, training_dataset=None, test_dataset=None):
+def run_dl(config, fold_properties, stage=None, training_dataset=None, test_dataset=None):
     # reset_determinism()
 
     fold_idx, (train_idxs, val_idxs) = fold_properties
@@ -983,7 +971,7 @@ def normal_run(run_name, config_dict, fold_properties, training_dataset, test_da
         run.name = run_name
         print("Running", run.name)
         config = wandb.config
-        run_dl(run.name, config, fold_properties, training_dataset=training_dataset, test_dataset=test_dataset)
+        run_dl(config, fold_properties, training_dataset=training_dataset, test_dataset=test_dataset)
 
 
 
@@ -1007,7 +995,7 @@ def stage_sweep_run(run_name, config_dict, fold_properties, all_stages, training
             print("Running", run.name)
             config = wandb.config
 
-            run_dl(run.name, config, fold_properties, stage, training_dataset, test_dataset,)
+            run_dl(config, fold_properties, stage, training_dataset, test_dataset)
         wandb.finish()
         torch.cuda.empty_cache()
         print(get_cuda_mem_info_str())

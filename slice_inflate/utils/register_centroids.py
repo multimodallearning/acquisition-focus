@@ -50,8 +50,7 @@ def register_centroids(fixed_label, moving_label, DOF=6):
 
     optim = torch.optim.AdamW([zoom_param, rot_params, trans_params], lr=0.05, betas=(0.9, 0.999))
 
-    lss = []
-    for i in range(iters):
+    for _ in range(iters):
         zoom_mat = torch.eye(4) * zoom_param
         transform_matrix = zoom_mat @ compute_rotation_matrix_from_ortho6d(rot_params.view(1,6))
         transform_matrix[0,:3,-1] += trans_params
