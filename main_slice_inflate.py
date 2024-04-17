@@ -42,6 +42,7 @@ def prepare_data(config):
     cache_path.mkdir(parents=True, exist_ok=True)
     arghash = joblib.hash(joblib.hash(args)+joblib.hash(kwargs))
     hashfile = cache_path / f"argshash_{arghash}_dataset.dil"
+    
     if config.use_caching:
         if cache_path.is_file():
             print("Loading dataset from cache:", hashfile)

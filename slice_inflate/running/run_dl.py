@@ -18,7 +18,7 @@ import monai
 
 from slice_inflate.utils.nnunetv2_utils import DC_and_CE_loss
 from slice_inflate.models.interface_models import EPix2Vox_InterfaceModel
-from slice_inflate.models.learnable_transform import AffineTransformModule, get_random_affine
+from slice_inflate.models.learnable_transform import ATModulesContainer, AffineTransformModule, get_random_affine
 from slice_inflate.models.hybrid_unet import HybridUnet
 from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, \
     log_oa_metrics, log_affine_param_stats, log_frameless_image, get_cuda_mem_info_str
@@ -100,87 +100,41 @@ def get_reconstruction_model(config, num_classes, save_path=None, load_model_onl
 
 
 
-def get_atm(config, num_classes, view, _path=None):
-    assert view in ['sa', 'hla']
+def get_transform_model(config, num_classes, save_path=None):
     device = config.device
 
-    # Add atm models
-    atm = AffineTransformModule(num_classes,
-        torch.tensor(config.prescan_fov_mm),
-        torch.tensor(config.prescan_fov_vox),
-        torch.tensor(config.slice_fov_mm),
-        torch.tensor(config.slice_fov_vox),
-        offset_clip_value=config['offset_clip_value'],
-        zoom_clip_value=config['zoom_clip_value'],
-        optim_method=config.affine_theta_optim_method,
-        tag=view,
-        rotate_slice_to_min_principle=config.rotate_slice_to_min_principle)
+    atm_container = ATModulesContainer(config, num_classes)
+    atm_container.to(device)
+    set_requires_grad(atm_container, False)
 
-    if _path:
-        assert Path(_path).is_dir()
-        atm_dict = torch.load(Path(_path).joinpath(f'{view}_atm.pth'), map_location=device)
-        print(f"Loading {view} atm from {_path}")
-        print(atm.load_state_dict(atm_dict, strict=False))
-    return atm
-
-
-
-def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, hla_atm_override=None):
-    device = config.device
-
-    if isinstance(sa_atm_override, AffineTransformModule):
-        # Check if atm is set externally
-        sa_atm = sa_atm_override
-    else:
-        sa_atm = get_atm(config, num_classes, view='sa', _path=_path)
-
-    if isinstance(hla_atm_override, AffineTransformModule):
-        # Check if atm is set externally
-        hla_atm = hla_atm_override
-    else:
-        hla_atm = get_atm(config, num_classes, view='hla', _path = _path)
-
-    sa_atm.to(device)
-    hla_atm.to(device)
-
-    set_requires_grad([sa_atm, hla_atm], False)
-
-    if config.cuts_mode == 'sa':
-        set_requires_grad([sa_atm.localisation_net], True)
-    elif config.cuts_mode in ['hla', 'sa>hla']:
-        set_requires_grad([hla_atm.localisation_net], True)
-    elif config.cuts_mode == 'sa+hla':
-        set_requires_grad([
-            sa_atm.localisation_net,
-            hla_atm.localisation_net,
-        ], True)
+    if config.view_optimization_mode == 'opt-current-fix-previous':
+        set_requires_grad([atm_container.get_next_non_optimized_view_module().localization_net], True)
+    elif config.view_optimization_mode == 'opt-all':
+        set_requires_grad([mod.localization_net for mod in atm_container], True)
+    elif config.view_optimization_mode == 'opt-none':
+        pass
     else:
         raise ValueError()
 
-    transform_parameters = (
-        list(sa_atm.parameters())
-        + list(hla_atm.parameters())
-    )
+    transform_parameters = atm_container.get_next_non_optimized_view_module().parameters()
 
-    if config.train_affine_theta:
+    if config.view_optimization_mode in ['opt-all', 'opt-current-fix-previous']:
         assert config.use_affine_theta
-
-    if config.train_affine_theta:
         transform_optimizer = torch.optim.AdamW(transform_parameters, weight_decay=0.1, lr=config.lr*2.0)
         transform_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(transform_optimizer, T_0=int(config.epochs/4)+1)
     else:
         transform_optimizer = NoneOptimizer()
         transform_scheduler = None
 
-    if _path and config.train_affine_theta:
-        assert Path(_path).is_dir()
-        print(f"Loading transform optimizer from {_path}")
-        transform_optimizer.load_state_dict(torch.load(Path(_path).joinpath('transform_optimizer.pth'), map_location=device))
+    if save_path and Path(save_path).is_dir():
+        print(f"Loading transform optimizer from {save_path}")
+        atm_container.load_state_dict(torch.load(Path(save_path)/ 'atm_container.pth'))
+        transform_optimizer.load_state_dict(torch.load(Path(save_path).joinpath('transform_optimizer.pth'), map_location=device))
 
     else:
         print(f"Generated fresh transform optimizer.")
 
-    return (sa_atm, hla_atm), transform_optimizer, transform_scheduler
+    return atm_container, transform_optimizer, transform_scheduler
 
 
 
@@ -317,7 +271,7 @@ def get_reconstruction_model_input(batch, phase, config, num_classes, sa_atm, hl
             offset_strength=0.,
         )
 
-    if 'sa' in config.cuts_mode:
+    if 'opt-current-fix-previous' in config.view_optimization_mode:
         sa_ctx = torch.no_grad if not sa_atm.training else contextlib.nullcontext
         with sa_ctx():
             sa_image_slc, sa_label_slc, sa_grid_affine = \
@@ -344,7 +298,7 @@ def get_reconstruction_model_input(batch, phase, config, num_classes, sa_atm, hl
             # plt.imshow(sa_label_slc[0].argmax(0).squeeze().cpu().numpy())
             # plt.savefig('sa_label_slc.png')
 
-    if 'hla' in config.cuts_mode:
+    if 'hla' in config.view_optimization_mode:
         hla_ctx = torch.no_grad if not hla_atm.training else contextlib.nullcontext
         with hla_ctx():
             hla_image_slc, hla_label_slc, hla_grid_affine = \
@@ -367,16 +321,16 @@ def get_reconstruction_model_input(batch, phase, config, num_classes, sa_atm, hl
                     offset_strength=0.,
                 )[0].to(nifti_affine)
 
-    if config.cuts_mode == 'sa':
+    if config.view_optimization_mode == 'opt-current-fix-previous':
         slices = [sa_label_slc, sa_label_slc]
         grid_affines = [sa_grid_affine, sa_grid_affine]
-    elif config.cuts_mode == 'hla':
+    elif config.view_optimization_mode == 'hla':
         slices = [hla_label_slc, hla_label_slc]
         grid_affines = [hla_grid_affine, hla_grid_affine]
-    elif config.cuts_mode == 'sa>hla':
+    elif config.view_optimization_mode == 'opt-current-fix-previous':
         slices = [sa_label_slc.detach(), hla_label_slc]
         grid_affines = [sa_grid_affine, hla_grid_affine]
-    elif config.cuts_mode == 'sa+hla':
+    elif config.view_optimization_mode == 'sa+hla':
         slices = [sa_label_slc, hla_label_slc]
         grid_affines = [sa_grid_affine, hla_grid_affine]
     else:
@@ -460,10 +414,13 @@ def model_step(config, phase, epx, model, sa_atm, hla_atm, batch, label_tags, se
 
 
 
-def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, dataset, dataloader, phase='train',
+def epoch_iter(epx, global_idx, config, model, atm_container, dataset, dataloader, phase='train',
     autocast_enabled=False, all_optimizers=None, scaler=None, store_net_output_to=None):
     PHASES = ['train', 'val', 'test']
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
+
+    sa_atm = atm_container[0] # TODO remove
+    hla_atm = atm_container[1] # TODO remove
 
     epx_losses = []
 
@@ -491,23 +448,13 @@ def epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, dataset, dataloa
         model.train()
 
         if config.train_affine_theta:
-            if 'sa' in config.cuts_mode and not config.cuts_mode == 'sa>hla':
-                sa_atm.train()
-            else:
-                sa_atm.eval()
-
-            if 'hla' in config.cuts_mode:
-                hla_atm.train()
-            else:
-                hla_atm.eval()
-        else:
-            sa_atm.eval()
-            hla_atm.eval()
+            atm_container.eval()
+            if 'opt-current-fix-previous' in config.view_optimization_mode:
+                atm_container.get_next_non_optimized_view_module().train()
 
     else:
         model.eval()
-        sa_atm.eval()
-        hla_atm.eval()
+        atm_container.eval()
 
     segment_fn = dataset.segment_fn
 
@@ -800,12 +747,9 @@ def run_dl(base_dir, config, fold_properties, stage=None, training_dataset=None,
 
     # Load transformation model from checkpoint, if any
     transform_mdl_chk_path = config.transform_model_checkpoint_path if 'transform_model_checkpoint_path' in config else None
-    sa_atm_override = stage['sa_atm'] if stage is not None and 'sa_atm' in stage else None
-    hla_atm_override = stage['hla_atm'] if stage is not None and 'hla_atm' in stage else None
 
-    (sa_atm, hla_atm), transform_optimizer, transform_scheduler = get_transform_model(
-        config, len(training_dataset.label_tags), _path=transform_mdl_chk_path,
-        sa_atm_override=sa_atm_override, hla_atm_override=hla_atm_override)
+    atm_container, transform_optimizer, transform_scheduler = get_transform_model(
+        config, len(training_dataset.label_tags), save_path=transform_mdl_chk_path)
 
     all_optimizers = dict(optimizer=optimizer, transform_optimizer=transform_optimizer)
     all_schedulers = dict(scheduler=scheduler, transform_scheduler=transform_scheduler)
@@ -825,7 +769,7 @@ def run_dl(base_dir, config, fold_properties, stage=None, training_dataset=None,
 
         if not run_test_once_only:
             train_loss, mean_transform_dict = epoch_iter(
-                epx, global_idx, config, model, sa_atm, hla_atm,
+                epx, global_idx, config, model, atm_container,
                 training_dataset, train_dataloader,
                 phase='train', autocast_enabled=autocast_enabled,
                 all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None)
@@ -833,10 +777,10 @@ def run_dl(base_dir, config, fold_properties, stage=None, training_dataset=None,
             if stage:
                 stage.update(mean_transform_dict)
 
-            val_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, training_dataset, val_dataloader,
+            val_loss, _ = epoch_iter(epx, global_idx, config, model, atm_container, training_dataset, val_dataloader,
                 phase='val', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=None)
 
-        test_loss, _ = epoch_iter(epx, global_idx, config, model, sa_atm, hla_atm, test_dataset, test_dataloader,
+        test_loss, _ = epoch_iter(epx, global_idx, config, model, atm_container, test_dataset, test_dataloader,
             phase='test', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=config.test_only_and_output_to)
 
         quality_metric = val_loss
@@ -869,8 +813,7 @@ def run_dl(base_dir, config, fold_properties, stage=None, training_dataset=None,
                     epx=epx,
                     loss=train_loss,
                     model=model,
-                    sa_atm=sa_atm,
-                    hla_atm=hla_atm,
+                    atm_container=atm_container,
                     optimizer=all_optimizers['optimizer'],
                     transform_optimizer=all_optimizers['transform_optimizer'],
                     scheduler=scheduler,
@@ -888,8 +831,7 @@ def run_dl(base_dir, config, fold_properties, stage=None, training_dataset=None,
                 epx=epx,
                 loss=train_loss,
                 model=model,
-                sa_atm=sa_atm,
-                hla_atm=hla_atm,
+                atm_container=atm_container,
                 optimizer=optimizer,
                 scheduler=scheduler,
                 scaler=scaler)

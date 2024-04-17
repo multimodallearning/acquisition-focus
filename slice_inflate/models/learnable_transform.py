@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 
@@ -33,7 +35,7 @@ class ConvNet(torch.nn.Module):
 
 
 
-class LocalisationNet(torch.nn.Module):
+class LocalizationNet(torch.nn.Module):
     def __init__(self, input_channels, output_size, size_3d):
         super().__init__()
 
@@ -64,7 +66,7 @@ class AffineTransformModule(torch.nn.Module):
         volume_fov_mm, volume_fov_vox,
         slice_fov_mm, slice_fov_vox,
         optim_method='angle-axis', use_affine_theta=True,
-        offset_clip_value=1., zoom_clip_value=2., tag=None,
+        offset_clip_value=1., zoom_clip_value=2., view_id=None,
         align_corners=False, rotate_slice_to_min_principle=False):
 
         super().__init__()
@@ -113,13 +115,13 @@ class AffineTransformModule(torch.nn.Module):
         ).round().int().item()
         self.arra = torch.arange(0, self.vox_range) + (self.spat - self.vox_range) // 2
 
-        self.localisation_net = LocalisationNet(
+        self.localization_net = LocalizationNet(
             input_channels,
             self.ap_space + 3*self.vox_range + 1, # 3*spatial dimension for translational parameters and 1x zoom parameter
             size_3d=volume_fov_vox
         )
 
-        self.tag = tag
+        self.view_id = view_id
         self.align_corners = align_corners
 
         self.init_theta_t_offsets = torch.nn.Parameter(torch.zeros([3]), requires_grad=False)
@@ -191,7 +193,7 @@ class AffineTransformModule(torch.nn.Module):
     def get_batch_affines(self, x):
         B,C,D,H,W = x.shape
 
-        theta_atz_p = self.localisation_net(x)
+        theta_atz_p = self.localization_net(x)
         device = theta_atz_p.device
         theta_ap = theta_atz_p[:,:self.ap_space]
         theta_tp = theta_atz_p[:,self.ap_space:-1].view(B,3,self.vox_range)
@@ -385,3 +387,49 @@ def rotate_slice_to_min_principle(x_input, nii_affine, is_label=False, align_aff
                                                                     is_label=is_label)
 
     return y_output, b_align_affines, transformed_nii_affine
+
+
+
+class ATModulesContainer(torch.nn.ModuleList):
+    def __init__(self, config, num_classes):
+        super().__init__(self)
+
+        for view_id in config.view_ids:
+            self.add_new_atm(view_id, config, num_classes)
+        self.is_optimized = torch.nn.Parameter(torch.tensor(len(config.view_ids) * [False]), requires_grad=False)
+
+    def add_new_atm(self, view_id, config, num_classes):
+        atm = AffineTransformModule(num_classes,
+            torch.tensor(config.prescan_fov_mm),
+            torch.tensor(config.prescan_fov_vox),
+            torch.tensor(config.slice_fov_mm),
+            torch.tensor(config.slice_fov_vox),
+            offset_clip_value=config.offset_clip_value,
+            zoom_clip_value=config.zoom_clip_value,
+            optim_method=config.affine_theta_optim_method,
+            view_id=view_id,
+            rotate_slice_to_min_principle=config.rotate_slice_to_min_principle)
+
+        self.append(atm)
+
+    def state_dict(self, *args, **kwargs):
+        state_dict = super().state_dict(*args, **kwargs)
+        state_dict.update({'is_optimized': self.get_active_views()})
+        return state_dict
+
+    def get_active_views(self):
+        return self.is_optimized.cpu() | self.get_all_atms_requires_grad()
+    
+    def get_all_atms_requires_grad(self):
+        return torch.tensor([next(atm.localization_net.parameters()).requires_grad for atm in self])
+
+    def get_next_non_optimized_view_module(self):
+        next_idx = self.__get_next_non_optimized_idx__()
+        if next_idx is not None:
+            return self[next_idx]
+        return
+
+    def __get_next_non_optimized_idx__(self):
+        if False in self.is_optimized:
+            return (self.is_optimized == False).nonzero()[0]
+        return

@@ -53,20 +53,20 @@ class Stage(dict):
 def set_previous_stage_transform_chk(self):
     self['transform_model_checkpoint_path'] = self['save_path']
 
-
+# view_optimization_mode in ['opt-current-fix-previous', 'opt-all', 'opt-none']
 
 def get_std_stages(config):
     std_stages = dict(
-        opt_first=Stage( # Optimize SA
-            cuts_mode='sa',
+        opt_first=Stage( # Optimize first view
+            view_optimization_mode='opt-current-fix-previous',
             epochs=int(config['epochs']*1.0),
             use_affine_theta=True,
             train_affine_theta=True,
             do_output=True,
             __activate_fn__=lambda self: None
         ),
-        opt_second=Stage( # Optimize hla
-            cuts_mode='sa>hla',
+        opt_second=Stage( # Optimize second view
+            view_optimization_mode='opt-current-fix-previous',
             epochs=int(config['epochs']*1.0),
             use_affine_theta=True,
             train_affine_theta=True,
@@ -75,7 +75,7 @@ def get_std_stages(config):
         ),
         opt_both_fix=Stage( # Final optimized run
             do_output=True,
-            cuts_mode='sa+hla',
+            view_optimization_mode='opt-none',
             epochs=config['epochs'],
             use_affine_theta=True,
             train_affine_theta=False,
@@ -83,7 +83,7 @@ def get_std_stages(config):
         ),
         ref=Stage( # Reference run
             do_output=True,
-            cuts_mode='sa+hla',
+            view_optimization_mode='opt-none',
             epochs=config['epochs'],
             train_affine_theta=False,
             use_affine_theta=False,
