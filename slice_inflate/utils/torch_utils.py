@@ -166,3 +166,16 @@ class NoneOptimizer():
         pass
     def state_dict(self):
         return {}
+
+
+
+def set_requires_grad(module_list, requires_grad=True):
+    for mod in module_list:
+        for param in mod.parameters():
+            param.requires_grad = requires_grad
+
+
+
+def determine_network_output_size(net, _input):
+    with torch.no_grad():
+        return net(_input).shape

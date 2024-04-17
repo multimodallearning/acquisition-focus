@@ -47,3 +47,53 @@ class Stage(dict):
 
     def activate(self, *args, **kwargs):
         self.__activate_fn__(self, *args, **kwargs)
+
+
+
+def set_previous_stage_transform_chk(self):
+    self['transform_model_checkpoint_path'] = self['save_path']
+
+
+
+def get_std_stages(config):
+    std_stages = dict(
+        opt_first=Stage( # Optimize SA
+            cuts_mode='sa',
+            epochs=int(config['epochs']*1.0),
+            use_affine_theta=True,
+            train_affine_theta=True,
+            do_output=True,
+            __activate_fn__=lambda self: None
+        ),
+        opt_second=Stage( # Optimize hla
+            cuts_mode='sa>hla',
+            epochs=int(config['epochs']*1.0),
+            use_affine_theta=True,
+            train_affine_theta=True,
+            do_output=True,
+            __activate_fn__=set_previous_stage_transform_chk
+        ),
+        opt_both_fix=Stage( # Final optimized run
+            do_output=True,
+            cuts_mode='sa+hla',
+            epochs=config['epochs'],
+            use_affine_theta=True,
+            train_affine_theta=False,
+            __activate_fn__=set_previous_stage_transform_chk
+        ),
+        ref=Stage( # Reference run
+            do_output=True,
+            cuts_mode='sa+hla',
+            epochs=config['epochs'],
+            train_affine_theta=False,
+            use_affine_theta=False,
+            __activate_fn__=lambda self: None
+        ),
+    )
+
+    if 'stage_override' in config and config['stage_override'] is not None:
+        selected_stages = {k:v for k,v in std_stages.items() if config['stage_override'] == k}
+    else:
+        selected_stages = std_stages
+
+    return StageIterator(selected_stages, verbose=True)

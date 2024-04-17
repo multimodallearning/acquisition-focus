@@ -1,7 +1,7 @@
 import nibabel as nib
 import torch
-from slice_inflate.utils.sparse_tensor_utils import get_center_and_median, get_sub_sp_tensor
-from slice_inflate.models.learnable_transform import compute_rotation_matrix_from_ortho6d
+from slice_inflate.utils.torch_sparse_tensor_utils import get_center_and_median, get_sub_sp_tensor
+from slice_inflate.utils.transform_utils import compute_rotation_matrix_from_ortho6d
 
 
 
@@ -67,6 +67,5 @@ def register_centroids(fixed_label, moving_label, DOF=6):
 def get_centroid_reorient_grid_affine(moving_label, ref_filepath, DOF=6):
     assert ref_filepath.is_file(), f"ref_filepath {ref_filepath} is not a file"
     fixed_label = torch.as_tensor(nib.load(ref_filepath).get_fdata()).int()
-    pt_heart_affine = register_centroids(fixed_label, moving_label, DOF)
-
-    return pt_heart_affine
+    pt_affine = register_centroids(fixed_label, moving_label, DOF)
+    return pt_affine

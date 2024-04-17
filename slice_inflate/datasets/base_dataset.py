@@ -14,11 +14,10 @@ import monai
 import nibabel as nib
 
 from slice_inflate.utils.torch_utils import ensure_dense, ensure_dense, get_batch_score_per_label, reduce_label_scores_epoch
-from slice_inflate.utils.register_centroids import get_centroid_reorient_grid_affine
-from slice_inflate.utils.nnunetv2_utils import get_segment_fn
+from slice_inflate.functional.register_centroids import get_centroid_reorient_grid_affine
 from slice_inflate.utils.python_utils import get_script_dir
 from slice_inflate.utils.nifti_utils import nifti_grid_sample, get_zooms
-from slice_inflate.datasets.clinical_cardiac_views import get_clinical_cardiac_view_affines
+from slice_inflate.functional.clinical_cardiac_views import get_clinical_cardiac_view_affines
 from slice_inflate.utils.log_utils import log_oa_metrics, log_label_metrics
 
 

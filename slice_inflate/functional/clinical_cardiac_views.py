@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from matplotlib import pyplot as plt
 from slice_inflate.utils.nifti_utils import nifti_grid_sample
-from slice_inflate.utils.sparse_tensor_utils import get_inertia_tensor, get_main_principal_axes, get_sub_sp_tensor
+from slice_inflate.utils.torch_sparse_tensor_utils import get_inertia_tensor, get_main_principal_axes, get_sub_sp_tensor
 
 
 

@@ -16,6 +16,12 @@ def get_global_idx(fold_idx, epoch_idx, max_epochs):
 
 
 
+def get_fold_postfix(fold_properties):
+    fold_idx, _ = fold_properties
+    return f'fold-{fold_idx}' if fold_idx != -1 else ""
+    
+
+
 def log_label_metrics(log_prefix, log_postfix, metrics, log_idx,
     logger_selected_metrics=('dice'), print_selected_metrics=('dice')):
     for m_name, m_content in metrics.items():
