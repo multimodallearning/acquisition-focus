@@ -127,14 +127,9 @@ class AffineTransformModule(torch.nn.Module):
         self.init_theta_t_offsets = torch.nn.Parameter(torch.zeros([3]), requires_grad=False)
         self.init_theta_zp = torch.nn.Parameter(torch.ones([1,1]), requires_grad=False)
 
-        self.last_theta_ap = None
-        self.last_theta_t_offsets = None
-        self.last_theta_zp = None
-        self.last_theta_a = None
-        self.last_theta_t = None
         self.last_theta = None
         self.last_grid_affine = None
-        self.last_transformed_nii_affine = None
+        self.last_transformed_nifti_affine = None
         self.random_grid_affine = get_random_affine(rotation_strength=4., zoom_strength=0.)[None]
 
     def set_init_theta_ap(self, init_theta_ap):
@@ -234,13 +229,6 @@ class AffineTransformModule(torch.nn.Module):
 
         assert theta_a.shape == theta_t.shape == theta_z.shape == (B, 4, 4)
 
-        self.last_theta_ap = theta_ap
-        self.last_theta_t_offsets = theta_t_offsets
-        self.last_theta_zp = theta_zp
-        self.last_theta_a = theta_a
-        self.last_theta_t = theta_t
-        self.last_theta_z = theta_z
-
         return theta_a, theta_t, theta_z
 
     def forward(self, x_soft_label, x_label, x_image, nifti_affine, grid_affine_pre_mlp,
@@ -282,13 +270,6 @@ class AffineTransformModule(torch.nn.Module):
                 theta_a = theta_a @ theta_a_b
                 theta_t = theta_t @ theta_t_b
                 theta_z = theta_z @ theta_z_b
-            else:
-                self.last_theta_ap = None
-                self.last_theta_t_offsets = None
-                self.last_theta_zp = None
-                self.last_theta_a = None
-                self.last_theta_t = None
-                self.last_theta_z = None
 
             theta = theta_t @ theta_a @ theta_z
 
@@ -298,7 +279,7 @@ class AffineTransformModule(torch.nn.Module):
         # theta_a : Affine for learnt rotation and initialization of affine module
         # theta_t : Affine for learnt translation (shifts volume relative to the grid_sample D,H,W axes)
         # theta_z : Affine for learnt zoom
-        # globabl_prelocate_affine : Affine for prelocating the volume (slice orientation and augmentation)
+        # global_prelocate_affine : Affine for prelocating the volume (slice orientation and augmentation)
         # theta   : Affine for the learnt transformation
 
         # Here is the learnable grid_sampling
@@ -308,7 +289,6 @@ class AffineTransformModule(torch.nn.Module):
             y_soft_label, grid_affine, transformed_nii_affine = nifti_grid_sample(x_soft_label, nifti_affine,
                 target_fov_mm=self.slice_fov_mm, target_fov_vox=self.slice_fov_vox, is_label=False,
                 pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
-                # pre_grid_sample_hidden_affine=grid_affine_augment
             )
 
         with torch.no_grad():
@@ -317,7 +297,6 @@ class AffineTransformModule(torch.nn.Module):
                 y_label, _, _ = nifti_grid_sample(x_label, nifti_affine,
                     target_fov_mm=self.slice_fov_mm, target_fov_vox=self.slice_fov_vox, is_label=True,
                     pre_grid_sample_affine=grid_affine_pre_mlp @ theta,
-                    # pre_grid_sample_hidden_affine=grid_affine_augment
                 )
 
             if not x_image_is_none:
@@ -351,7 +330,7 @@ class AffineTransformModule(torch.nn.Module):
             grid_affine = grid_affine @ align_affine
 
         self.last_grid_affine = grid_affine
-        self.last_transformed_nii_affine = transformed_nii_affine
+        self.last_transformed_nifti_affine = transformed_nii_affine
 
         return y_soft_label, y_label, y_image, grid_affine, transformed_nii_affine
 
@@ -419,7 +398,10 @@ class ATModulesContainer(torch.nn.ModuleList):
 
     def get_active_views(self):
         return self.is_optimized.cpu() | self.get_all_atms_requires_grad()
-    
+
+    def get_active_view_modules(self):
+        return [mod for mod, is_active in zip(self,self.get_active_views()) if is_active]
+
     def get_all_atms_requires_grad(self):
         return torch.tensor([next(atm.localization_net.parameters()).requires_grad for atm in self])
 

@@ -1,7 +1,9 @@
 import os
 from pathlib import Path
 import contextlib
+from collections import defaultdict
 
+import dill
 from tqdm import tqdm
 import wandb
 
@@ -35,19 +37,20 @@ def get_reconstruction_model(config, num_classes, save_path=None, load_model_onl
     device = config.device
     assert config.model_type in ['hybrid-unet', 'hybrid-EPix2Vox', 'hybrid-Pix2Vox']
 
+    n_views = len(config.view_ids)
     if config.model_type == 'hybrid-unet':
-        model = HybridUnet(n_views=2, num_classes=num_classes)
+        model = HybridUnet(n_views=n_views, num_classes=num_classes)
 
     elif config.model_type == 'hybrid-EPix2Vox':
         epix_model = EPix2VoxModel128(
-            use_merger=True, use_refiner=True, n_views=2, use_epix2vox=True,
+            use_merger=True, use_refiner=True, n_views=n_views, use_epix2vox=True,
             epoch_start_use_merger=0, epoch_start_use_refiner=0
         )
         model = EPix2Vox_InterfaceModel(epix_model)
 
     elif config.model_type == 'hybrid-Pix2Vox':
         epix_model = EPix2VoxModel128(
-            use_merger=True, use_refiner=True, n_views=2, use_epix2vox=False,
+            use_merger=True, use_refiner=True, n_views=n_views, use_epix2vox=False,
             epoch_start_use_merger=0, epoch_start_use_refiner=0
         )
         model = EPix2Vox_InterfaceModel(epix_model)
@@ -91,10 +94,6 @@ def get_reconstruction_model(config, num_classes, save_path=None, load_model_onl
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(anomaly_hook)
-    # for submodule in sa_atm.modules():
-    #     submodule.register_forward_hook(anomaly_hook)
-    # for submodule in hla_atm.modules():
-    #     submodule.register_forward_hook(anomaly_hook)
 
     return (model, optimizer, scheduler, scaler), epx
 
@@ -128,7 +127,7 @@ def get_transform_model(config, num_classes, save_path=None):
 
     if save_path and Path(save_path).is_dir():
         print(f"Loading transform optimizer from {save_path}")
-        atm_container.load_state_dict(torch.load(Path(save_path)/ 'atm_container.pth'))
+        atm_container.load_state_dict(torch.load(Path(save_path)/ 'atm_container.pth',map_location=device), strict=False)
         transform_optimizer.load_state_dict(torch.load(Path(save_path).joinpath('transform_optimizer.pth'), map_location=device))
 
     else:
@@ -219,7 +218,18 @@ def apply_affine_augmentation(affine_list, zoom_strength=0.1, offset_strength=0.
 
 
 
-def get_reconstruction_model_input(batch, phase, config, num_classes, sa_atm, hla_atm, segment_fn):
+def get_input_affine_for_atm(atm, base_affine, b_view_affines):
+    B = base_affine.shape[0]
+
+    if atm.view_id == 'RND':
+        return atm.random_grid_affine.repeat(B,1,1)
+
+    return base_affine.inverse() \
+            @ torch.as_tensor(b_view_affines[atm.view_id]).view(B,4,4).to(base_affine)
+
+
+
+def get_reconstruction_model_input(batch, phase, config, num_classes, atm_container, segment_fn):
     b_label = batch['label']
     b_image = batch['image']
 
@@ -247,108 +257,69 @@ def get_reconstruction_model_input(batch, phase, config, num_classes, sa_atm, hl
     B,NUM_CLASSES,D,H,W = b_label.shape
     b_soft_label = b_label.float()
 
-    sa_atm.use_affine_theta = config.use_affine_theta
-    hla_atm.use_affine_theta = config.use_affine_theta
+    for atm in atm_container:
+        atm.use_affine_theta = config.use_affine_theta
 
-    if config.sa_view == 'RND':
-        # Get a random view offset from prealingned volumes
-        sa_input_grid_affine = sa_atm.random_grid_affine.repeat(B,1,1).to(nifti_affine)
-    else:
-        sa_input_grid_affine = base_affine.inverse() \
-            @ torch.as_tensor(b_view_affines[config.sa_view]).view(B,4,4).to(nifti_affine)
-
-    if config.hla_view == 'RND':
-        # Get a random view offset from prealingned volumes
-        hla_input_grid_affine = hla_atm.random_grid_affine.repeat(B,1,1).to(nifti_affine)
-    else:
-        hla_input_grid_affine = base_affine.inverse() \
-            @ torch.as_tensor(b_view_affines[config.hla_view]).view(B,4,4).to(nifti_affine)
+    # Get the initial view orientations (w/o optimized theta, this is added later)
+    active_view_modules = [mod for mod in atm_container.get_active_view_modules()]
+    input_grid_affines = [get_input_affine_for_atm(mod, base_affine, b_view_affines).to(nifti_affine)\
+                          for mod in active_view_modules]
 
     if config.do_augment_input_orientation and phase in config.aug_phases:
-        sa_input_grid_affine, hla_input_grid_affine = apply_affine_augmentation([sa_input_grid_affine, hla_input_grid_affine],
+        input_grid_affines = apply_affine_augmentation(input_grid_affines,
             rotation_strength=.1*config.sample_augment_strength,
             zoom_strength=.2*config.sample_augment_strength,
             offset_strength=0.,
         )
 
-    if 'opt-current-fix-previous' in config.view_optimization_mode:
-        sa_ctx = torch.no_grad if not sa_atm.training else contextlib.nullcontext
-        with sa_ctx():
-            sa_image_slc, sa_label_slc, sa_grid_affine = \
+    label_slices, output_grid_affines = [], []
+
+    for atm, input_ga in zip(active_view_modules, input_grid_affines):
+        if config.view_optimization_mode == 'opt-current-fix-previous' and atm == active_view_modules[-1]:
+            ctx = contextlib.nullcontext # With grad
+        elif config.view_optimization_mode == 'opt-all':
+            ctx = contextlib.nullcontext # With grad
+        else:
+            ctx = torch.no_grad
+
+        with ctx():
+            image_slc, label_slc, output_ga = \
                 get_transformed(
                     config,
                     phase,
                     b_label.view(B, NUM_CLASSES, D, H, W),
                     b_soft_label.view(B, NUM_CLASSES, D, H, W),
                     nifti_affine,
-                    sa_input_grid_affine,
-                    # hidden_augment_affine,
-                    sa_atm,
+                    input_ga,
+                    atm,
                     image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
 
             # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
             if config.do_augment_recon_orientation and phase in config.aug_phases:
-                sa_grid_affine = apply_affine_augmentation([sa_grid_affine],
+                output_ga = apply_affine_augmentation([output_ga],
                     rotation_strength=.1*config.sample_augment_strength,
                     zoom_strength=.2*config.sample_augment_strength,
                     offset_strength=0.,
                 )[0].to(nifti_affine)
+
+            label_slices.append(label_slc)
+            output_grid_affines.append(output_ga)
 
             # from matplotlib import pyplot as plt
-            # plt.imshow(sa_label_slc[0].argmax(0).squeeze().cpu().numpy())
-            # plt.savefig('sa_label_slc.png')
+            # plt.imshow(label_slc[0].argmax(0).squeeze().cpu().numpy())
+            # plt.savefig('label_slc.png')
 
-    if 'hla' in config.view_optimization_mode:
-        hla_ctx = torch.no_grad if not hla_atm.training else contextlib.nullcontext
-        with hla_ctx():
-            hla_image_slc, hla_label_slc, hla_grid_affine = \
-                get_transformed(
-                    config,
-                    phase,
-                    b_label.view(B, NUM_CLASSES, D, H, W),
-                    b_soft_label.view(B, NUM_CLASSES, D, H, W),
-                    nifti_affine,
-                    hla_input_grid_affine,
-                    # hidden_augment_affine,
-                    hla_atm,
-                    image=b_image.view(B, 1, D, H, W), segment_fn=segment_fn)
+    n_views = len(config.view_ids)
+    n_active_views = len(active_view_modules)
 
-            # Now apply augmentation that adds uncertainty to the inverse resconstruction grid sampling
-            if config.do_augment_recon_orientation and phase in config.aug_phases:
-                hla_grid_affine = apply_affine_augmentation([hla_grid_affine],
-                    rotation_strength=.1*config.sample_augment_strength,
-                    zoom_strength=.2*config.sample_augment_strength,
-                    offset_strength=0.,
-                )[0].to(nifti_affine)
+    # Fill views if not all are present (currently optimized view will be duplicated)
+    slices = label_slices + [label_slices[-1]] * (n_views-n_active_views)
+    grid_affines = output_grid_affines + [output_grid_affines[-1]] * (n_views-n_active_views)
 
-    if config.view_optimization_mode == 'opt-current-fix-previous':
-        slices = [sa_label_slc, sa_label_slc]
-        grid_affines = [sa_grid_affine, sa_grid_affine]
-    elif config.view_optimization_mode == 'hla':
-        slices = [hla_label_slc, hla_label_slc]
-        grid_affines = [hla_grid_affine, hla_grid_affine]
-    elif config.view_optimization_mode == 'opt-current-fix-previous':
-        slices = [sa_label_slc.detach(), hla_label_slc]
-        grid_affines = [sa_grid_affine, hla_grid_affine]
-    elif config.view_optimization_mode == 'sa+hla':
-        slices = [sa_label_slc, hla_label_slc]
-        grid_affines = [sa_grid_affine, hla_grid_affine]
-    else:
-        raise ValueError()
-
-    if 'hybrid' in config.model_type:
-        b_input = torch.cat(slices, dim=1).squeeze(-1)
-        assert b_input.dim() == 4
-    else:
-        SPAT = config.hires_fov_vox[0]
-        b_input = torch.cat(slices, dim=-1)
-        b_input = torch.cat([b_input] * int(SPAT/b_input.shape[-1]), dim=-1) # Stack data hla/sa next to each other
+    b_input = torch.cat(slices, dim=1).squeeze(-1)
+    assert b_input.dim() == 4
 
     b_target = b_label
-
-    # b_input = b_input.to(device=config.device)
-    # b_target = b_target.to(device=config.device)
-
     return b_input, b_target, grid_affines
 
 
@@ -358,11 +329,11 @@ def get_loss_value(y_hat, y_target):
 
 
 
-def model_step(config, phase, epx, model, sa_atm, hla_atm, batch, label_tags, segment_fn, autocast_enabled=False):
+def model_step(config, phase, epx, model, atm_container, batch, label_tags, segment_fn, autocast_enabled=False):
 
     ### Forward pass ###
     with amp.autocast(enabled=autocast_enabled):
-        b_input, b_target, b_grid_affines = get_reconstruction_model_input(batch, phase, config, len(label_tags), sa_atm, hla_atm, segment_fn)
+        b_input, b_target, b_grid_affines = get_reconstruction_model_input(batch, phase, config, len(label_tags), atm_container, segment_fn)
 
         # nib.save(nib.Nifti1Image((
         #     b_target[0].argmax(0)
@@ -419,22 +390,10 @@ def epoch_iter(epx, global_idx, config, model, atm_container, dataset, dataloade
     PHASES = ['train', 'val', 'test']
     assert phase in ['train', 'val', 'test'], f"phase must be one of {PHASES}"
 
-    sa_atm = atm_container[0] # TODO remove
-    hla_atm = atm_container[1] # TODO remove
-
     epx_losses = []
 
-    epx_sa_theta_aps = {}
-    epx_sa_theta_zps = {}
-    epx_sa_theta_t_offsets = {}
-    epx_sa_theta_grid_affines = {}
-    epx_sa_transformed_nii_affines = {}
-
-    epx_hla_theta_aps = {}
-    epx_hla_theta_zps = {}
-    epx_hla_theta_t_offsets = {}
-    epx_hla_theta_grid_affines = {}
-    epx_hla_transformed_nii_affines = {}
+    epx_theta_grid_affines = defaultdict(lambda: {})
+    epx_transformed_nifti_affines = defaultdict(lambda: {})
 
     epx_input = {}
 
@@ -470,7 +429,7 @@ def epoch_iter(epx, global_idx, config, model, atm_container, dataset, dataloade
         if phase == 'train':
             y_hat, b_target, loss, b_input = model_step(
                 config, phase, epx,
-                model, sa_atm, hla_atm,
+                model, atm_container,
                 batch,
                 dataset.label_tags, segment_fn, autocast_enabled)
 
@@ -504,7 +463,7 @@ def epoch_iter(epx, global_idx, config, model, atm_container, dataset, dataloade
             with torch.no_grad():
                 y_hat, b_target, loss, b_input = model_step(
                     config, phase, epx,
-                    model, sa_atm, hla_atm,
+                    model, atm_container,
                     batch,
                     dataset.label_tags, segment_fn, autocast_enabled)
 
@@ -512,27 +471,13 @@ def epoch_iter(epx, global_idx, config, model, atm_container, dataset, dataloade
 
         epx_input.update({k:v for k,v in zip(batch['id'], b_input.cpu())})
 
-        if sa_atm.last_theta_ap is not None:
-            epx_sa_theta_aps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_ap.cpu())})
-        if sa_atm.last_theta_t_offsets is not None:
-            epx_sa_theta_t_offsets.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_t_offsets.cpu())})
-        if sa_atm.last_theta_zp is not None:
-            epx_sa_theta_zps.update({k:v for k,v in zip(batch['id'], sa_atm.last_theta_zp.cpu())})
-        if sa_atm.last_grid_affine is not None:
-            epx_sa_theta_grid_affines.update({k:v for k,v in zip(batch['id'], sa_atm.last_grid_affine.cpu())})
-        if sa_atm.last_transformed_nii_affine is not None:
-            epx_sa_transformed_nii_affines.update({k:v for k,v in zip(batch['id'], sa_atm.last_transformed_nii_affine.cpu())})
+        for atm in atm_container.get_active_view_modules():
+            # Store affines for file output
+            lga_batch_dict = {k:v for k,v in zip(batch['id'], atm.last_grid_affine.cpu())}
+            epx_theta_grid_affines[atm.view_id].update(lga_batch_dict)
 
-        if hla_atm.last_theta_ap is not None:
-            epx_hla_theta_aps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_ap.cpu())})
-        if hla_atm.last_theta_t_offsets is not None:
-            epx_hla_theta_t_offsets.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_t_offsets.cpu())})
-        if hla_atm.last_theta_zp is not None:
-            epx_hla_theta_zps.update({k:v for k,v in zip(batch['id'], hla_atm.last_theta_zp.cpu())})
-        if hla_atm.last_grid_affine is not None:
-            epx_hla_theta_grid_affines.update({k:v for k,v in zip(batch['id'], hla_atm.last_grid_affine.cpu())})
-        if hla_atm.last_transformed_nii_affine is not None:
-            epx_hla_transformed_nii_affines.update({k:v for k,v in zip(batch['id'], hla_atm.last_transformed_nii_affine.cpu())})
+            ltna_batch_dict = {k:v for k,v in zip(batch['id'], atm.last_transformed_nifti_affine.cpu())}
+            epx_transformed_nifti_affines[atm.view_id].update(ltna_batch_dict)
 
         pred_seg = y_hat.argmax(1)
 
@@ -615,77 +560,21 @@ def epoch_iter(epx, global_idx, config, model, atm_container, dataset, dataloade
     output_dir = Path(f"data/output/{wandb.run.name}/{phase}")
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    mean_transform_dict = dict()
-
-    if epx_sa_theta_aps:
-        ornt_log_prefix = f"orientations/{phase}_sa_"
-        sa_param_dict = dict(
-            theta_ap=list(epx_sa_theta_aps.values()),
-            theta_t_offsets=list(epx_sa_theta_t_offsets.values()),
-            theta_zp=list(epx_sa_theta_zps.values()),
+    if config.do_output:
+        affine_dct = dict(
+            epx_theta_grid_affines=epx_theta_grid_affines,
+            epx_transformed_nifti_affines=epx_transformed_nifti_affines,
         )
-        sa_theta_ap_mean, sa_theta_t_offsets_mean, sa_theta_zp_mean = \
-            log_affine_param_stats(ornt_log_prefix, '', sa_param_dict, global_idx,
-                logger_selected_metrics=('mean', 'std'), print_selected_metrics=())
-        print()
-
-        mean_transform_dict.update(
-            dict(
-                epoch_sa_theta_ap_mean=sa_theta_ap_mean,
-                epoch_sa_theta_t_offsets_mean=sa_theta_t_offsets_mean,
-                epoch_sa_theta_zp=sa_theta_zp_mean,
-            )
-        )
-
-        if config.do_output:
-            sa_dct = dict(
-                epx_sa_theta_aps=epx_sa_theta_aps,
-                epx_sa_theta_t_offsets=epx_sa_theta_t_offsets,
-                epx_sa_theta_zps=epx_sa_theta_zps,
-                epx_sa_theta_grid_affines=epx_sa_theta_grid_affines,
-                epx_sa_transformed_nii_affines=epx_sa_transformed_nii_affines,
-            )
-            torch.save(sa_dct, output_dir/f"sa_params_{phase}_epx_{epx:05d}.pth")
-
-    if epx_hla_theta_aps:
-        ornt_log_prefix = f"orientations/{phase}_hla_"
-        hla_param_dict = dict(
-            theta_ap=list(epx_hla_theta_aps.values()),
-            theta_t_offsets=list(epx_hla_theta_t_offsets.values()),
-            theta_zp=list(epx_hla_theta_zps.values())
-        )
-        hla_theta_ap_mean, hla_theta_tp_mean, hla_theta_zp_mean = \
-            log_affine_param_stats(ornt_log_prefix, '', hla_param_dict, global_idx,
-                logger_selected_metrics=('mean', 'std'), print_selected_metrics=())
-        print()
-
-        mean_transform_dict.update(
-            dict(
-                epoch_hla_theta_ap_mean=hla_theta_ap_mean,
-                epoch_hla_theta_tp_mean=hla_theta_tp_mean,
-                epoch_hla_theta_zp=hla_theta_zp_mean,
-            )
-        )
-        if config.do_output:
-            hla_dct = dict(
-                epx_hla_theta_aps=epx_hla_theta_aps,
-                epx_hla_theta_t_offsets=epx_hla_theta_t_offsets,
-                epx_hla_theta_zps=epx_hla_theta_zps,
-                epx_hla_theta_grid_affines=epx_hla_theta_grid_affines,
-                epx_hla_transformed_nii_affines=epx_hla_transformed_nii_affines,
-            )
-            torch.save(hla_dct, output_dir/f"hla_params_{phase}_epx_{epx:05d}.pt")
+        with open(output_dir/f"affines_{phase}_epx_{epx:05d}.pth", 'wb') as f:
+            dill.dump(affine_dct, f)
 
     if config.do_output and epx_input:
         # Store the slice model input
         save_input = torch.stack(list(epx_input.values()))
+        n_views = len(config.view_ids)
 
-        if 'hybrid' in config.model_type:
-            save_input = save_input.chunk(2,dim=1)
-            save_input = torch.cat([slc.argmax(1, keepdim=True) for slc in save_input], dim=1)
-
-        else:
-            save_input = save_input.argmax(0)
+        save_input = save_input.chunk(n_views, dim=1)
+        save_input = torch.cat([slc.argmax(1, keepdim=True) for slc in save_input], dim=1)
 
         # Build mean image and concat to individual sample views
         save_input = torch.cat([save_input.float().mean(0, keepdim=True), save_input], dim=0)
@@ -700,7 +589,7 @@ def epoch_iter(epx, global_idx, config, model, atm_container, dataset, dataloade
     print()
     print()
 
-    return loss_mean, mean_transform_dict
+    return loss_mean
 
 
 
@@ -757,8 +646,6 @@ def run_dl(base_dir, config, fold_properties, stage=None, training_dataset=None,
     autocast_enabled = 'cuda' in config.device and config['use_autocast']
 
     # c_model = torch.compile(model)
-    # c_sa_atm = torch.compile(sa_atm)
-    # c_hla_atm = torch.compile(hla_atm)
 
     for epx in range(epx_start, config.epochs):
         global_idx = get_global_idx(fold_idx, epx, config.epochs)
@@ -768,14 +655,11 @@ def run_dl(base_dir, config, fold_properties, stage=None, training_dataset=None,
         wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
         if not run_test_once_only:
-            train_loss, mean_transform_dict = epoch_iter(
+            train_loss = epoch_iter(
                 epx, global_idx, config, model, atm_container,
                 training_dataset, train_dataloader,
                 phase='train', autocast_enabled=autocast_enabled,
                 all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None)
-
-            if stage:
-                stage.update(mean_transform_dict)
 
             val_loss, _ = epoch_iter(epx, global_idx, config, model, atm_container, training_dataset, val_dataloader,
                 phase='val', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=None)

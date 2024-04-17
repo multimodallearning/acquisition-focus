@@ -72,35 +72,23 @@ class SkipConnector(torch.nn.Module):
         B,C,SPAT,_ = x.shape
         C_PER_SLICE = C//self.n_views
         target_shape = torch.Size([B,C_PER_SLICE,SPAT,SPAT,SPAT])
-        zer = torch.zeros(B,C,SPAT,SPAT,SPAT).to(x)
-        zer[..., SPAT//2] = x # Embed slice in center of last dimension
-        x = zer
+        x_mid = torch.zeros(B,C,SPAT,SPAT,SPAT).to(x)
+        x_mid[..., SPAT//2] = x # Embed slice in center of last dimension
+        x_views = torch.chunk(x_mid, self.n_views, dim=1)
 
-        x_sa, x_hla = torch.chunk(x, self.n_views, dim=1)
+        reembed_views = []
+        for vx, ga in zip(x_views,b_grid_affines):
+            rescaled_affines = ga
+            # Rescale to sample from volume slice space into volume space (forward grid sampling sampled to single slice, non-stacked)
+            rescaled_affines = rescale_rot_components_with_diag(rescaled_affines, 1/get_zooms(rescaled_affines))
 
-        # Grid sample first channel chunk with inverse SA affines
-        rescaled_sa_affines = b_grid_affines[0]
-        # Rescale to sample from volume slice space into volume space (forward grid sampling sampled to single slice, non-stacked)
-        rescaled_sa_affines = rescale_rot_components_with_diag(rescaled_sa_affines, 1/get_zooms(rescaled_sa_affines))
+            reembed_grid = torch.nn.functional.affine_grid(
+                rescaled_affines.to(self.dtype).inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
+            )
+            reembed_vx = checkpoint(torch.nn.functional.grid_sample,
+                vx, reembed_grid.to(vx), 'bilinear', 'zeros', False
+            )
+            reembed_views.append(reembed_vx)
 
-        sa_grid = torch.nn.functional.affine_grid(
-            rescaled_sa_affines.to(self.dtype).inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
-        )
-        transformed_sa = checkpoint(torch.nn.functional.grid_sample,
-            x_sa, sa_grid.to(x_sa), 'bilinear', 'zeros', False
-        )
-
-        # Grid sample second channel chunk with inverse HLA affines
-        rescaled_hla_affines = b_grid_affines[1]
-        # Rescale to sample from volume slice space into volume space (forward grid sampling sampled to single slice, non-stacked)
-        rescaled_hla_affines = rescale_rot_components_with_diag(rescaled_hla_affines, 1/get_zooms(rescaled_hla_affines))
-
-        hla_grid = torch.nn.functional.affine_grid(
-            rescaled_hla_affines.to(self.dtype).inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False,
-        )
-        transformed_hla = checkpoint(torch.nn.functional.grid_sample,
-            x_hla, hla_grid.to(x_hla), 'bilinear', 'zeros', False,
-        )
-
-        skip_out = torch.cat([transformed_sa, transformed_hla], dim=1)
+        skip_out = torch.cat(reembed_views, dim=1)
         return skip_out
