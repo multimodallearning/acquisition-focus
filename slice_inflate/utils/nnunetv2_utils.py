@@ -1,9 +1,7 @@
-import sys
 import os
 import re
 from pathlib import Path
 from copy import deepcopy
-from contextlib import contextmanager
 import traceback
 import warnings
 
@@ -13,10 +11,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch._dynamo import OptimizedModule
-import torch.nn.functional as F
 
 from scipy.ndimage import gaussian_filter
 from acvl_utils.cropping_and_padding.bounding_boxes import bounding_box_to_slice
+from acvl_utils.cropping_and_padding.padding import pad_nd_image
 
 from slice_inflate.utils.nifti_utils import nifti_grid_sample
 import slice_inflate.models.segmentation as segmentation_models
@@ -29,10 +27,11 @@ with suppress_stdout():
     from nnunetv2.utilities.label_handling.label_handling import LabelManager
     from nnunetv2.utilities.helpers import empty_cache, dummy_context
     from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
+    from nnunetv2.inference.sliding_window_prediction import  get_sliding_window_generator
+    from nnunetv2.inference.export_prediction import convert_predicted_logits_to_segmentation_with_correct_shape
+
     DC_and_CE_loss = compound_losses.DC_and_CE_loss
-
-NUM_PROCESSES = 3
-
+    
 
 
 def load_network(trained_model_path, fold):
@@ -138,23 +137,6 @@ def run_inference(data, network, parameters,
                                 num_processes_segmentation_export, device)
 
 
-def get_segment_fn(trained_model_path, fold=0):
-
-    # trained_model_path: Like 'nnUNetV2_results/Dataset_xxx/nnUNetTrainer__nnUNetPlans__2d'
-
-    inject_dg_trainers_into_nnunet()
-    (network, parameters, patch_size, configuration_manager,
-    inference_allowed_mirroring_axes, plans_manager, dataset_json) = load_network(trained_model_path, fold)
-
-    def segment_closure(b_image: torch.Tensor, b_spacing: torch.Tensor):
-        assert b_image.ndim == 5, f"Expected 5D tensor, got {b_image.ndim}"
-        return run_inference_on_image(b_image, b_spacing, network, parameters,
-            plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes
-        )
-
-    return segment_closure
-
-
 
 def predict_from_data_iterator(data_iterator,
                                network: nn.Module,
@@ -169,7 +151,7 @@ def predict_from_data_iterator(data_iterator,
                                perform_everything_on_gpu: bool = True,
                                verbose: bool = True,
                                save_probabilities: bool = False,
-                               num_processes_segmentation_export: int = NUM_PROCESSES,
+                               num_processes_segmentation_export: int=0,
                                device: torch.device = torch.device('cuda')):
     """
     each element returned by data_iterator must be a dict with 'data', 'ofile' and 'data_properites' keys!
@@ -464,30 +446,6 @@ def compute_gaussian(tile_size: Union[Tuple[int, ...], List[int]], sigma_scale: 
     return gaussian_importance_map
 
 
-def get_sliding_window_generator(image_size: Tuple[int, ...], tile_size: Tuple[int, ...], tile_step_size: float,
-                                 verbose: bool = False):
-    if len(tile_size) < len(image_size):
-        assert len(tile_size) == len(image_size) - 1, 'if tile_size has less entries than image_size, len(tile_size) ' \
-                                                      'must be one shorter than len(image_size) (only dimension ' \
-                                                      'discrepancy of 1 allowed).'
-        steps = compute_steps_for_sliding_window(image_size[1:], tile_size, tile_step_size)
-        if verbose: print(f'n_steps {image_size[0] * len(steps[0]) * len(steps[1])}, image size is {image_size}, tile_size {tile_size}, '
-                          f'tile_step_size {tile_step_size}\nsteps:\n{steps}')
-        for d in range(image_size[0]):
-            for sx in steps[0]:
-                for sy in steps[1]:
-                    slicer = tuple([slice(None), d, *[slice(si, si + ti) for si, ti in zip((sx, sy), tile_size)]])
-                    yield slicer
-    else:
-        steps = compute_steps_for_sliding_window(image_size, tile_size, tile_step_size)
-        if verbose: print(f'n_steps {np.prod([len(i) for i in steps])}, image size is {image_size}, tile_size {tile_size}, '
-                          f'tile_step_size {tile_step_size}\nsteps:\n{steps}')
-        for sx in steps[0]:
-            for sy in steps[1]:
-                for sz in steps[2]:
-                    slicer = tuple([slice(None), *[slice(si, si + ti) for si, ti in zip((sx, sy, sz), tile_size)]])
-                    yield slicer
-
 
 def compute_steps_for_sliding_window(image_size: Tuple[int, ...], tile_size: Tuple[int, ...], tile_step_size: float) -> \
         List[List[int]]:
@@ -517,153 +475,6 @@ def compute_steps_for_sliding_window(image_size: Tuple[int, ...], tile_size: Tup
 
 
 
-def pad_nd_image(image: Union[torch.Tensor, np.ndarray], new_shape: Tuple[int, ...] = None,
-                 mode: str = "constant", kwargs: dict = None, return_slicer: bool = False,
-                 shape_must_be_divisible_by: Union[int, Tuple[int, ...], List[int]] = None) -> \
-        Union[Union[torch.Tensor, np.ndarray], Tuple[Union[torch.Tensor, np.ndarray], Tuple]]:
-    """
-    One padder to pad them all. Documentation? Well okay. A little bit
-
-    Padding is done such that the original content will be at the center of the padded image. If the amount of padding
-    needed it odd, the padding 'above' the content is larger,
-    Example:
-    old shape: [ 3 34 55  3]
-    new_shape: [3, 34, 96, 64]
-    amount of padding (low, high for each axis): [[0, 0], [0, 0], [20, 21], [30, 31]]
-
-    :param image: can either be a numpy array or a torch.Tensor. pad_nd_image uses np.pad for the former and
-           torch.nn.functional.pad for the latter
-    :param new_shape: what shape do you want? new_shape does not have to have the same dimensionality as image. If
-           len(new_shape) < len(image.shape) then the last axes of image will be padded. If new_shape < image.shape in
-           any of the axes then we will not pad that axis, but also not crop! (interpret new_shape as new_min_shape)
-
-           Example:
-           image.shape = (10, 1, 512, 512); new_shape = (768, 768) -> result: (10, 1, 768, 768). Cool, huh?
-           image.shape = (10, 1, 512, 512); new_shape = (364, 768) -> result: (10, 1, 512, 768).
-
-    :param mode: will be passed to either np.pad or torch.nn.functional.pad depending on what the image is. Read the
-           respective documentation!
-    :param return_slicer: if True then this function will also return a tuple of python slice objects that you can use
-           to crop back to the original image (reverse padding)
-    :param shape_must_be_divisible_by: for network prediction. After applying new_shape, make sure the new shape is
-           divisibly by that number (can also be a list with an entry for each axis). Whatever is missing to match
-           that will be padded (so the result may be larger than new_shape if shape_must_be_divisible_by is not None)
-    :param kwargs: see np.pad for documentation (numpy) or torch.nn.functional.pad (torch)
-
-    :returns: if return_slicer=False, this function returns the padded numpy array / torch Tensor. If
-              return_slicer=True it will also return a tuple of slice objects that you can use to revert the padding:
-              output, slicer = pad_nd_image(input_array, new_shape=XXX, return_slicer=True)
-              reversed_padding = output[slicer] ## this is now the same as input_array, padding was reversed
-    """
-    if kwargs is None:
-        kwargs = {}
-
-    old_shape = np.array(image.shape)
-
-    if shape_must_be_divisible_by is not None:
-        assert isinstance(shape_must_be_divisible_by, (int, list, tuple, np.ndarray))
-        if isinstance(shape_must_be_divisible_by, int):
-            shape_must_be_divisible_by = [shape_must_be_divisible_by] * len(image.shape)
-        else:
-            if len(shape_must_be_divisible_by) < len(image.shape):
-                shape_must_be_divisible_by = [1] * (len(image.shape) - len(shape_must_be_divisible_by)) + \
-                                             list(shape_must_be_divisible_by)
-
-    if new_shape is None:
-        assert shape_must_be_divisible_by is not None
-        new_shape = image.shape
-
-    if len(new_shape) < len(image.shape):
-        new_shape = list(image.shape[:len(image.shape) - len(new_shape)]) + list(new_shape)
-
-    new_shape = [max(new_shape[i], old_shape[i]) for i in range(len(new_shape))]
-
-    if shape_must_be_divisible_by is not None:
-        if not isinstance(shape_must_be_divisible_by, (list, tuple, np.ndarray)):
-            shape_must_be_divisible_by = [shape_must_be_divisible_by] * len(new_shape)
-
-        if len(shape_must_be_divisible_by) < len(new_shape):
-            shape_must_be_divisible_by = [1] * (len(new_shape) - len(shape_must_be_divisible_by)) + \
-                                         list(shape_must_be_divisible_by)
-
-        for i in range(len(new_shape)):
-            if new_shape[i] % shape_must_be_divisible_by[i] == 0:
-                new_shape[i] -= shape_must_be_divisible_by[i]
-
-        new_shape = np.array([new_shape[i] + shape_must_be_divisible_by[i] - new_shape[i] %
-                              shape_must_be_divisible_by[i] for i in range(len(new_shape))])
-
-    difference = new_shape - old_shape
-    pad_below = difference // 2
-    pad_above = difference // 2 + difference % 2
-    pad_list = [list(i) for i in zip(pad_below, pad_above)]
-
-    if not ((all([i == 0 for i in pad_below])) and (all([i == 0 for i in pad_above]))):
-        if isinstance(image, np.ndarray):
-            res = np.pad(image, pad_list, mode, **kwargs)
-        elif isinstance(image, torch.Tensor):
-            # torch padding has the weirdest interface ever. Like wtf? Y u no read numpy documentation? So much easier
-            torch_pad_list = [i for j in pad_list for i in j[::-1]][::-1]
-            res = F.pad(image, torch_pad_list, mode, **kwargs)
-    else:
-        res = image
-
-    if not return_slicer:
-        return res
-    else:
-        pad_list = np.array(pad_list)
-        pad_list[:, 1] = np.array(res.shape) - pad_list[:, 1]
-        slicer = tuple(slice(*i) for i in pad_list)
-        return res, slicer
-
-
-
-def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits: np.ndarray,
-                                                                plans_manager: PlansManager,
-                                                                configuration_manager: ConfigurationManager,
-                                                                label_manager: LabelManager,
-                                                                properties_dict: dict,
-                                                                return_probabilities: bool = False):
-    predicted_logits = predicted_logits.astype(np.float32)
-
-    # resample to original shape
-    current_spacing = configuration_manager.spacing if \
-        len(configuration_manager.spacing) == \
-        len(properties_dict['shape_after_cropping_and_before_resampling']) else \
-        [properties_dict['spacing'][0], *configuration_manager.spacing]
-    predicted_logits = configuration_manager.resampling_fn_probabilities(predicted_logits,
-                                            properties_dict['shape_after_cropping_and_before_resampling'],
-                                            current_spacing,
-                                            properties_dict['spacing'])
-    predicted_probabilities = label_manager.apply_inference_nonlin(predicted_logits)
-    del predicted_logits
-    segmentation = label_manager.convert_probabilities_to_segmentation(predicted_probabilities)
-
-    # put segmentation in bbox (revert cropping)
-    segmentation_reverted_cropping = np.zeros(properties_dict['shape_before_cropping'],
-                                              dtype=np.uint8 if len(label_manager.foreground_labels) < 255 else np.uint16)
-    slicer = bounding_box_to_slice(properties_dict['bbox_used_for_cropping'])
-    segmentation_reverted_cropping[slicer] = segmentation
-    del segmentation
-
-    # revert transpose
-    segmentation_reverted_cropping = segmentation_reverted_cropping.transpose(plans_manager.transpose_backward)
-    if return_probabilities:
-        # revert cropping
-        predicted_probabilities = label_manager.revert_cropping_on_probabilities(predicted_probabilities,
-                                                                                 properties_dict[
-                                                                                     'bbox_used_for_cropping'],
-                                                                                 properties_dict[
-                                                                                     'shape_before_cropping'])
-        # revert transpose
-        predicted_probabilities = predicted_probabilities.transpose([0] + [i + 1 for i in
-                                                                           plans_manager.transpose_backward])
-        return segmentation_reverted_cropping, predicted_probabilities
-    else:
-        return segmentation_reverted_cropping
-
-
-
 def inject_dg_trainers_into_nnunet(num_epochs=1000):
     dg_trainer_paths = Path(segmentation_models.__file__).parent.glob("*.py")
     target_dir = Path(nnunetv2.__path__[0], "training/nnUNetTrainer/variants/acquisition_focus/")
@@ -679,3 +490,21 @@ def inject_dg_trainers_into_nnunet(num_epochs=1000):
 
         with open(target_dir / tr.name, "w") as f:
             f.write(tr_code_with_set_epochs)
+
+
+
+def get_segment_fn(trained_model_path, fold=0):
+
+    # trained_model_path: Like 'nnUNetV2_results/Dataset_xxx/nnUNetTrainer__nnUNetPlans__2d'
+
+    inject_dg_trainers_into_nnunet()
+    (network, parameters, patch_size, configuration_manager,
+    inference_allowed_mirroring_axes, plans_manager, dataset_json) = load_network(trained_model_path, fold)
+
+    def segment_closure(b_image: torch.Tensor, b_spacing: torch.Tensor):
+        assert b_image.ndim == 5, f"Expected 5D tensor, got {b_image.ndim}"
+        return run_inference_on_image(b_image, b_spacing, network, parameters,
+            plans_manager, configuration_manager, dataset_json, inference_allowed_mirroring_axes
+        )
+
+    return segment_closure
