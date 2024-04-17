@@ -24,14 +24,12 @@ with suppress_stdout():
     import nnunetv2
     from nnunetv2.training.loss import compound_losses
     from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
-    from nnunetv2.utilities.label_handling.label_handling import LabelManager
     from nnunetv2.utilities.helpers import empty_cache, dummy_context
     from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
-    from nnunetv2.inference.sliding_window_prediction import  get_sliding_window_generator
     from nnunetv2.inference.export_prediction import convert_predicted_logits_to_segmentation_with_correct_shape
 
     DC_and_CE_loss = compound_losses.DC_and_CE_loss
-    
+
 
 
 def load_network(trained_model_path, fold):
@@ -312,6 +310,33 @@ def predict_logits_from_preprocessed_data(data: torch.Tensor,
     print('Prediction done, transferring to CPU if needed')
     prediction = prediction.to('cpu')
     return prediction
+
+
+
+def get_sliding_window_generator(image_size: Tuple[int, ...], tile_size: Tuple[int, ...], tile_step_size: float,
+                                 verbose: bool = False):
+    if len(tile_size) < len(image_size):
+        assert len(tile_size) == len(image_size) - 1, 'if tile_size has less entries than image_size, len(tile_size) ' \
+                                                      'must be one shorter than len(image_size) (only dimension ' \
+                                                      'discrepancy of 1 allowed).'
+        steps = compute_steps_for_sliding_window(image_size[1:], tile_size, tile_step_size)
+        if verbose: print(f'n_steps {image_size[0] * len(steps[0]) * len(steps[1])}, image size is {image_size}, tile_size {tile_size}, '
+                          f'tile_step_size {tile_step_size}\nsteps:\n{steps}')
+        for d in range(image_size[0]):
+            for sx in steps[0]:
+                for sy in steps[1]:
+                    slicer = tuple([slice(None), d, *[slice(si, si + ti) for si, ti in zip((sx, sy), tile_size)]])
+                    yield slicer
+    else:
+        steps = compute_steps_for_sliding_window(image_size, tile_size, tile_step_size)
+        if verbose: print(f'n_steps {np.prod([len(i) for i in steps])}, image size is {image_size}, tile_size {tile_size}, '
+                          f'tile_step_size {tile_step_size}\nsteps:\n{steps}')
+        for sx in steps[0]:
+            for sy in steps[1]:
+                for sz in steps[2]:
+                    slicer = tuple([slice(None), *[slice(si, si + ti) for si, ti in zip((sx, sy, sz), tile_size)]])
+                    yield slicer
+
 
 
 def predict_sliding_window_return_logits(network: nn.Module,

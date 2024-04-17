@@ -18,7 +18,7 @@ from slice_inflate.utils.register_centroids import get_centroid_reorient_grid_af
 from slice_inflate.utils.nnunetv2_utils import get_segment_fn
 from slice_inflate.utils.python_utils import get_script_dir
 from slice_inflate.utils.nifti_utils import nifti_grid_sample, get_zooms
-from slice_inflate.utils.clinical_cardiac_views import get_clinical_cardiac_view_affines
+from slice_inflate.datasets.clinical_cardiac_views import get_clinical_cardiac_view_affines
 from slice_inflate.utils.log_utils import log_oa_metrics, log_label_metrics
 
 

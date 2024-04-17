@@ -37,7 +37,7 @@ from slice_inflate.models.learnable_transform import AffineTransformModule, get_
 from slice_inflate.models.hybrid_unet import HybridUnet
 from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, \
     log_oa_metrics, log_affine_param_stats, log_frameless_image, get_cuda_mem_info_str
-from slice_inflate.utils.clinical_cardiac_views import get_class_volumes
+from slice_inflate.datasets.clinical_cardiac_views import get_class_volumes
 from slice_inflate.utils.python_utils import DotDict, get_script_dir
 from slice_inflate.utils.torch_utils import get_batch_score_per_label, save_model, \
     reduce_label_scores_epoch, get_binarized_from_onehot_label
