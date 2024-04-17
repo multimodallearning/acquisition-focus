@@ -201,9 +201,7 @@ class AffineTransformModule(torch.nn.Module):
         # Rotation matrix definition
         theta_ap = theta_ap.view(B, self.ap_space)
 
-        if self.optim_method == 'angle-axis':
-            theta_ap[:,0] = 0.0 # [:,0] rotates in plane TODO this should not be restricted
-        elif self.optim_method == 'normal-vector':
+        if self.optim_method == 'normal-vector':
             theta_ap = theta_ap/theta_ap.norm(dim=1).view(-1,1) # Normalize
 
         theta_a = self.optim_function(theta_ap)

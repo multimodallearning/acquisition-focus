@@ -85,6 +85,7 @@ class EPix2VoxModel128(torch.nn.Module):
 
         self.epoch_start_use_merger = epoch_start_use_merger
         self.epoch_start_use_refiner = epoch_start_use_refiner
+        self.out_size = 128
 
     def forward(self, views, epoch_idx):
         B,N_VIEWS,N_CHAN,SPAT_H,SPAT_W = views.shape
@@ -126,6 +127,7 @@ class EPix2VoxModel64(torch.nn.Module):
 
         self.epoch_start_use_merger = epoch_start_use_merger
         self.epoch_start_use_refiner = epoch_start_use_refiner
+        self.out_size = 64
 
     def forward(self, views, epoch_idx):
         B,N_VIEWS,N_CHAN,SPAT_H,SPAT_W = views.shape

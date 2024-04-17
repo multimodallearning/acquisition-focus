@@ -11,10 +11,11 @@ class EPix2Vox_InterfaceModel(torch.nn.Module):
         input, epx = args
         slice_fg = [slc[:,1:].sum(dim=1, keepdim=True) for slc in input.chunk(2, dim=1)]
         slices = torch.cat(slice_fg, dim=1)
-        slices = torch.nn.functional.interpolate(slices, size=[224,224]) # TODO automate
+        slices = torch.nn.functional.interpolate(slices, size=[224,224])
         B,N_SLICES,SPAT_H,SPAT_W = slices.shape
         slices = slices.view(B,N_SLICES,1,SPAT_H,SPAT_W).repeat(1,1,3,1,1) * 255.
         y_hat = self.epix_model(slices, epx)
-        y_hat = y_hat.view(B,1,128,128,128) # TODO automate
+        out_sz = self.epix_model.out_size
+        y_hat = y_hat.view(B,1,out_sz,out_sz,out_sz)
         y_hat = torch.cat([1.-y_hat, y_hat], dim=1) # Create bg / fg channels
         return y_hat

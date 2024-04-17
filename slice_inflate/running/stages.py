@@ -53,42 +53,34 @@ class Stage(dict):
 def set_previous_stage_transform_chk(self):
     self['transform_model_checkpoint_path'] = self['save_path']
 
-# view_optimization_mode in ['opt-current-fix-previous', 'opt-all', 'opt-none']
+
 
 def get_std_stages(config):
-    std_stages = dict(
-        opt_first=Stage( # Optimize first view
+    std_stages = {}
+    n_views = len(config.view_ids)
+
+    for view_idx in range(n_views):
+        if view_idx > 0:
+            activate_fn = set_previous_stage_transform_chk
+        else:
+            activate_fn = lambda self: None
+
+        std_stages[f'opt_view{view_idx}'] = Stage(
             view_optimization_mode='opt-current-fix-previous',
             epochs=int(config['epochs']*1.0),
             use_affine_theta=True,
             train_affine_theta=True,
             do_output=True,
-            __activate_fn__=lambda self: None
-        ),
-        opt_second=Stage( # Optimize second view
-            view_optimization_mode='opt-current-fix-previous',
-            epochs=int(config['epochs']*1.0),
-            use_affine_theta=True,
-            train_affine_theta=True,
-            do_output=True,
-            __activate_fn__=set_previous_stage_transform_chk
-        ),
-        opt_both_fix=Stage( # Final optimized run
-            do_output=True,
-            view_optimization_mode='opt-none',
-            epochs=config['epochs'],
-            use_affine_theta=True,
-            train_affine_theta=False,
-            __activate_fn__=set_previous_stage_transform_chk
-        ),
-        ref=Stage( # Reference run
-            do_output=True,
-            view_optimization_mode='opt-none',
-            epochs=config['epochs'],
-            train_affine_theta=False,
-            use_affine_theta=False,
-            __activate_fn__=lambda self: None
-        ),
+            __activate_fn__=activate_fn
+        )
+
+    std_stages['ref'] = Stage( # Reference run
+        do_output=True,
+        view_optimization_mode='opt-none',
+        epochs=config['epochs'],
+        train_affine_theta=False,
+        use_affine_theta=False,
+        __activate_fn__=lambda self: None
     )
 
     if 'stage_override' in config and config['stage_override'] is not None:
