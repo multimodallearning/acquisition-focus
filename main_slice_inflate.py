@@ -44,6 +44,7 @@ from slice_inflate.datasets.mrxcat_dataset import MRXCATDataset
 from slice_inflate.models.interface_models import NNUNET_InterfaceModel, EPix2Vox_InterfaceModel
 from slice_inflate.models.learnable_transform import AffineTransformModule, get_random_affine
 from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
+from slice_inflate.models.hybrid_unet import HybridUnet
 from slice_inflate.utils.python_utils import DotDict
 from slice_inflate.utils.torch_utils import get_batch_score_per_label, save_model, \
     reduce_label_scores_epoch, get_binarized_from_onehot_label
@@ -114,7 +115,8 @@ def get_model(config, num_classes, THIS_SCRIPT_DIR, _path=None, load_model_only=
         # Disable gradients of non-used deep supervision
         for so_idx in range(len(seg_outputs)-1):
             seg_outputs[so_idx][1].requires_grad = False
-            model = NNUNET_InterfaceModel(nnunet_model)
+            # model = NNUNET_InterfaceModel(nnunet_model)
+            model = HybridUnet(n_slices=2, num_classes=num_classes)
 
     elif config.model_type == 'hybrid-EPix2Vox':
         epix_model = EPix2VoxModel128(
@@ -261,9 +263,6 @@ def get_transform_model(config, num_classes, _path=None, sa_atm_override=None, h
         + list(hla_atm.parameters())
     )
 
-    # else:
-    #     raise ValueError()
-
     if config.train_affine_theta:
         assert config.use_affine_theta
 
@@ -344,8 +343,8 @@ def get_transformed(config, phase, label, soft_label, nifti_affine, grid_affine_
         image = torch.empty([])
         image_slc = torch.empty([])
 
-    # Do not set label_slc to .long() here, since we (may) need the gradients
     return image_slc, soft_label_slc, grid_affine
+
 
 
 def apply_affine_augmentation(affine_list, zoom_strength=0.1, offset_strength=0.1, rotation_strength=0.1):

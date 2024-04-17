@@ -1,4 +1,5 @@
 import random
+import functools
 import numpy as np
 import torch
 from pathlib import Path
@@ -7,6 +8,33 @@ import contextlib
 import einops as eo
 import gc
 from collections import defaultdict
+
+
+
+def get_module(module, keychain):
+    get_fn = lambda self, key: self[int(key)] if isinstance(self, torch.nn.Sequential) \
+                                              else getattr(self, key)
+    return functools.reduce(get_fn, keychain.split('.'), module)
+
+def set_module(module, keychain, replacee):
+    """Replaces any module inside a pytorch module for a given keychain with "replacee".
+       Use module.named_modules() to retrieve valid keychains for layers.
+       e.g.
+       first_keychain = list(module.keys())[0]
+       new_first_replacee = torch.nn.Conv1d(1,2,3)
+       set_module(first_keychain, torch.nn.Conv1d(1,2,3))
+    """
+    get_fn = lambda self, key: self[int(key)] if isinstance(self, torch.nn.Sequential) \
+        else getattr(self, key)
+
+    key_list = keychain.split('.')
+    root = functools.reduce(get_fn, key_list[:-1], module)
+    leaf_id = key_list[-1]
+
+    if isinstance(root, torch.nn.Sequential) and leaf_id.isnumeric():
+        root[int(leaf_id)] = replacee
+    else:
+        setattr(root, leaf_id, replacee)
 
 
 
