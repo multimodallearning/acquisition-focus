@@ -7,13 +7,13 @@ from slice_inflate.utils.torch_utils import set_module
 
 
 class HybridUnet(PlainConvUNet):
-    def __init__(self, n_slices, num_classes):
+    def __init__(self, n_views, num_classes):
 
         n_stages = 6
-        features_per_stage=[n_slices*c for c in [16,32,64,128,256,256]]
+        features_per_stage=[n_views*c for c in [16,32,64,128,256,256]]
 
         super().__init__(
-            input_channels=n_slices*num_classes,
+            input_channels=n_views*num_classes,
             n_stages=n_stages,
             features_per_stage=features_per_stage,
             conv_op=torch.nn.modules.conv.Conv3d,
@@ -32,23 +32,23 @@ class HybridUnet(PlainConvUNet):
             deep_supervision=False,
             nonlin_first=False
         )
-        
-        self.skip_connector = SkipConnector(n_slices)
-        self.__setup_2d_encoder__(n_slices)
-        self.n_slices = n_slices
+
+        self.skip_connector = SkipConnector(n_views)
+        self.__setup_2d_encoder__(n_views)
+        self.n_views = n_views
 
     def forward(self, x, b_grid_affines):
         skips = self.encoder(x)
         embedded_skips = [self.skip_connector(s, b_grid_affines) for s in skips]
         return self.decoder(embedded_skips)
 
-    def __setup_2d_encoder__(self, n_slices):
+    def __setup_2d_encoder__(self, n_views):
         for keychain, mod in self.encoder.named_modules(remove_duplicate=False):
             if isinstance(mod, torch.nn.modules.conv.Conv3d):
                 replacer = torch.nn.Conv2d(mod.in_channels, mod.out_channels,
                                            kernel_size=mod.kernel_size[:2],
                                            stride=mod.stride[:2], padding=mod.padding[:2],
-                                           groups=n_slices)
+                                           groups=n_views)
 
             elif isinstance(mod, torch.nn.modules.instancenorm.InstanceNorm3d):
                 replacer = torch.nn.InstanceNorm2d(mod.num_features,
@@ -63,20 +63,20 @@ class HybridUnet(PlainConvUNet):
 
 
 class SkipConnector(torch.nn.Module):
-    def __init__(self, n_slices):
+    def __init__(self, n_views):
         self.dtype = torch.float32
-        self.n_slices = n_slices
+        self.n_views = n_views
         super().__init__()
 
     def forward(self, x, b_grid_affines):
         B,C,SPAT,_ = x.shape
-        C_PER_SLICE = C//self.n_slices
+        C_PER_SLICE = C//self.n_views
         target_shape = torch.Size([B,C_PER_SLICE,SPAT,SPAT,SPAT])
         zer = torch.zeros(B,C,SPAT,SPAT,SPAT).to(x)
         zer[..., SPAT//2] = x # Embed slice in center of last dimension
         x = zer
 
-        x_sa, x_hla = torch.chunk(x, self.n_slices, dim=1)
+        x_sa, x_hla = torch.chunk(x, self.n_views, dim=1)
 
         # Grid sample first channel chunk with inverse SA affines
         rescaled_sa_affines = b_grid_affines[0]

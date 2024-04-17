@@ -1,5 +1,7 @@
 import sys
 import os
+import re
+from pathlib import Path
 from copy import deepcopy
 from contextlib import contextmanager
 import traceback
@@ -14,12 +16,14 @@ from torch._dynamo import OptimizedModule
 import torch.nn.functional as F
 
 from scipy.ndimage import gaussian_filter
+import nnunetv2
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
 from nnunetv2.utilities.helpers import empty_cache, dummy_context
-from nnunetv2.inference.predict_from_raw_data import load_trained_model_for_inference
+from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
 
 from slice_inflate.utils.nifti_utils import nifti_grid_sample
+import slice_inflate.models.segmentation as segmentation_models
 
 NUM_PROCESSES = 3
 
@@ -36,17 +40,16 @@ def suppress_stdout():
 
 
 
-def load_network(model_training_output_path, fold):
+def load_network(trained_model_path, fold):
     use_folds = [fold] if isinstance(fold, int) else fold # We only trained one fold
     checkpoint_name = "checkpoint_final.pth"
 
-    parameters, configuration_manager, inference_allowed_mirroring_axes, \
-    plans_manager, dataset_json, network, trainer_name = \
-        load_trained_model_for_inference(model_training_output_path, use_folds, checkpoint_name)
+    predictor = nnUNetPredictor()
+    predictor.initialize_from_trained_model_folder(trained_model_path, use_folds, checkpoint_name)
 
-    patch_size = plans_manager.get_configuration('3d_fullres').patch_size
+    patch_size = predictor.plans_manager.get_configuration('3d_fullres').patch_size
 
-    return network, parameters, patch_size, configuration_manager, inference_allowed_mirroring_axes, plans_manager, dataset_json
+    return predictor.network, predictor.list_of_parameters, patch_size, predictor.configuration_manager, predictor.allowed_mirroring_axes, predictor.plans_manager, predictor.dataset_json
 
 
 
@@ -140,10 +143,13 @@ def run_inference(data, network, parameters,
                                 num_processes_segmentation_export, device)
 
 
-def get_segment_fn(model_training_output_path, fold, device):
+def get_segment_fn(trained_model_path, fold=0):
 
+    # trained_model_path: Like 'nnUNetV2_results/Dataset_xxx/nnUNetTrainer__nnUNetPlans__2d'
+
+    inject_dg_trainers_into_nnunet()
     (network, parameters, patch_size, configuration_manager,
-     inference_allowed_mirroring_axes, plans_manager, dataset_json) = load_network(model_training_output_path, fold)
+    inference_allowed_mirroring_axes, plans_manager, dataset_json) = load_network(trained_model_path, fold)
 
     def segment_closure(b_image: torch.Tensor, b_spacing: torch.Tensor):
         assert b_image.ndim == 5, f"Expected 5D tensor, got {b_image.ndim}"
@@ -698,3 +704,21 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
         return segmentation_reverted_cropping, predicted_probabilities
     else:
         return segmentation_reverted_cropping
+
+
+
+def inject_dg_trainers_into_nnunet(num_epochs=1000):
+    dg_trainer_paths = Path(segmentation_models.__file__).parent.glob("*.py")
+    target_dir = Path(nnunetv2.__path__[0], "training/nnUNetTrainer/variants/acquisition_focus/")
+    target_dir.mkdir(exist_ok=True)
+
+    for tr in dg_trainer_paths:
+        # open file
+        with open(tr, "r") as f:
+            tr_code = f.read()
+        tr_code_with_set_epochs = re.sub(
+            r"self\.num_epochs = \d+", f"self.num_epochs = {num_epochs}", tr_code
+        )
+
+        with open(target_dir / tr.name, "w") as f:
+            f.write(tr_code_with_set_epochs)

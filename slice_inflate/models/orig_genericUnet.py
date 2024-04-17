@@ -14,67 +14,14 @@
 
 
 from copy import deepcopy
-from nnunetv2.utilities.helpers import softmax_helper_dim1
-from nnunet.network_architecture.initialization import InitWeights_He # TODO remove nnunet v1 dependencies
-from nnunet.network_architecture.neural_network import SegmentationNetwork # TODO remove nnunet v1 dependencies
+from nnunet.utilities.nd_softmax import softmax_helper
 from torch import nn
 import torch
 import numpy as np
+from nnunet.network_architecture.initialization import InitWeights_He
+from nnunet.network_architecture.neural_network import SegmentationNetwork
 import torch.nn.functional
-from torch.utils.checkpoint import checkpoint_sequential, checkpoint
 
-from slice_inflate.utils.nifti_utils import get_zooms, rescale_rot_components_with_diag
-
-class SkipConnector(torch.nn.Module):
-    def __init__(self, mode='repeat'):
-        super().__init__()
-
-        assert mode in ['repeat', 'fill-sparse']
-        self.mode = mode
-        self.dtype = torch.float32
-
-    def forward(self, x, b_grid_affines):
-        B,C,SPAT,_ = x.shape
-        C_HALF = C//2
-        target_shape = torch.Size([B,C_HALF,SPAT,SPAT,SPAT])
-        # Prepare: Repeat slice / fill slice into zeros on last spatial dimension and chunk
-
-        if self.mode == 'repeat':
-            x = torch.stack([x]*SPAT, dim=-1)
-        elif self.mode == 'fill-sparse':
-            zer = torch.zeros(B,C,SPAT,SPAT,SPAT).to(x)
-            zer[..., SPAT//2] = x
-            x = zer
-        else:
-            raise ValueError()
-        x_sa, x_hla = torch.chunk(x, 2, dim=1)
-
-        # Grid sample first channel chunk with inverse SA affines
-        rescaled_sa_affines = b_grid_affines[0]
-        # Rescale to sample from volume slice space into volume space (forward grid sampling sampled to single slice, non-stacked)
-        rescaled_sa_affines = rescale_rot_components_with_diag(rescaled_sa_affines, 1/get_zooms(rescaled_sa_affines))
-
-        sa_grid = torch.nn.functional.affine_grid(
-            rescaled_sa_affines.to(self.dtype).inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False
-        )
-        transformed_sa = checkpoint(torch.nn.functional.grid_sample,
-            x_sa, sa_grid.to(x_sa), 'bilinear', 'zeros', False
-        )
-
-        # Grid sample second channel chunk with inverse HLA affines
-        rescaled_hla_affines = b_grid_affines[1]
-        # Rescale to sample from volume slice space into volume space (forward grid sampling sampled to single slice, non-stacked)
-        rescaled_hla_affines = rescale_rot_components_with_diag(rescaled_hla_affines, 1/get_zooms(rescaled_hla_affines))
-
-        hla_grid = torch.nn.functional.affine_grid(
-            rescaled_hla_affines.to(self.dtype).inverse()[:,:3,:].view(B,3,4), target_shape, align_corners=False,
-        )
-        transformed_hla = checkpoint(torch.nn.functional.grid_sample,
-            x_hla, hla_grid.to(x_hla), 'bilinear', 'zeros', False,
-        )
-
-        skip_out = torch.cat([transformed_sa, transformed_hla], dim=1)
-        return skip_out
 
 class ConvDropoutNormNonlin(nn.Module):
     """
@@ -101,8 +48,8 @@ class ConvDropoutNormNonlin(nn.Module):
         self.dropout_op = dropout_op
         self.dropout_op_kwargs = dropout_op_kwargs
         self.norm_op_kwargs = norm_op_kwargs
-        self.conv_op = conv_op
         self.conv_kwargs = conv_kwargs
+        self.conv_op = conv_op
         self.norm_op = norm_op
 
         self.conv = self.conv_op(input_channels, output_channels, **self.conv_kwargs)
@@ -192,7 +139,7 @@ class StackedConvLayers(nn.Module):
                            self.nonlin, self.nonlin_kwargs) for _ in range(num_convs - 1)]))
 
     def forward(self, x):
-        return checkpoint(self.blocks, x)
+        return self.blocks(x)
 
 
 def print_module_training_status(module):
@@ -217,19 +164,19 @@ class Upsample(nn.Module):
                                          align_corners=self.align_corners)
 
 
-class Generic_UNet_Hybrid(SegmentationNetwork):
+class Generic_UNet(SegmentationNetwork):
     DEFAULT_BATCH_SIZE_3D = 2
     DEFAULT_PATCH_SIZE_3D = (64, 192, 160)
     SPACING_FACTOR_BETWEEN_STAGES = 2
     BASE_NUM_FEATURES_3D = 30
     MAX_NUMPOOL_3D = 999
-    MAX_NUM_FILTERS_3D = 512
+    MAX_NUM_FILTERS_3D = 320
 
     DEFAULT_PATCH_SIZE_2D = (256, 256)
     BASE_NUM_FEATURES_2D = 30
     DEFAULT_BATCH_SIZE_2D = 50
     MAX_NUMPOOL_2D = 999
-    MAX_FILTERS_2D = 512
+    MAX_FILTERS_2D = 480
 
     use_this_for_batch_size_computation_2D = 19739648
     use_this_for_batch_size_computation_3D = 520000000  # 505789440
@@ -239,12 +186,11 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
                  norm_op=nn.BatchNorm2d, norm_op_kwargs=None,
                  dropout_op=nn.Dropout2d, dropout_op_kwargs=None,
                  nonlin=nn.LeakyReLU, nonlin_kwargs=None, deep_supervision=True, dropout_in_localization=False,
-                 final_nonlin=softmax_helper_dim1, weightInitializer=InitWeights_He(1e-2), pool_op_kernel_sizes=None,
+                 final_nonlin=softmax_helper, weightInitializer=InitWeights_He(1e-2), pool_op_kernel_sizes=None,
                  conv_kernel_sizes=None,
                  upscale_logits=False, convolutional_pooling=False, convolutional_upsampling=False,
                  max_num_features=None, basic_block=ConvDropoutNormNonlin,
-                 seg_output_use_bias=False, use_onehot_input=True,
-                 use_skip_connections=True, encoder_mode='3d', decoder_mode='3d'):
+                 seg_output_use_bias=False):
         """
         basically more flexible than v1, architecture is the same
 
@@ -254,7 +200,7 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
 
         Questions? -> f.isensee@dkfz.de
         """
-        super().__init__()
+        super(Generic_UNet, self).__init__()
         self.convolutional_upsampling = convolutional_upsampling
         self.convolutional_pooling = convolutional_pooling
         self.upscale_logits = upscale_logits
@@ -265,90 +211,91 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
         if norm_op_kwargs is None:
             norm_op_kwargs = {'eps': 1e-5, 'affine': True, 'momentum': 0.1}
 
-        self.enc_conv_kwargs = {'stride': 1, 'dilation': 1, 'bias': True}
-        self.dec_conv_kwargs = self.enc_conv_kwargs.copy()
-        self.enc_dropout_op_kwargs = self.dec_dropout_op_kwargs = dropout_op_kwargs
-        self.enc_norm_op_kwargs = self.dec_norm_op_kwargs = norm_op_kwargs
+        self.conv_kwargs = {'stride': 1, 'dilation': 1, 'bias': True}
 
         self.nonlin = nonlin
         self.nonlin_kwargs = nonlin_kwargs
+        self.dropout_op_kwargs = dropout_op_kwargs
+        self.norm_op_kwargs = norm_op_kwargs
         self.weightInitializer = weightInitializer
-
+        self.conv_op = conv_op
+        self.norm_op = norm_op
+        self.dropout_op = dropout_op
         self.num_classes = num_classes
         self.final_nonlin = final_nonlin
         self._deep_supervision = deep_supervision
         self.do_ds = deep_supervision
-        self.use_skip_connections = use_skip_connections
 
-        assert decoder_mode in ['3d', 'disabled']
-        assert encoder_mode in ['2d', '3d']
+        if conv_op == nn.Conv2d:
+            upsample_mode = 'bilinear'
+            pool_op = nn.MaxPool2d
+            transpconv = nn.ConvTranspose2d
+            if pool_op_kernel_sizes is None:
+                pool_op_kernel_sizes = [(2, 2)] * num_pool
+            if conv_kernel_sizes is None:
+                conv_kernel_sizes = [(3, 3)] * (num_pool + 1)
+        elif conv_op == nn.Conv3d:
+            upsample_mode = 'trilinear'
+            pool_op = nn.MaxPool3d
+            transpconv = nn.ConvTranspose3d
+            if pool_op_kernel_sizes is None:
+                pool_op_kernel_sizes = [(2, 2, 2)] * num_pool
+            if conv_kernel_sizes is None:
+                conv_kernel_sizes = [(3, 3, 3)] * (num_pool + 1)
+        else:
+            raise ValueError("unknown convolution dimensionality, conv op: %s" % str(conv_op))
 
-        self.encoder_mode = encoder_mode
-        self.decoder_mode = decoder_mode
-        self.is_hybrid = (decoder_mode == '3d' and encoder_mode == '2d')
+        self.input_shape_must_be_divisible_by = np.prod(pool_op_kernel_sizes, 0, dtype=np.int64)
+        self.pool_op_kernel_sizes = pool_op_kernel_sizes
+        self.conv_kernel_sizes = conv_kernel_sizes
 
-        if encoder_mode == '2d':
-            self.enc_conv_op = nn.Conv2d
-        elif encoder_mode == '3d':
-            self.enc_conv_op = nn.Conv3d
+        self.conv_pad_sizes = []
+        for krnl in self.conv_kernel_sizes:
+            self.conv_pad_sizes.append([1 if i == 3 else 0 for i in krnl])
 
-        (self.enc_upsample_mode,
-         self.enc_pool_op,
-         self.enc_transpconv,
-         self.enc_pool_op_kernel_sizes,
-         self.enc_conv_kernel_sizes,
-         self.enc_conv_pad_sizes,
-         self.enc_norm_op,
-         self.enc_dropout_op,
-         self.enc_max_num_features) = get_conv_op_config(self.enc_conv_op, conv_kernel_sizes, pool_op_kernel_sizes, num_pool, norm_op, max_num_features) # TODO check implications
-
-
-        # self.input_shape_must_be_divisible_by = np.prod(pool_op_kernel_sizes, 0, dtype=np.int64)
+        if max_num_features is None:
+            if self.conv_op == nn.Conv3d:
+                self.max_num_features = self.MAX_NUM_FILTERS_3D
+            else:
+                self.max_num_features = self.MAX_FILTERS_2D
+        else:
+            self.max_num_features = max_num_features
 
         self.conv_blocks_context = []
         self.conv_blocks_localization = []
         self.td = []
         self.tu = []
-        self.tskip = []
         self.seg_outputs = []
 
         output_features = base_num_features
-
-        if use_onehot_input:
-            input_features = num_classes
-        else:
-            input_features = input_channels
-
-        if self.is_hybrid:
-            output_features = output_features * 2
-            self.enc_conv_kwargs['groups'] = 2
+        input_features = input_channels
 
         for d in range(num_pool):
             # determine the first stride
             if d != 0 and self.convolutional_pooling:
-                first_stride = self.enc_pool_op_kernel_sizes[d - 1]
+                first_stride = pool_op_kernel_sizes[d - 1]
             else:
                 first_stride = None
 
-            self.enc_conv_kwargs['kernel_size'] = self.enc_conv_kernel_sizes[d]
-            self.enc_conv_kwargs['padding'] = self.enc_conv_pad_sizes[d]
+            self.conv_kwargs['kernel_size'] = self.conv_kernel_sizes[d]
+            self.conv_kwargs['padding'] = self.conv_pad_sizes[d]
             # add convolutions
             self.conv_blocks_context.append(StackedConvLayers(input_features, output_features, num_conv_per_stage,
-                                                              self.enc_conv_op, self.enc_conv_kwargs, self.enc_norm_op,
-                                                              self.enc_norm_op_kwargs, self.enc_dropout_op,
-                                                              self.enc_dropout_op_kwargs, self.nonlin, self.nonlin_kwargs,
+                                                              self.conv_op, self.conv_kwargs, self.norm_op,
+                                                              self.norm_op_kwargs, self.dropout_op,
+                                                              self.dropout_op_kwargs, self.nonlin, self.nonlin_kwargs,
                                                               first_stride, basic_block=basic_block))
             if not self.convolutional_pooling:
-                self.td.append(self.enc_pool_op(self.enc_pool_op_kernel_sizes[d]))
+                self.td.append(pool_op(pool_op_kernel_sizes[d]))
             input_features = output_features
             output_features = int(np.round(output_features * feat_map_mul_on_downscale))
 
-            output_features = min(output_features, self.enc_max_num_features)
+            output_features = min(output_features, self.max_num_features)
 
         # now the bottleneck.
         # determine the first stride
         if self.convolutional_pooling:
-            first_stride = self.enc_pool_op_kernel_sizes[-1]
+            first_stride = pool_op_kernel_sizes[-1]
         else:
             first_stride = None
 
@@ -360,43 +307,26 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
         else:
             final_num_features = self.conv_blocks_context[-1].output_channels
 
-        self.enc_conv_kwargs['kernel_size'] = self.enc_conv_kernel_sizes[num_pool]
-        self.enc_conv_kwargs['padding'] = self.enc_conv_pad_sizes[num_pool]
-
+        self.conv_kwargs['kernel_size'] = self.conv_kernel_sizes[num_pool]
+        self.conv_kwargs['padding'] = self.conv_pad_sizes[num_pool]
         self.conv_blocks_context.append(nn.Sequential(
-            StackedConvLayers(input_features, output_features, num_conv_per_stage - 1, self.enc_conv_op, self.enc_conv_kwargs,
-                              self.enc_norm_op, self.enc_norm_op_kwargs, self.enc_dropout_op, self.enc_dropout_op_kwargs, self.nonlin,
+            StackedConvLayers(input_features, output_features, num_conv_per_stage - 1, self.conv_op, self.conv_kwargs,
+                              self.norm_op, self.norm_op_kwargs, self.dropout_op, self.dropout_op_kwargs, self.nonlin,
                               self.nonlin_kwargs, first_stride, basic_block=basic_block),
-            StackedConvLayers(output_features, final_num_features, 1, self.enc_conv_op, self.enc_conv_kwargs,
-                              self.enc_norm_op, self.enc_norm_op_kwargs, self.enc_dropout_op, self.enc_dropout_op_kwargs, self.nonlin,
+            StackedConvLayers(output_features, final_num_features, 1, self.conv_op, self.conv_kwargs,
+                              self.norm_op, self.norm_op_kwargs, self.dropout_op, self.dropout_op_kwargs, self.nonlin,
                               self.nonlin_kwargs, basic_block=basic_block)))
 
         # if we don't want to do dropout in the localization pathway then we set the dropout prob to zero here
         if not dropout_in_localization:
-            old_dropout_p = self.enc_dropout_op_kwargs['p']
-            self.enc_dropout_op_kwargs['p'] = 0.0
+            old_dropout_p = self.dropout_op_kwargs['p']
+            self.dropout_op_kwargs['p'] = 0.0
 
         # now lets build the localization pathway
-        if decoder_mode == '2d':
-            self.dec_conv_op = nn.Conv2d
-        elif decoder_mode == '3d':
-            self.dec_conv_op = nn.Conv3d
-
-        (self.dec_upsample_mode,
-         self.dec_pool_op,
-         self.dec_transpconv,
-         self.dec_pool_op_kernel_sizes,
-         self.dec_conv_kernel_sizes,
-         self.dec_conv_pad_sizes,
-         self.dec_norm_op,
-         self.dec_dropout_op,
-         self.dec_max_num_features) = get_conv_op_config(self.dec_conv_op, conv_kernel_sizes, pool_op_kernel_sizes, num_pool, norm_op, max_num_features) # TODO check implications
-
         for u in range(num_pool):
-            nfeatures_from_down = min(final_num_features, self.dec_max_num_features)
+            nfeatures_from_down = final_num_features
             nfeatures_from_skip = self.conv_blocks_context[
                 -(2 + u)].output_channels  # self.conv_blocks_context[-1] is bottleneck, so start with -2
-            nfeatures_from_skip = nfeatures_from_skip // 2
             n_features_after_tu_and_concat = nfeatures_from_skip * 2
 
             # the first conv reduces the number of features to match those of skip
@@ -407,41 +337,22 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             else:
                 final_num_features = nfeatures_from_skip
 
-            # Clip channels values
-            nfeatures_from_skip = min(nfeatures_from_skip, Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D)
-            n_features_after_tu_and_concat = min(n_features_after_tu_and_concat, Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D)
-
             if not self.convolutional_upsampling:
-                self.tu.append(Upsample(scale_factor=self.dec_pool_op_kernel_sizes[-(u + 1)], mode=self.dec_upsample_mode))
+                self.tu.append(Upsample(scale_factor=pool_op_kernel_sizes[-(u + 1)], mode=upsample_mode))
             else:
-                self.tu.append(self.dec_transpconv(nfeatures_from_down, nfeatures_from_skip, self.dec_pool_op_kernel_sizes[-(u + 1)],
-                                          self.dec_pool_op_kernel_sizes[-(u + 1)], bias=False))
+                self.tu.append(transpconv(nfeatures_from_down, nfeatures_from_skip, pool_op_kernel_sizes[-(u + 1)],
+                                          pool_op_kernel_sizes[-(u + 1)], bias=False))
 
-            self.dec_conv_kwargs['kernel_size'] = self.dec_conv_kernel_sizes[- (u + 1)]
-            self.dec_conv_kwargs['padding'] = self.dec_conv_pad_sizes[- (u + 1)]
-
-            if not self.use_skip_connections:
-                n_features_after_tu_and_concat = n_features_after_tu_and_concat//2
-            elif self.use_skip_connections and self.is_hybrid:
-                n_features_after_tu_and_concat = int(n_features_after_tu_and_concat*1.5)
-
+            self.conv_kwargs['kernel_size'] = self.conv_kernel_sizes[- (u + 1)]
+            self.conv_kwargs['padding'] = self.conv_pad_sizes[- (u + 1)]
             self.conv_blocks_localization.append(nn.Sequential(
                 StackedConvLayers(n_features_after_tu_and_concat, nfeatures_from_skip, num_conv_per_stage - 1,
-                                  self.dec_conv_op, self.dec_conv_kwargs, self.dec_norm_op, self.dec_norm_op_kwargs, self.dec_dropout_op,
-                                  self.dec_dropout_op_kwargs, self.nonlin, self.nonlin_kwargs, basic_block=basic_block),
-                StackedConvLayers(nfeatures_from_skip, final_num_features, 1, self.dec_conv_op, self.dec_conv_kwargs,
-                                  self.dec_norm_op, self.dec_norm_op_kwargs, self.dec_dropout_op, self.dec_dropout_op_kwargs,
+                                  self.conv_op, self.conv_kwargs, self.norm_op, self.norm_op_kwargs, self.dropout_op,
+                                  self.dropout_op_kwargs, self.nonlin, self.nonlin_kwargs, basic_block=basic_block),
+                StackedConvLayers(nfeatures_from_skip, final_num_features, 1, self.conv_op, self.conv_kwargs,
+                                  self.norm_op, self.norm_op_kwargs, self.dropout_op, self.dropout_op_kwargs,
                                   self.nonlin, self.nonlin_kwargs, basic_block=basic_block)
             ))
-
-        # for s in range(num_pool):
-        #     dec_skip_nfeat = self.conv_blocks_context[s].output_channels
-        #     enc_skip_nfeat = base_num_features*(s+1)
-
-        #     self.tskip.append(
-        #         self.dec_transpconv(enc_skip_nfeat, dec_skip_nfeat, self.dec_pool_op_kernel_sizes[-(s + 1)],
-        #             self.dec_pool_op_kernel_sizes[-(s + 1)], bias=False)
-        #     )
 
         for ds in range(len(self.conv_blocks_localization)):
             self.seg_outputs.append(conv_op(self.conv_blocks_localization[ds][-1].output_channels, num_classes,
@@ -452,19 +363,18 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
         for usl in range(num_pool - 1):
             if self.upscale_logits:
                 self.upscale_logits_ops.append(Upsample(scale_factor=tuple([int(i) for i in cum_upsample[usl + 1]]),
-                                                        mode=self.dec_upsample_mode))
+                                                        mode=upsample_mode))
             else:
                 self.upscale_logits_ops.append(lambda x: x)
 
         if not dropout_in_localization:
-            self.dec_dropout_op_kwargs['p'] = old_dropout_p
+            self.dropout_op_kwargs['p'] = old_dropout_p
 
         # register all modules properly
         self.conv_blocks_localization = nn.ModuleList(self.conv_blocks_localization)
         self.conv_blocks_context = nn.ModuleList(self.conv_blocks_context)
         self.td = nn.ModuleList(self.td)
         self.tu = nn.ModuleList(self.tu)
-        # self.tskip = nn.ModuleList(self.tskip)
         self.seg_outputs = nn.ModuleList(self.seg_outputs)
         if self.upscale_logits:
             self.upscale_logits_ops = nn.ModuleList(
@@ -474,46 +384,20 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
             self.apply(self.weightInitializer)
             # self.apply(print_module_training_status)
 
-
-    def forward(self, x, b_grid_affines=None):
+    def forward(self, x):
         skips = []
         seg_outputs = []
         for d in range(len(self.conv_blocks_context) - 1):
-            if self.decoder_mode == 'disabled' and d == (len(self.conv_blocks_context) - 2):
-                # Encoder-only forward, do not apply instance norm and relu in the last layer of the encoder
-                x = self.conv_blocks_context[d].blocks[0](x)
-                x = self.conv_blocks_context[d].blocks[1].conv(x)
-            else:
-                # Normal nnunet forward
-                x = self.conv_blocks_context[d](x)
-
+            x = self.conv_blocks_context[d](x)
             skips.append(x)
             if not self.convolutional_pooling:
                 x = self.td[d](x)
 
-        if self.decoder_mode == 'disabled':
-            return x
-
         x = self.conv_blocks_context[-1](x)
-
-        if self.is_hybrid:
-            # x = x.unsqueeze(2).repeat(1,1,8,1,1) # TODO: automate calculation here
-            # x = torch.stack(8*[x],dim=-1)
-            x = SkipConnector(mode='fill-sparse')(x, b_grid_affines)
 
         for u in range(len(self.tu)):
             x = self.tu[u](x)
-
-            if self.use_skip_connections:
-                if self.is_hybrid:
-                    skip_2d = skips[-(u + 1)]
-                    skip_3d = SkipConnector(mode='fill-sparse')(skip_2d, b_grid_affines)
-
-                    x = torch.cat((x, skip_3d), dim=1)
-
-                else:
-                    # Normal nnunet skip connections
-                    x = torch.cat((x, skips[-(u + 1)]), dim=1)
+            x = torch.cat((x, skips[-(u + 1)]), dim=1)
             x = self.conv_blocks_localization[u](x)
             seg_outputs.append(self.final_nonlin(self.seg_outputs[u](x)))
 
@@ -563,54 +447,3 @@ class Generic_UNet_Hybrid(SegmentationNetwork):
                 tmp += np.prod(map_size, dtype=np.int64) * num_classes
             # print(p, map_size, num_feat, tmp)
         return tmp
-
-
-
-def get_conv_op_config(conv_op, conv_kernel_sizes, pool_op_kernel_sizes, num_pool, norm_op, max_num_features):
-    if conv_op == nn.Conv2d:
-        upsample_mode = 'bilinear'
-        pool_op = nn.MaxPool2d
-        norm_op = eval("nn."+norm_op.__name__.replace('3d','2d'))
-        dropout_op = nn.Dropout2d
-        transpconv = nn.ConvTranspose2d
-        if pool_op_kernel_sizes is None:
-            pool_op_kernel_sizes = [(2, 2)] * num_pool
-        else:
-            # Crop down 3d to 2d sizes if input kwargs were 3d
-            mean_pool_sz = [int(sum(pool) / len(pool)) for pool in pool_op_kernel_sizes]
-            pool_op_kernel_sizes = [[sz]*2 for sz in mean_pool_sz]
-
-        if conv_kernel_sizes is None:
-            conv_kernel_sizes = [(3, 3)] * (num_pool + 1)
-        else:
-            # Crop down 3d to 2d sizes if input kwargs were 3d
-            mean_conv_sz = [int(sum(krnl) / len(krnl)) for krnl in conv_kernel_sizes]
-            conv_kernel_sizes = [[sz]*2 for sz in mean_conv_sz]
-
-    elif conv_op == nn.Conv3d:
-        upsample_mode = 'trilinear'
-        pool_op = nn.MaxPool3d
-        norm_op = eval("nn."+norm_op.__name__.replace('2d','3d'))
-        dropout_op = nn.Dropout3d
-        transpconv = nn.ConvTranspose3d
-        if pool_op_kernel_sizes is None:
-            pool_op_kernel_sizes = [(2, 2, 2)] * num_pool
-        if conv_kernel_sizes is None:
-            conv_kernel_sizes = [(3, 3, 3)] * (num_pool + 1)
-    else:
-        raise ValueError("unknown convolution dimensionality, conv op: %s" % str(conv_op))
-
-    conv_pad_sizes = []
-
-    for krnl in conv_kernel_sizes:
-        conv_pad_sizes.append([1 if i == 3 else 0 for i in krnl])
-
-    if max_num_features is None:
-        if conv_op == nn.Conv3d:
-            max_num_features = Generic_UNet_Hybrid.MAX_NUM_FILTERS_3D
-        else:
-            max_num_features = Generic_UNet_Hybrid.MAX_FILTERS_2D
-    else:
-        max_num_features = max_num_features
-
-    return upsample_mode, pool_op, transpconv, pool_op_kernel_sizes, conv_kernel_sizes, conv_pad_sizes, norm_op, dropout_op, max_num_features

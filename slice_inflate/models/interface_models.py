@@ -2,20 +2,6 @@ import torch
 
 
 
-class NNUNET_InterfaceModel(torch.nn.Module):
-    def __init__(self, nnunet_model):
-        super().__init__()
-        self.nnunet_model = nnunet_model
-
-    def forward(self, *args, **kwargs):
-        y_hat = self.nnunet_model(*args, **kwargs)
-        if isinstance(y_hat, tuple):
-            return y_hat[0]
-        else:
-            return y_hat
-
-
-
 class EPix2Vox_InterfaceModel(torch.nn.Module):
     def __init__(self, epix_model):
         super().__init__()

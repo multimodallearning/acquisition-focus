@@ -15,43 +15,39 @@ import wandb
 from pytorch_run_on_recommended_gpu.run_on_recommended_gpu import get_cuda_environ_vars as get_vars
 os.environ.update(get_vars(os.environ.get('CUDA_VISIBLE_DEVICES','0')))
 import torch
-import einops as eo
-# import nibabel as nib
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.cuda.amp as amp
 from torch.utils.data import DataLoader
+import einops as eo
+# import nibabel as nib
 
-from slice_inflate.utils.python_utils import get_script_dir
-THIS_SCRIPT_DIR = get_script_dir()
 
-os.environ['CACHE_PATH'] = str(Path(THIS_SCRIPT_DIR, '.cache'))
 # torch.autograd.set_detect_anomaly(True)
 
+import numpy as np
+import monai
+from nnunetv2.training.loss.compound_losses import DC_and_CE_loss
 
-
+from slice_inflate.running.stages import Stage, StageIterator
+from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset
+from slice_inflate.datasets.mrxcat_dataset import MRXCATDataset
+from slice_inflate.models.interface_models import EPix2Vox_InterfaceModel
+from slice_inflate.models.learnable_transform import AffineTransformModule, get_random_affine
+from slice_inflate.models.hybrid_unet import HybridUnet
 from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, \
     log_oa_metrics, log_affine_param_stats, log_frameless_image, get_cuda_mem_info_str
 from slice_inflate.utils.clinical_cardiac_views import get_class_volumes
-import numpy as np
-import monai
-
-
-from slice_inflate.running.stages import Stage, StageIterator
-from nnunetv2.training.loss.compound_losses import DC_and_CE_loss
-from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset
-from slice_inflate.datasets.mrxcat_dataset import MRXCATDataset
-from slice_inflate.models.interface_models import NNUNET_InterfaceModel, EPix2Vox_InterfaceModel
-from slice_inflate.models.learnable_transform import AffineTransformModule, get_random_affine
-from slice_inflate.models.nnunet_models import Generic_UNet_Hybrid
-from slice_inflate.models.hybrid_unet import HybridUnet
-from slice_inflate.utils.python_utils import DotDict
+from slice_inflate.utils.python_utils import DotDict, get_script_dir
 from slice_inflate.utils.torch_utils import get_batch_score_per_label, save_model, \
     reduce_label_scores_epoch, get_binarized_from_onehot_label
 from slice_inflate.utils.nifti_utils import nifti_grid_sample, get_zooms
 from slice_inflate.related_works.epix2vox.epix2vox import EPix2VoxModel128, get_optimizer_and_scheduler
 
 
+
+THIS_SCRIPT_DIR = get_script_dir()
+os.environ['CACHE_PATH'] = str(Path(THIS_SCRIPT_DIR, '.cache'))
 
 def prepare_data(config):
     args = [config.dataset[1]]
@@ -88,35 +84,13 @@ def prepare_data(config):
 
 
 def get_model(config, num_classes, THIS_SCRIPT_DIR, _path=None, load_model_only=False):
-
     device = config.device
     assert config.model_type in ['hybrid-unet', 'hybrid-EPix2Vox', 'hybrid-Pix2Vox']
     if not _path is None:
         _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
     if config.model_type == 'hybrid-unet':
-        enc_mode = '2d'
-        dec_mode = '3d'
-
-        init_dict_path = Path(THIS_SCRIPT_DIR, "./slice_inflate/models/nnunet_init_dict_128_128_128.pkl")
-        with open(init_dict_path, 'rb') as f:
-            init_dict = dill.load(f)
-        init_dict['num_classes'] = num_classes
-        init_dict['deep_supervision'] = False
-        init_dict['final_nonlin'] = torch.nn.Identity()
-        init_dict['use_onehot_input'] = False
-        init_dict['input_channels'] = num_classes*2
-        init_dict['pool_op_kernel_sizes'][-1] = [2,2,2]
-        init_dict['norm_op'] = nn.InstanceNorm3d
-        # init_dict['convolutional_upsampling'] = True
-        nnunet_model = Generic_UNet_Hybrid(**init_dict, use_skip_connections=True, encoder_mode=enc_mode, decoder_mode=dec_mode)
-
-        seg_outputs = list(filter(lambda elem: 'seg_outputs' in elem[0], nnunet_model.named_parameters()))
-        # Disable gradients of non-used deep supervision
-        for so_idx in range(len(seg_outputs)-1):
-            seg_outputs[so_idx][1].requires_grad = False
-            # model = NNUNET_InterfaceModel(nnunet_model)
-            model = HybridUnet(n_slices=2, num_classes=num_classes)
+        model = HybridUnet(n_views=2, num_classes=num_classes)
 
     elif config.model_type == 'hybrid-EPix2Vox':
         epix_model = EPix2VoxModel128(

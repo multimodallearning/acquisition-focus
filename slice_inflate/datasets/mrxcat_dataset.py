@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 import torch
 
+from slice_inflate.utils.python_utils import get_script_dir
 from slice_inflate.datasets.base_dataset import BaseDataset
 from slice_inflate.utils.nnunetv2_utils import get_segment_fn
 
@@ -23,14 +24,15 @@ class MRXCATDataset(BaseDataset):
         if kwargs['use_binarized_labels']:
             label_tags=("background", "foreground")
 
-        self.nnunet_segment_model_path = "/home/weihsbach/storage/staff/christianweihsbach/nnunet/nnUNetV2_results/Dataset670_MRXCAT_ac_focus/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d"
-        kwargs['nnunet_segment_model_path'] = self.nnunet_segment_model_path
+        kwargs['nnunet_segment_model_path'] = Path(get_script_dir(base_script=True), 'artifacts/mrxcat_nnunetv2_segment_model_manager_data.pth')
 
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
 
-    def extract_3d_id(self, _input):
+    @staticmethod
+    def extract_3d_id(_input):
         return _input[:8]
 
+    @staticmethod
     def get_file_id(file_path):
         file_path = Path(file_path)
         patient_id, temporary_frame_idx, type_str = re.findall(
@@ -43,4 +45,4 @@ class MRXCATDataset(BaseDataset):
         return mrxcat_id, is_label
 
     def set_segment_fn(self, fold_idx):
-        self.segment_fn = get_segment_fn(self.nnunet_segment_model_path, 0, torch.device('cuda'))
+        self.segment_fn = get_segment_fn(self.nnunet_segment_model_path, fold_idx)

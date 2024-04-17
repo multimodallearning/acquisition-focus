@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from abc import abstractmethod
 from collections.abc import Iterable
@@ -6,7 +5,6 @@ from collections import OrderedDict
 import json
 
 from tqdm import tqdm
-from joblib import Memory
 import einops as eo
 
 import numpy as np
@@ -23,7 +21,7 @@ from slice_inflate.utils.nifti_utils import nifti_grid_sample, get_zooms
 from slice_inflate.utils.clinical_cardiac_views import get_clinical_cardiac_view_affines
 from slice_inflate.utils.log_utils import log_oa_metrics, log_label_metrics
 
-THIS_SCRIPT_DIR = get_script_dir()
+
 
 class BaseDataset(Dataset):
 
@@ -44,7 +42,8 @@ class BaseDataset(Dataset):
         del self.self_attributes['kwargs']
         del self.self_attributes['self']
 
-        self.segment_fn = get_segment_fn(self.self_attributes['nnunet_segment_model_path'], 0, torch.device('cuda'))
+        self.set_segment_fn(fold_idx=0)
+
         with open(Path(data_base_dir) / "metadata/data_split.json", 'r') as f:
             self.data_split = json.load(f)
         self.data_base_dir = data_base_dir
@@ -133,8 +132,6 @@ class BaseDataset(Dataset):
         )
 
     def load_data(self):
-        segment_fn = get_segment_fn(self.nnunet_segment_model_path, 0, torch.device('cuda'))
-
         files = []
         data_path = Path(self.data_base_dir)
 
@@ -193,7 +190,7 @@ class BaseDataset(Dataset):
         class_dict = {tag:idx for idx,tag in enumerate(self.label_tags)}
 
         label_scores_dataset = {}
-        fixed_ref_path = Path(THIS_SCRIPT_DIR, './ref_heart.nii.gz')
+        fixed_ref_path = Path(get_script_dir(base_script=True), 'artifacts/ref_heart.nii.gz')
 
         for _3d_id, _file in tqdm(id_paths_to_load, desc=description):
             additional_data_3d[_3d_id] = additional_data_3d.get(_3d_id, {})
@@ -272,7 +269,7 @@ class BaseDataset(Dataset):
 
                 # Segment using nnunet v2 model
                 lores_spacing = get_zooms(prescan_nii_affine)
-                prescan_segmentation = segment_fn(prescan_image.cuda(), lores_spacing.view(1,3)).cpu()
+                prescan_segmentation = self.segment_fn(prescan_image.cuda(), lores_spacing.view(1,3)).cpu()
 
                 additional_data_3d[_3d_id]['prescan_image'] = prescan_image.squeeze()
                 additional_data_3d[_3d_id]['prescan_label'] = prescan_segmentation.squeeze()
@@ -331,6 +328,10 @@ class BaseDataset(Dataset):
             label_data_3d=label_data_3d,
             additional_data_3d=additional_data_3d
         )
+
+    @abstractmethod
+    def set_segment_fn(self, fold_idx):
+        raise NotImplementedError()
 
     @abstractmethod
     def extract_3d_id(self, _input):

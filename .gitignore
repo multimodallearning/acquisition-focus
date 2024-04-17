@@ -7,8 +7,8 @@ wandb/
 .venv/
 
 data/
+artifacts/
 
-!data/MMWHS/mmwhs_io_normalisation_values.pth
 *.nii.gz
 *.pth
 *.pt

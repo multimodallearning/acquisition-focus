@@ -9,31 +9,24 @@ packages = [{include = "slice_inflate"}]
 [tool.poetry.dependencies]
 python = "^3.9"
 torch = "2.0.0"
+torchvision = "^0.15"
 nibabel = "^4.0.1"
 matplotlib = "^3.5.3"
 SimpleITK = "^2.1.1.2"
 Pillow = "^9.2.0"
 ipykernel = "^6.15.1"
-jupytext = "^1.14.1"
 tqdm = "^4.64.1"
 joblib = "^1.1.0"
 ipywidgets = "^8.0.2"
 wandb = "^0.13.3"
-scikit-learn = "^1.1.2"
-nnunetv2 = { git = "git@github.com:chr-wei/nnUNet.git" }
-scikit-image = "^0.19.3"
-git-filter-repo = "^2.34.0"
 einops = "^0.5.0"
 dill = "^0.3.5.1"
 autopep8 = "^2.0.0"
 monai = "^1.1.0"
-scalene = "^1.5.19"
-seaborn = "^0.12.2"
 black = "^23.12.1"
-nnunet = "^1.7.1"
 randomname = "^0.2.1"
 pytorch-run-on-recommended-gpu = "^1.0.4"
-torchvision = "^0.15"
+nnunetv2 = "~2.1.0"
 
 [build-system]
 requires = ["poetry-core"]

@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 import torch
 
+from slice_inflate.utils.python_utils import get_script_dir
 from slice_inflate.datasets.base_dataset import BaseDataset
 from slice_inflate.utils.nnunetv2_utils import get_segment_fn
 
@@ -23,8 +24,7 @@ class MMWHSDataset(BaseDataset):
         if kwargs['use_binarized_labels']:
             label_tags=("background", "foreground")
 
-        self.nnunet_segment_model_path = "/home/weihsbach/storage/staff/christianweihsbach/nnunet/nnUNetV2_results/Dataset671_MMWHS_ac_focus/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d"
-        kwargs['nnunet_segment_model_path'] = self.nnunet_segment_model_path
+        kwargs['nnunet_segment_model_path'] = Path(get_script_dir(base_script=True), 'artifacts/segmentation/mmwhs/nnUNetTrainer_GIN_MultiRes__nnUNetPlans__2d')
 
         super().__init__(*args, state=state, label_tags=label_tags, **kwargs)
 
@@ -43,7 +43,7 @@ class MMWHSDataset(BaseDataset):
         return mmwhs_id, is_label
 
     def set_segment_fn(self, fold_idx):
-        base_segment_fn = get_segment_fn(self.nnunet_segment_model_path, fold_idx, torch.device('cuda'))
+        base_segment_fn = get_segment_fn(self.self_attributes['nnunet_segment_model_path'], fold_idx)
 
         def segment_fn(input):
             return base_segment_fn(input).permute(0,3,1,2) # Additional permutation is needed for MMWHS (nnUNet related error)
