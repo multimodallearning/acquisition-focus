@@ -2,6 +2,7 @@
 ![image](https://github.com/multimodallearning/acquisition-focus/assets/13519345/92e2d8ad-566b-4587-8daa-88daea628e7e)
 
 # Installation
+
 ```bash
 git clone git@github.com:multimodallearning/acquisition-focus.git
 cd acquisition-focus
@@ -10,6 +11,8 @@ poetry install
 
 To preprocess the data, c3d is needed:
 http://www.itksnap.org/pmwiki/pmwiki.php?n=Downloads.C3D
+
+Download and extract artifacts from https://cloud.imi.uni-luebeck.de/s/eQkMbrAzBGQ4MY2 and store them to `acquisition-focus/artifacts`
 
 # Preprocessing
 ## Preprocessing MMWHS
