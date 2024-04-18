@@ -42,11 +42,11 @@ def prepare_data(config):
     cache_path.mkdir(parents=True, exist_ok=True)
     arghash = joblib.hash(joblib.hash(args)+joblib.hash(kwargs))
     hashfile = cache_path / f"argshash_{arghash}_dataset.dil"
-    
+
     if config.use_caching:
-        if cache_path.is_file():
+        if hashfile.is_file():
             print("Loading dataset from cache:", hashfile)
-            with open(cache_path, 'rb') as file:
+            with open(hashfile, 'rb') as file:
                 dataset = dill.load(file)
         else:
             dataset = dataset_class(*args, **kwargs)

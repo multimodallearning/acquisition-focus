@@ -1,9 +1,10 @@
+import math
+
+from tqdm import tqdm
+from matplotlib import pyplot as plt
 import wandb
 import numpy as np
 import torch
-from matplotlib import pyplot as plt
-import math
-
 
 
 def get_global_idx(fold_idx, epoch_idx, max_epochs):
@@ -19,7 +20,7 @@ def get_global_idx(fold_idx, epoch_idx, max_epochs):
 def get_fold_postfix(fold_properties):
     fold_idx, _ = fold_properties
     return f'fold-{fold_idx}' if fold_idx != -1 else ""
-    
+
 
 
 def log_label_metrics(log_prefix, log_postfix, metrics, log_idx,
@@ -31,7 +32,7 @@ def log_label_metrics(log_prefix, log_postfix, metrics, log_idx,
             if m_name in logger_selected_metrics:
                 wandb.log({log_path: m_content[tag]}, step=log_idx)
             if m_name in print_selected_metrics:
-                print(log_path, f"{m_content[tag]:.3f}")
+                tqdm.write(log_path, f"{m_content[tag]:.3f}")
 
 
 
@@ -43,7 +44,7 @@ def log_oa_metrics(log_prefix, log_postfix, metrics, log_idx,
         if m_name in logger_selected_metrics:
             wandb.log({log_path: m_content}, step=log_idx)
         if m_name in print_selected_metrics:
-            print(log_path, f"{m_content:.3f}")
+            tqdm.write(f"{log_path} {m_content:.3f}")
 
 
 
@@ -69,7 +70,8 @@ def log_affine_param_stats(log_prefix, log_postfix, affine_params_dct, log_idx,
 
             if tag in print_selected_metrics:
                 log_path = log_path.replace('PLX', '')
-                print(log_path, ' '.join([f"{p:.3f}" for p in stats[tag].tolist()]))
+                m_string = ' '.join([f"{p:.3f}" for p in stats[tag].tolist()])
+                tqdm.write(f"{log_path} {m_string}")
 
     return means['theta_ap'], means['theta_t_offsets'], means['theta_zp']
 

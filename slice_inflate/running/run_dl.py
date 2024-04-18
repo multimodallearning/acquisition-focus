@@ -64,15 +64,15 @@ def get_reconstruction_model(config, num_classes, save_path=None, load_model_onl
         assert Path(save_path).is_dir()
         model_dict = torch.load(Path(save_path).joinpath('model.pth'), map_location=device)
         epx = model_dict.get('metadata', {}).get('epx', 0)
-        print(f"Loading model from {save_path}")
-        print(model.load_state_dict(model_dict, strict=False))
+        tqdm.write(f"Loading model from {save_path}")
+        tqdm.write(model.load_state_dict(model_dict, strict=False))
 
     else:
-        print(f"Generating fresh '{type(model).__name__}' model.")
+        tqdm.write(f"Generating new '{type(model).__name__}' model.")
         epx = 0
 
-    print(f"Trainable param count model: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
-    print(f"Non-trainable param count model: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}")
+    tqdm.write(f"Trainable param count model: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+    tqdm.write(f"Non-trainable param count model: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}")
 
     if config.model_type in ['hybrid-EPix2Vox', 'hybrid-Pix2Vox']:
         optimizer, scheduler = get_optimizer_and_scheduler(model.epix_model.encoder, model.epix_model.decoder, model.epix_model.merger, model.epix_model.refiner)
@@ -84,13 +84,13 @@ def get_reconstruction_model(config, num_classes, save_path=None, load_model_onl
 
     if save_path and not load_model_only:
         assert Path(save_path).is_dir()
-        print(f"Loading optimizer, scheduler, scaler from {save_path}")
+        tqdm.write(f"Loading optimizer, scheduler, scaler from {save_path}")
         optimizer.load_state_dict(torch.load(Path(save_path).joinpath('optimizer.pth'), map_location=device))
         scheduler.load_state_dict(torch.load(Path(save_path).joinpath('scheduler.pth'), map_location=device))
         scaler.load_state_dict(torch.load(Path(save_path).joinpath('scaler.pth'), map_location=device))
 
     else:
-        print(f"Generated fresh optimizer, scheduler, scaler.")
+        tqdm.write(f"Generated new optimizer, scheduler, scaler.")
 
     # for submodule in model.modules():
     #     submodule.register_forward_hook(anomaly_hook)
@@ -105,6 +105,13 @@ def get_transform_model(config, num_classes, save_path=None):
     atm_container = ATModulesContainer(config, num_classes)
     atm_container.to(device)
     set_requires_grad(atm_container, False)
+
+    if save_path and Path(save_path).is_dir():
+        tqdm.write(f"Loading ATM container from {save_path}")
+        atm_container.load_state_dict(torch.load(Path(save_path)/ 'atm_container.pth',map_location=device), strict=False)
+
+    else:
+        tqdm.write(f"Generated new ATM container.")
 
     if config.view_optimization_mode == 'opt-current-fix-previous':
         set_requires_grad([atm_container.get_next_non_optimized_view_module().localization_net], True)
@@ -126,12 +133,11 @@ def get_transform_model(config, num_classes, save_path=None):
         transform_scheduler = None
 
     if save_path and Path(save_path).is_dir():
-        print(f"Loading transform optimizer from {save_path}")
-        atm_container.load_state_dict(torch.load(Path(save_path)/ 'atm_container.pth',map_location=device), strict=False)
+        tqdm.write(f"Loading transform optimizer from {save_path}")
         transform_optimizer.load_state_dict(torch.load(Path(save_path).joinpath('transform_optimizer.pth'), map_location=device))
 
     else:
-        print(f"Generated fresh transform optimizer.")
+        tqdm.write(f"Generated new transform optimizer.")
 
     return atm_container, transform_optimizer, transform_scheduler
 
@@ -536,13 +542,13 @@ def epoch_iter(epx, global_idx, config, model, atm_container, dataset, dataloade
 
     loss_mean = torch.tensor(epx_losses).mean()
     ### Logging ###
-    print(f"### {phase.upper()}")
+    tqdm.write(f"### {phase.upper()}")
 
     ### Log wandb data ###
     log_id = f'losses/{phase}_loss'
     log_val = loss_mean
     wandb.log({log_id: log_val}, step=global_idx)
-    print(f'losses/{phase}_loss', log_val)
+    tqdm.write(f'losses/{phase}_loss {log_val.item()}')
 
     log_label_metrics(f"scores/{phase}_mean", '', seg_metrics_nanmean, global_idx,
         logger_selected_metrics=('dice', 'iou', 'hd', 'hd95', 'delta_vol_ml', 'delta_vol_rel'), print_selected_metrics=())
@@ -556,7 +562,7 @@ def epoch_iter(epx, global_idx, config, model, atm_container, dataset, dataloade
     log_oa_metrics(f"scores/{phase}_std_oa_exclude_bg", '', seg_metrics_std_oa, global_idx,
         logger_selected_metrics=('dice', 'iou', 'hd', 'hd95', 'delta_vol_ml', 'delta_vol_rel'), print_selected_metrics=())
 
-    print()
+    tqdm.write('')
     output_dir = Path(f"data/output/{wandb.run.name}/{phase}")
     output_dir.mkdir(exist_ok=True, parents=True)
 
@@ -585,9 +591,9 @@ def epoch_iter(epx, global_idx, config, model, atm_container, dataset, dataloade
         lean_dct = {k:v for k,v in zip(epx_input.keys(), save_input.short())}
         torch.save(lean_dct, output_dir / f"input_{phase}_epx_{epx:05d}.pt")
 
-    print(f"### END {phase.upper()}")
-    print()
-    print()
+    tqdm.write(f"### END {phase.upper()}")
+    tqdm.write('')
+    tqdm.write('')
 
     return loss_mean
 
@@ -607,8 +613,8 @@ def run_dl(base_dir, config, fold_properties, stage=None, training_dataset=None,
     val_idxs = torch.tensor(val_idxs)
     val_ids = training_dataset.switch_3d_identifiers(val_idxs)
 
-    print(f"Will run training with these 3D samples (#{len(train_ids)}):", sorted(train_ids))
-    print(f"Will run validation with these 3D samples (#{len(val_ids)}):", sorted(val_ids))
+    tqdm.write(f"Will run training with these 3D samples (#{len(train_ids)}): {sorted(train_ids)}")
+    tqdm.write(f"Will run validation with these 3D samples (#{len(val_ids)}): {sorted(val_ids)}")
 
     ### Add train sampler and dataloaders ##
     train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
@@ -651,8 +657,8 @@ def run_dl(base_dir, config, fold_properties, stage=None, training_dataset=None,
         global_idx = get_global_idx(fold_idx, epx, config.epochs)
         # Log the epoch idx per fold - so we can recover the diagram by setting
         # ref_epoch_idx as x-axis in wandb interface
-        print( f"### Log epoch {epx}/{config.epochs}")
         wandb.log({"ref_epoch_idx": epx}, step=global_idx)
+        tqdm.write( f"### Log epoch {epx}/{config.epochs}")
 
         if not run_test_once_only:
             train_loss = epoch_iter(
@@ -661,10 +667,10 @@ def run_dl(base_dir, config, fold_properties, stage=None, training_dataset=None,
                 phase='train', autocast_enabled=autocast_enabled,
                 all_optimizers=all_optimizers, scaler=scaler, store_net_output_to=None)
 
-            val_loss, _ = epoch_iter(epx, global_idx, config, model, atm_container, training_dataset, val_dataloader,
+            val_loss = epoch_iter(epx, global_idx, config, model, atm_container, training_dataset, val_dataloader,
                 phase='val', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=None)
 
-        test_loss, _ = epoch_iter(epx, global_idx, config, model, atm_container, test_dataset, test_dataloader,
+        test_loss = epoch_iter(epx, global_idx, config, model, atm_container, test_dataset, test_dataloader,
             phase='test', autocast_enabled=autocast_enabled, all_optimizers=None, scaler=None, store_net_output_to=config.test_only_and_output_to)
 
         quality_metric = val_loss
@@ -677,7 +683,7 @@ def run_dl(base_dir, config, fold_properties, stage=None, training_dataset=None,
                 if shd is not None:
                     shd.step()
                     wandb.log({f'training/{shd_name}_lr': shd.optimizer.param_groups[0]['lr']}, step=global_idx)
-        print()
+        tqdm.write('')
 
         # Save model
         if config.save_every is None:
