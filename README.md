@@ -41,7 +41,7 @@ acquisition-focus/data/datasets/MRXCAT/base_files/phantom_004/phantom_004_novess
 ```
 
 Open the preprocessing notebook to prepare files:
-```/home/weihsbach/storage/staff/christianweihsbach/acquisition_focus/acquisition_focus/preprocessing/preprocess_mrxcat.ipynb```
+```acquisition_focus/preprocessing/preprocess_mrxcat.ipynb```
 
 # Run view optimization
 The script will run a three-fold cross-validation with several optimization stages, each optimizing one of the requested input views. Outputs can be found in the `acquisition-focus/data/output` directory. All metrics will be saved to a wandb (https://wandb.ai/home) dashboard.
