@@ -1,5 +1,5 @@
 # GitHub repository for 'AcquisitionFocus: Joint Optimization of Acquisition Orientation and Cardiac Volume Reconstruction Using Deep Learning'
-![epoch_orientation_change](https://github.com/MDL-UzL/slice_inflate/assets/13519345/b6a70d71-ec49-4cf0-9f93-6ebaabe5ad7a)
+![image](https://github.com/multimodallearning/acquisition-focus/assets/13519345/92e2d8ad-566b-4587-8daa-88daea628e7e)
 
 # Installation
 ```bash
