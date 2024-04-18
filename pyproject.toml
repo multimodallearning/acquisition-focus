@@ -1,6 +1,6 @@
 [tool.poetry]
-name = "slice-inflate"
-version = "0.1.1"
+name = "acquisition-focus"
+version = "1.0.0"
 description = ""
 authors = ["Christian Weihsbach <christian.weihsbach@uni-luebeck.de>"]
 readme = "README.md"
