@@ -1,7 +1,7 @@
 import nibabel as nib
 import torch
-from slice_inflate.utils.torch_sparse_tensor_utils import get_center_and_median, get_sub_sp_tensor
-from slice_inflate.utils.transform_utils import compute_rotation_matrix_from_ortho6d
+from acquisition_focus.utils.torch_sparse_tensor_utils import get_center_and_median, get_sub_sp_tensor
+from acquisition_focus.utils.transform_utils import compute_rotation_matrix_from_ortho6d
 
 
 

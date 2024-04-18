@@ -11,12 +11,11 @@
     "aug_phases": ["train", "val"],
     "sample_augment_strength": 1.0,
     "use_affine_theta": true,
-    "view_ids": ["p2CH", "p2CH", "p2CH"],
+    "base_views": ["p2CH", "p2CH", "p2CH"],
     "offset_clip_value": 0.2,
     "zoom_clip_value": 0.0,
     "affine_theta_optim_method": "R6-vector",
     "view_optimization_mode": "opt-all",
-    "use_2d_normal_to": null,
     "use_binarized_labels": false,
     "dataset": [
         "mmwhs",

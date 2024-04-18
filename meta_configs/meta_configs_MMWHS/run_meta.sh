@@ -2,7 +2,7 @@
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR/../..
 # Run main script for every meta-configuration file
-main_script_path=./main_slice_inflate.py
+main_script_path=./main_acquisition_focus.py
 
 for meta_config in $SCRIPT_DIR/*.json
 do

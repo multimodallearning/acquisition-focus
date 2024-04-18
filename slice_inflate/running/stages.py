@@ -57,7 +57,7 @@ def set_previous_stage_transform_chk(self):
 
 def get_std_stages(config):
     std_stages = {}
-    n_views = len(config.view_ids)
+    n_views = len(config.base_views)
 
     for view_idx in range(n_views):
         if view_idx > 0:

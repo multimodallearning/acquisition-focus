@@ -1,9 +1,4 @@
 {
     "jupyter.debugJustMyCode": false,
     "workbench.colorTheme": "Material Theme Lighter High Contrast",
-    "workbench.colorCustomizations": {
-        "activityBar.background": "#0A323F",
-        "titleBar.activeBackground": "#0E4658",
-        "titleBar.activeForeground": "#F5FBFD"
-    }
 }

@@ -14,12 +14,12 @@ from pytorch_run_on_recommended_gpu.run_on_recommended_gpu import get_cuda_envir
 os.environ.update(get_vars(os.environ.get('CUDA_VISIBLE_DEVICES','0')))
 import torch
 
-from slice_inflate.running.stages import get_std_stages
-from slice_inflate.datasets.mmwhs_dataset import MMWHSDataset
-from slice_inflate.datasets.mrxcat_dataset import MRXCATDataset
-from slice_inflate.utils.log_utils import get_fold_postfix
-from slice_inflate.utils.python_utils import DotDict, get_script_dir
-from slice_inflate.running.run_dl import run_dl
+from acquisition_focus.running.stages import get_std_stages
+from acquisition_focus.datasets.mmwhs_dataset import MMWHSDataset
+from acquisition_focus.datasets.mrxcat_dataset import MRXCATDataset
+from acquisition_focus.utils.log_utils import get_fold_postfix
+from acquisition_focus.utils.python_utils import DotDict, get_script_dir
+from acquisition_focus.running.run_dl import run_dl
 
 
 
@@ -101,7 +101,7 @@ def stage_sweep_run(run_name, config_dict, fold_properties, all_stages, training
 
 
 if __name__ == '__main__':
-    PROJECT_NAME = "slice_inflate"
+    PROJECT_NAME = "acquisition_focus"
 
     # Add argument parser for additional config file path
     parser = argparse.ArgumentParser()

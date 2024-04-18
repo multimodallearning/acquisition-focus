@@ -1,6 +1,6 @@
 {
     "meta_config_id": 25,
-    "view_ids": [ "2CH","SA-7"],
+    "base_views": [ "2CH","SA-7"],
     "stage_override": "ref",
     "model_type": "hybrid-EPix2Vox",
     "use_binarized_labels": true,

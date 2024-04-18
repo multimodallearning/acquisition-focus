@@ -16,9 +16,9 @@ from scipy.ndimage import gaussian_filter
 from acvl_utils.cropping_and_padding.bounding_boxes import bounding_box_to_slice
 from acvl_utils.cropping_and_padding.padding import pad_nd_image
 
-from slice_inflate.utils.nifti_utils import nifti_grid_sample
-import slice_inflate.models.segmentation as segmentation_models
-from slice_inflate.utils.python_utils import suppress_stdout
+from acquisition_focus.utils.nifti_utils import nifti_grid_sample
+import acquisition_focus.models.segmentation as segmentation_models
+from acquisition_focus.utils.python_utils import suppress_stdout
 
 with suppress_stdout():
     import nnunetv2

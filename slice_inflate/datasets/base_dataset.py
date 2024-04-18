@@ -13,12 +13,12 @@ from torch.utils.data import Dataset
 import monai
 import nibabel as nib
 
-from slice_inflate.utils.torch_utils import ensure_dense, ensure_dense, get_batch_score_per_label, reduce_label_scores_epoch
-from slice_inflate.functional.register_centroids import get_centroid_reorient_grid_affine
-from slice_inflate.utils.python_utils import get_script_dir
-from slice_inflate.utils.nifti_utils import nifti_grid_sample, get_zooms
-from slice_inflate.functional.clinical_cardiac_views import get_clinical_cardiac_view_affines
-from slice_inflate.utils.log_utils import log_oa_metrics, log_label_metrics
+from acquisition_focus.utils.torch_utils import ensure_dense, ensure_dense, get_batch_score_per_label, reduce_label_scores_epoch
+from acquisition_focus.functional.register_centroids import get_centroid_reorient_grid_affine
+from acquisition_focus.utils.python_utils import get_script_dir
+from acquisition_focus.utils.nifti_utils import nifti_grid_sample, get_zooms
+from acquisition_focus.functional.clinical_cardiac_views import get_clinical_cardiac_view_affines
+from acquisition_focus.utils.log_utils import log_oa_metrics, log_label_metrics
 
 
 
@@ -233,7 +233,7 @@ class BaseDataset(Dataset):
                 view_affines['centroids'] = centroids_affine
 
                 additional_data_3d[_3d_id]['gt_view_affines'] = view_affines
-                # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
+                # from acquisition_focus.datasets.clinical_cardiac_views import display_clinical_views
                 # display_clinical_views(tmp[0,0], tmp[0,0].to_sparse(), hires_nii_affine[0], view_affines,
                 #     output_to_file="my_output.png")
 
@@ -280,7 +280,7 @@ class BaseDataset(Dataset):
                 prescan_centroids_affine = get_centroid_reorient_grid_affine(tmp.int(), fixed_ref_path, DOF=6)
                 additional_data_3d[_3d_id]['prescan_view_affines']['centroids'] = prescan_centroids_affine
                 # works
-                # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
+                # from acquisition_focus.datasets.clinical_cardiac_views import display_clinical_views
                 # display_clinical_views(prescan, prescan_segmentation.to_sparse(), prescan_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
                 #                         output_to_file="my_output_lores.png", debug=False)
 
@@ -305,7 +305,7 @@ class BaseDataset(Dataset):
                     additional_data_3d[_3d_id]['prescan_label'], additional_data_3d[_3d_id]['prescan_nii_affine'], class_dict,
                     num_sa_slices=15, return_unrolled=True)
                 # works
-                # from slice_inflate.datasets.clinical_cardiac_views import display_clinical_views
+                # from acquisition_focus.datasets.clinical_cardiac_views import display_clinical_views
                 # display_clinical_views(prescan, prescan_segmentation.to_sparse(), prescan_nii_affine[0], {v:k for k,v in enumerate(self.label_tags)}, num_sa_slices=15,
                 #                         output_to_file="my_output_lores.png", debug=False)
 

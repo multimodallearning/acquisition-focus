@@ -2,9 +2,9 @@ import re
 from pathlib import Path
 import torch
 
-from slice_inflate.utils.python_utils import get_script_dir
-from slice_inflate.datasets.base_dataset import BaseDataset
-from slice_inflate.utils.nnunetv2_utils import get_segment_fn
+from acquisition_focus.utils.python_utils import get_script_dir
+from acquisition_focus.datasets.base_dataset import BaseDataset
+from acquisition_focus.utils.nnunetv2_utils import get_segment_fn
 
 
 

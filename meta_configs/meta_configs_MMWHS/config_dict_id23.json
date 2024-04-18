@@ -1,6 +1,6 @@
 {
     "meta_config_id": 23,
-    "view_ids": ["2CH","4CH"],
+    "base_views": ["2CH","4CH"],
     "stage_override": "ref",
     "model_type": "hybrid-EPix2Vox",
     "use_binarized_labels": true

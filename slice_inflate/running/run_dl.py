@@ -18,17 +18,17 @@ import numpy as np
 import monai
 # import nibabel as nib
 
-from slice_inflate.utils.nnunetv2_utils import DC_and_CE_loss
-from slice_inflate.models.interface_models import EPix2Vox_InterfaceModel
-from slice_inflate.models.learnable_transform import ATModulesContainer, AffineTransformModule, get_random_affine
-from slice_inflate.models.hybrid_unet import HybridUnet
-from slice_inflate.utils.log_utils import get_global_idx, log_label_metrics, \
+from acquisition_focus.utils.nnunetv2_utils import DC_and_CE_loss
+from acquisition_focus.models.interface_models import EPix2Vox_InterfaceModel
+from acquisition_focus.models.learnable_transform import ATModulesContainer, AffineTransformModule, get_random_affine
+from acquisition_focus.models.hybrid_unet import HybridUnet
+from acquisition_focus.utils.log_utils import get_global_idx, log_label_metrics, \
     log_oa_metrics, log_affine_param_stats, log_frameless_image, get_cuda_mem_info_str
-from slice_inflate.functional.clinical_cardiac_views import get_class_volumes
-from slice_inflate.utils.torch_utils import get_batch_score_per_label, save_model, \
+from acquisition_focus.functional.clinical_cardiac_views import get_class_volumes
+from acquisition_focus.utils.torch_utils import get_batch_score_per_label, save_model, \
     reduce_label_scores_epoch, get_binarized_from_onehot_label, NoneOptimizer, set_requires_grad
-from slice_inflate.utils.nifti_utils import nifti_grid_sample, get_zooms
-from slice_inflate.related_works.epix2vox.epix2vox import EPix2VoxModel128, get_optimizer_and_scheduler
+from acquisition_focus.utils.nifti_utils import nifti_grid_sample, get_zooms
+from acquisition_focus.related_works.epix2vox.epix2vox import EPix2VoxModel128, get_optimizer_and_scheduler
 # torch.autograd.set_detect_anomaly(True)
 
 
@@ -37,7 +37,7 @@ def get_reconstruction_model(config, num_classes, save_path=None, load_model_onl
     device = config.device
     assert config.model_type in ['hybrid-unet', 'hybrid-EPix2Vox', 'hybrid-Pix2Vox']
 
-    n_views = len(config.view_ids)
+    n_views = len(config.base_views)
     if config.model_type == 'hybrid-unet':
         model = HybridUnet(n_views=n_views, num_classes=num_classes)
 
@@ -315,7 +315,7 @@ def get_reconstruction_model_input(batch, phase, config, num_classes, atm_contai
             # plt.imshow(label_slc[0].argmax(0).squeeze().cpu().numpy())
             # plt.savefig('label_slc.png')
 
-    n_views = len(config.view_ids)
+    n_views = len(config.base_views)
     n_active_views = len(active_view_modules)
 
     # Fill views if not all are present (currently optimized view will be duplicated)
@@ -580,7 +580,7 @@ def epoch_iter(epx, global_idx, config, model, atm_container, dataset, dataloade
     if config.do_output and epx_input:
         # Store the slice model input
         save_input = torch.stack(list(epx_input.values()))
-        n_views = len(config.view_ids)
+        n_views = len(config.base_views)
 
         save_input = save_input.chunk(n_views, dim=1)
         save_input = torch.cat([slc.argmax(1, keepdim=True) for slc in save_input], dim=1)

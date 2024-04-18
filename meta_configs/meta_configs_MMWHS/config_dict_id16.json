@@ -1,5 +1,5 @@
 {
     "meta_config_id": 16,
-    "view_ids": ["axial","coronal"],
+    "base_views": ["axial","coronal"],
     "optimize_lv_only": true
 }

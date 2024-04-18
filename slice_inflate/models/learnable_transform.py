@@ -3,10 +3,10 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from slice_inflate.utils.nifti_utils import nifti_grid_sample
-from slice_inflate.utils.torch_utils import determine_network_output_size
-from slice_inflate.utils.transform_utils import angle_axis_to_rotation_matrix, get_random_affine, compute_rotation_matrix_from_ortho6d, normal_to_rotation_matrix
-from slice_inflate.functional.clinical_cardiac_views import get_inertia_tensor, get_main_principal_axes, get_pix_affine_from_center_and_plane_vects, get_torch_grid_affine_from_pix_affine
+from acquisition_focus.utils.nifti_utils import nifti_grid_sample
+from acquisition_focus.utils.torch_utils import determine_network_output_size
+from acquisition_focus.utils.transform_utils import angle_axis_to_rotation_matrix, get_random_affine, compute_rotation_matrix_from_ortho6d, normal_to_rotation_matrix
+from acquisition_focus.functional.clinical_cardiac_views import get_inertia_tensor, get_main_principal_axes, get_pix_affine_from_center_and_plane_vects, get_torch_grid_affine_from_pix_affine
 
 
 
@@ -371,9 +371,9 @@ class ATModulesContainer(torch.nn.ModuleList):
     def __init__(self, config, num_classes):
         super().__init__(self)
 
-        for view_id in config.view_ids:
+        for view_id in config.base_views:
             self.add_new_atm(view_id, config, num_classes)
-        self.is_optimized = torch.nn.Parameter(torch.tensor(len(config.view_ids) * [False]), requires_grad=False)
+        self.is_optimized = torch.nn.Parameter(torch.tensor(len(config.base_views) * [False]), requires_grad=False)
 
     def add_new_atm(self, view_id, config, num_classes):
         atm = AffineTransformModule(num_classes,

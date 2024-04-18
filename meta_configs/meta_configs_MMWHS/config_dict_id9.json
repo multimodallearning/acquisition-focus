@@ -1,4 +1,4 @@
 {
     "meta_config_id": 9,
-    "view_ids": ["axial","coronal"]
+    "base_views": ["axial","coronal"]
 }

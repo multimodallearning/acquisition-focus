@@ -2,8 +2,8 @@ import torch
 from torch.utils.checkpoint import checkpoint
 from dynamic_network_architectures.architectures.unet import PlainConvUNet
 
-from slice_inflate.utils.nifti_utils import get_zooms, rescale_rot_components_with_diag
-from slice_inflate.utils.torch_utils import set_module
+from acquisition_focus.utils.nifti_utils import get_zooms, rescale_rot_components_with_diag
+from acquisition_focus.utils.torch_utils import set_module
 
 
 class HybridUnet(PlainConvUNet):

@@ -4,16 +4,16 @@
 import torch
 from torch.optim import Adam
 
-from slice_inflate.utils.python_utils import DotDict
+from acquisition_focus.utils.python_utils import DotDict
 
-from slice_inflate.related_works.epix2vox.models.encoder_128 import Encoder as Encoder128
-from slice_inflate.related_works.epix2vox.models.decoder_128 import Decoder as Decoder128
-from slice_inflate.related_works.epix2vox.models.merger_128 import Merger as Merger128
-from slice_inflate.related_works.epix2vox.models.refiner_128 import Refiner as Refiner128
-from slice_inflate.related_works.epix2vox.models.encoder_64 import Encoder as Encoder64
-from slice_inflate.related_works.epix2vox.models.decoder_64 import Decoder as Decoder64
-from slice_inflate.related_works.epix2vox.models.merger_64 import Merger as Merger64
-from slice_inflate.related_works.epix2vox.models.refiner_64 import Refiner as Refiner64
+from acquisition_focus.related_works.epix2vox.models.encoder_128 import Encoder as Encoder128
+from acquisition_focus.related_works.epix2vox.models.decoder_128 import Decoder as Decoder128
+from acquisition_focus.related_works.epix2vox.models.merger_128 import Merger as Merger128
+from acquisition_focus.related_works.epix2vox.models.refiner_128 import Refiner as Refiner128
+from acquisition_focus.related_works.epix2vox.models.encoder_64 import Encoder as Encoder64
+from acquisition_focus.related_works.epix2vox.models.decoder_64 import Decoder as Decoder64
+from acquisition_focus.related_works.epix2vox.models.merger_64 import Merger as Merger64
+from acquisition_focus.related_works.epix2vox.models.refiner_64 import Refiner as Refiner64
 
 
 def init_weights(m):

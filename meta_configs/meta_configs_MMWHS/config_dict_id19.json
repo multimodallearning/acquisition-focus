@@ -1,6 +1,6 @@
 {
     "meta_config_id": 19,
-    "view_ids": ["axial","coronal"],
+    "base_views": ["axial","coronal"],
     "prescan_fov_mm": [
         192.0,
         192.0,

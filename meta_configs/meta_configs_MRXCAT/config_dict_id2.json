@@ -1,7 +1,7 @@
 {
     "meta_config_id": 2,
     "fold_override": 0,
-    "view_ids": ["2CH","SA-7"],
+    "base_views": ["2CH","SA-7"],
     "dataset": [
         "mrxcat",
         "./data/datasets/MRXCAT/prepared_files"
