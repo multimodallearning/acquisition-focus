@@ -1,7 +1,6 @@
 {
     "meta_config_id": 27,
-    "sa_view": "2CH",
-    "hla_view": "4CH",
+    "view_ids": ["2CH","4CH"],
     "stage_override": "ref",
     "model_type": "hybrid-Pix2Vox",
     "use_binarized_labels": true,

@@ -1,6 +1,5 @@
 {
     "meta_config_id": 16,
-    "sa_view": "axial",
-    "hla_view": "coronal",
+    "view_ids": ["axial","coronal"],
     "optimize_lv_only": true
 }

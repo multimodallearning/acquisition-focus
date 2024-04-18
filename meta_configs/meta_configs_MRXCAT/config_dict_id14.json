@@ -1,7 +1,6 @@
 {
     "meta_config_id": 14,
-    "sa_view": "4CH",
-    "hla_view": "2CH",
+    "view_ids": ["4CH","2CH"],
     "prescan_fov_mm": [
         192.0,
         192.0,

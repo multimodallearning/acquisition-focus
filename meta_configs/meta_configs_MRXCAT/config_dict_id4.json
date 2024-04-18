@@ -1,8 +1,7 @@
 {
     "meta_config_id": 4,
     "fold_override": 0,
-    "sa_view": "RND",
-    "hla_view": "RND",
+    "view_ids": ["RND","RND"],
     "dataset": [
         "mrxcat",
         "./data/datasets/MRXCAT/prepared_files"

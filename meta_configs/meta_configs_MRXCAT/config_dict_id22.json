@@ -1,8 +1,7 @@
 {
     "meta_config_id": 22,
-    "sa_view": "2CH",
-    "hla_view": "4CH",
     "stage_override": "ref",
+    "view_ids": ["2CH","4CH"],
     "model_type": "hybrid-unet",
     "use_binarized_labels": true,
     "dataset": [
