@@ -26,7 +26,7 @@ acquisition-focus/data/datasets/MMWHS/base_files/mr_train/mr_train_1020_label.ni
 ```
 
 Open the preprocessing notebook to prepare files:
-```/home/weihsbach/storage/staff/christianweihsbach/acquisition_focus/acquisition_focus/preprocessing/preprocess_mmwhs.ipynb```
+```/acquisition_focus/acquisition_focus/preprocessing/preprocess_mmwhs.ipynb```
 
 ## Preprocessing MRXCAT
 Put base files in this folder:
