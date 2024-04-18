@@ -69,7 +69,6 @@ def get_std_stages(config):
             view_optimization_mode='opt-current-fix-previous',
             epochs=int(config['epochs']*1.0),
             use_affine_theta=True,
-            train_affine_theta=True,
             do_output=True,
             __activate_fn__=activate_fn
         )
@@ -78,7 +77,6 @@ def get_std_stages(config):
         do_output=True,
         view_optimization_mode='opt-none',
         epochs=config['epochs'],
-        train_affine_theta=False,
         use_affine_theta=False,
         __activate_fn__=lambda self: None
     )

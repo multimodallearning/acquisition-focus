@@ -166,6 +166,8 @@ class NoneOptimizer():
         pass
     def state_dict(self):
         return {}
+    def load_state_dict(self, *args, **kwargs):
+        pass
 
 
 

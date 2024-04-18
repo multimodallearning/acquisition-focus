@@ -132,7 +132,7 @@ def get_transform_model(config, num_classes, save_path=None):
         transform_optimizer = NoneOptimizer()
         transform_scheduler = None
 
-    if save_path and Path(save_path).is_dir():
+    if save_path and Path(save_path).is_dir() and not isinstance(transform_optimizer, NoneOptimizer):
         tqdm.write(f"Loading transform optimizer from {save_path}")
         transform_optimizer.load_state_dict(torch.load(Path(save_path).joinpath('transform_optimizer.pth'), map_location=device))
 
@@ -412,10 +412,12 @@ def epoch_iter(epx, global_idx, config, model, atm_container, dataset, dataloade
     if phase == 'train':
         model.train()
 
-        if config.train_affine_theta:
+        if 'opt-current-fix-previous' in config.view_optimization_mode:
+            atm_container.get_next_non_optimized_view_module().train()
+        elif 'opt-all' in config.view_optimization_mode:
+            atm_container.train()
+        else:
             atm_container.eval()
-            if 'opt-current-fix-previous' in config.view_optimization_mode:
-                atm_container.get_next_non_optimized_view_module().train()
 
     else:
         model.eval()
@@ -449,16 +451,17 @@ def epoch_iter(epx, global_idx, config, model, atm_container, dataset, dataloade
             if (batch_idx+1) % config.num_grad_accum_steps != 0:
                 continue
 
+            any_atm_is_trained = config.view_optimization_mode in ['opt-current-fix-previous', 'opt-all']
             if config.use_autocast:
                 for name, opt in all_optimizers.items():
-                    if name == 'transform_optimizer' and not config.train_affine_theta:
+                    if name == 'transform_optimizer' and not any_atm_is_trained:
                         continue
                     scaler.step(opt)
                 scaler.update()
                 opt.zero_grad()
             else:
                 for name, opt in all_optimizers.items():
-                    if name == 'transform_optimizer' and not config.train_affine_theta:
+                    if name == 'transform_optimizer' and not any_atm_is_trained:
                         continue
                     opt.step()
                     opt.zero_grad()
